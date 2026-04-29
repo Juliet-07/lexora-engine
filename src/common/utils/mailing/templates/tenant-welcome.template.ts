@@ -13,7 +13,7 @@ export function tenantWelcomeTemplate(data: TenantWelcomeEmailData): {
   const { to, firstName, businessName, tempPassword, loginUrl } = data;
   const year = new Date().getFullYear();
   const firmName =
-    process.env.FIRM_NAME || 'Legal Practice Management Platform';
+    process.env.SMTP_FROM;
 
   return {
     subject: `Portal Access Granted – ${businessName}`,
@@ -35,14 +35,14 @@ export function tenantWelcomeTemplate(data: TenantWelcomeEmailData): {
 
                 <!-- Header -->
                 <tr>
-                  <td style="background-color:#1a2744;padding:32px 40px;">
+                  <td style="background-color:#4B0082;padding:32px 40px;">
                     <p style="margin:0;font-size:11px;letter-spacing:3px;text-transform:uppercase;
                                color:#c9a84c;font-family:'Georgia',serif;">
-                      Legal Practice Management
+                      LEXORA
                     </p>
                     <h1 style="margin:8px 0 0;font-size:22px;font-weight:normal;color:#ffffff;
                                 font-family:'Georgia',serif;letter-spacing:0.5px;">
-                      Client Portal Access
+                       Your Portal Access
                     </h1>
                   </td>
                 </tr>
@@ -104,7 +104,7 @@ export function tenantWelcomeTemplate(data: TenantWelcomeEmailData): {
                     <!-- CTA -->
                     <table cellpadding="0" cellspacing="0" style="margin-bottom:36px;">
                       <tr>
-                        <td style="background-color:#1a2744;border-radius:3px;">
+                        <td style="background-color:#4B0082;border-radius:3px;">
                           <a href="${loginUrl}"
                             style="display:inline-block;padding:14px 32px;font-size:13px;
                                    font-family:Arial,sans-serif;letter-spacing:1.5px;
@@ -142,7 +142,7 @@ export function tenantWelcomeTemplate(data: TenantWelcomeEmailData): {
                     </p>
                     <p style="margin:28px 0 0;font-size:15px;color:#333333;line-height:1.8;">
                       Yours sincerely,<br/>
-                      <strong style="color:#1a2744;">The Platform Support Team</strong>
+                      <strong style="color:#1a2744;">Lexora Support Team</strong>
                     </p>
                   </td>
                 </tr>

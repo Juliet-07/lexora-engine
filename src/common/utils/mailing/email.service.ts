@@ -28,7 +28,7 @@ export class EmailService {
     const { subject, html } = tenantWelcomeTemplate(data);
 
     await this.transporter.sendMail({
-      from: `"${process.env.FIRM_NAME || 'Legal Practice Platform'}" <${process.env.SMTP_FROM}>`,
+      from: `"${process.env.SMTP_FROM}" <${process.env.SMTP_FROM}>`,
       to: data.to,
       subject,
       html,
