@@ -56,7 +56,7 @@ async function bootstrap() {
         'SuperAdmin',
         'Super Admin System | Manages Tenants, Subscriptions, General System Settings',
       )
-      .addTag('Organizations', 'Multi-tenant organization management')
+      .addTag('Tenant', 'Tenant Management System')
       .addTag('Clients', 'Client lifecycle management')
       .addTag('KYC / AML', 'KYC submission, risk scoring, screening')
       .addTag('Documents', 'Document management and e-signatures')

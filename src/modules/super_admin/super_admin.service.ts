@@ -318,7 +318,39 @@ export class SuperAdminService {
     const existing = await this.moduleModel.findOne({ key: dto.key });
     if (existing)
       throw new ConflictException(`Module "${dto.key}" already exists`);
-    return this.moduleModel.create(dto);
+
+    const module = await this.moduleModel.create(dto);
+
+    await this.subscriptionModel.updateMany(
+      {
+        plan: SubscriptionPlan.FREE,
+        status: { $in: [SubscriptionStatus.TRIAL, SubscriptionStatus.ACTIVE] },
+      },
+      {
+        $addToSet: {
+          baseModules: module.key,
+          activeModules: module.key,
+        },
+      },
+    );
+
+    if (dto.includedInPlans && dto.includedInPlans.length > 0) {
+      await this.subscriptionModel.updateMany(
+        {
+          plan: { $in: dto.includedInPlans },
+          status: {
+            $in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL],
+          },
+        },
+        {
+          $addToSet: {
+            baseModules: module.key,
+            activeModules: module.key,
+          },
+        },
+      );
+    }
+    return module;
   }
 
   async getModules(includeInactive = false): Promise<PlatformModuleDocument[]> {
@@ -354,8 +386,8 @@ export class SuperAdminService {
     );
     if (!mod) throw new NotFoundException(`Module "${key}" not found`);
 
-    // If deactivating, remove from all active subscriptions
     if (!isActive) {
+      // Deactivating — strip from ALL subscriptions
       await this.subscriptionModel.updateMany(
         {},
         {
@@ -366,7 +398,42 @@ export class SuperAdminService {
           },
         },
       );
+    } else {
+      // Re-activating — restore to free plan subscriptions automatically
+      await this.subscriptionModel.updateMany(
+        {
+          plan: SubscriptionPlan.FREE,
+          status: {
+            $in: [SubscriptionStatus.TRIAL, SubscriptionStatus.ACTIVE],
+          },
+        },
+        {
+          $addToSet: {
+            baseModules: key,
+            activeModules: key,
+          },
+        },
+      );
+
+      // Restore to paid plans that include it
+      if (mod.includedInPlans?.length > 0) {
+        await this.subscriptionModel.updateMany(
+          {
+            plan: { $in: mod.includedInPlans },
+            status: {
+              $in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL],
+            },
+          },
+          {
+            $addToSet: {
+              baseModules: key,
+              activeModules: key,
+            },
+          },
+        );
+      }
     }
+
     return mod;
   }
 
@@ -429,11 +496,22 @@ export class SuperAdminService {
     });
     if (!tenant) throw new NotFoundException('Tenant not found');
 
-    const planConfig = await this.planModel.findOne({ plan: dto.plan });
-    if (!planConfig)
-      throw new NotFoundException(`Plan "${dto.plan}" not configured`);
+    let baseModules: string[] = [];
 
-    const baseModules = planConfig.includedModules || [];
+    if (dto.plan === SubscriptionPlan.FREE) {
+      const allModules = await this.moduleModel
+        .find({ isActive: true })
+        .select('key')
+        .lean();
+      baseModules = allModules.map((m) => m.key);
+    } else {
+      const planConfig = await this.planModel.findOne({ plan: dto.plan });
+      if (!planConfig) {
+        throw new NotFoundException(`Plan "${dto.plan}" not configured`);
+      }
+      baseModules = planConfig.includedModules || [];
+    }
+
     const addonModules = dto.addonModules || [];
     const activeModules = [...new Set([...baseModules, ...addonModules])];
 
@@ -443,20 +521,25 @@ export class SuperAdminService {
         new Date(now.getFullYear(), now.getMonth() + 1, now.getDate()),
     );
 
+    const isFree = dto.plan === SubscriptionPlan.FREE;
+    const trialEndsAt = isFree
+      ? new Date(new Date().setDate(new Date().getDate() + 7))
+      : null;
+
     const subscription = await this.subscriptionModel.findOneAndUpdate(
       { tenantId: new Types.ObjectId(tenantId) },
       {
         plan: dto.plan,
-        status: SubscriptionStatus.ACTIVE,
+        status: isFree ? SubscriptionStatus.TRIAL : SubscriptionStatus.ACTIVE,
         baseModules,
         addonModules,
         activeModules,
         currentPeriodStart: now,
-        currentPeriodEnd: periodEnd,
+        currentPeriodEnd: isFree ? trialEndsAt : periodEnd,
+        trialEndsAt,
         assignedBy: new Types.ObjectId(assignedBy),
         maxUsersOverride: dto.maxUsersOverride || null,
         maxClientsOverride: dto.maxClientsOverride || null,
-        trialEndsAt: null,
         cancelledAt: null,
       },
       { new: true, upsert: true },
@@ -630,21 +713,44 @@ export class SuperAdminService {
     plan: SubscriptionPlan,
     assignedBy: string,
   ) {
-    const planConfig = await this.planModel.findOne({ plan }).lean();
-    const baseModules = planConfig?.includedModules || [];
+    // const planConfig = await this.planModel.findOne({ plan }).lean();
+    let baseModules: string[] = [];
+
+    if (plan === SubscriptionPlan.FREE) {
+      const allModules = await this.moduleModel
+        .find({ isActive: true })
+        .select('key')
+        .lean();
+      baseModules = allModules.map((m) => m.key);
+    } else {
+      const planConfig = await this.planModel.findOne({ plan }).lean();
+      if (!planConfig) {
+        throw new NotFoundException(
+          `Plan "${plan}" is not configured. Please set it up in the subscritpion plans`,
+        );
+      }
+      baseModules = planConfig.includedModules || [];
+    }
+
     const trialEndsAt = new Date();
     trialEndsAt.setDate(trialEndsAt.getDate() + 14); // 14-day trial
+
+    // For paid plans, no trial - just a standard period
+    const isPaidPlan = plan != SubscriptionPlan.FREE;
+    const periodEnd = isPaidPlan
+      ? new Date(new Date().setMonth(new Date().getMonth() + 1))
+      : trialEndsAt;
 
     await this.subscriptionModel.create({
       tenantId: new Types.ObjectId(tenantId),
       plan,
-      status: SubscriptionStatus.TRIAL,
+      status: isPaidPlan ? SubscriptionStatus.ACTIVE : SubscriptionStatus.TRIAL,
       baseModules,
       addonModules: [],
       activeModules: baseModules,
-      trialEndsAt,
+      trialEndsAt: isPaidPlan ? null : trialEndsAt,
       currentPeriodStart: new Date(),
-      currentPeriodEnd: trialEndsAt,
+      currentPeriodEnd: periodEnd,
       assignedBy: new Types.ObjectId(assignedBy),
     });
   }

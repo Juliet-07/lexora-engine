@@ -14,7 +14,8 @@ import { appConfig, databaseConfig, jwtConfig } from './config';
 
 // Modules
 import { AuthModule } from './modules/auth/auth.module';
-import { OrganizationsModule } from './modules/organizations/organizations.module';
+import { SuperAdminModule } from './modules/super_admin/super_admin.module';
+import { TenantModule } from './modules/tenant/tenant.module';
 import { ClientsModule } from './modules/clients/clients.module';
 import { KycModule } from './modules/kyc/kyc.module';
 import { DocumentsModule } from './modules/documents/documents.module';
@@ -31,7 +32,6 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
-import { SuperAdminModule } from './modules/super_admin/super_admin.module';
 
 @Module({
   imports: [
@@ -80,7 +80,7 @@ import { SuperAdminModule } from './modules/super_admin/super_admin.module';
     // Feature Modules
     AuthModule,
     SuperAdminModule,
-    OrganizationsModule,
+    TenantModule,
     ClientsModule,
     KycModule,
     DocumentsModule,

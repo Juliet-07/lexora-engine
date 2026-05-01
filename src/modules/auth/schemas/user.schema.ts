@@ -38,7 +38,7 @@ export class TenantProfile {
 // ── Embedded: Client profile ──────────────────────────────────
 export class ClientProfile {
   @Prop({ type: [String], enum: ClientClassification, default: [] })
-  classifications: ClientClassification[];
+  classifications: ClientClassification;
 
   // Individual fields
   @Prop({ default: null }) dateOfBirth: Date;

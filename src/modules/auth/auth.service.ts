@@ -24,12 +24,18 @@ import {
   SuperAdminRole,
   UserType,
 } from 'src/common/interfaces/user-role.enum';
+import {
+  ClientProfileDocument,
+  ClientProfileRecord,
+} from '../tenant/schemas/client-profile.schema';
 
 @Injectable()
 export class AuthService {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
+    @InjectModel(ClientProfileRecord.name)
+    private clientProfileModel: Model<ClientProfileDocument>,
     private jwtService: JwtService,
     private configService: ConfigService,
   ) {}
@@ -83,11 +89,11 @@ export class AuthService {
     const valid = await bcrypt.compare(dto.password, user.password);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
-    if (user.status === AccountStatus.PENDING) {
-      user.status = AccountStatus.ACTIVE;
-    }
+    // if (user.status === AccountStatus.PENDING) {
+    //   user.status = AccountStatus.ACTIVE;
+    // }
 
-    const wasPending = (user.status as string) === AccountStatus.PENDING;
+    const wasPending = user.status === AccountStatus.PENDING;
 
     const updatedUser = await this.userModel.findByIdAndUpdate(
       user._id,
@@ -103,7 +109,35 @@ export class AuthService {
     const tokens = await this.generateAccessToken(updatedUser);
     await this.saveSession(updatedUser, tokens.refreshToken);
 
-    return { user: this.sanitize(updatedUser), tokens };
+    // ── Attach KYC context for client users ──────────────────
+    let kycContext: {
+      kycStatus: string;
+      profileCompletionPercent: number;
+      hasDraft: boolean;
+    } | null = null;
+
+    if (updatedUser.userType === UserType.CLIENT) {
+      const profile = await this.clientProfileModel
+        .findOne({ userId: updatedUser._id })
+        .select('kycStatus profileCompletionPercent metadata')
+        .lean();
+
+      const kycStatus = profile?.kycStatus ?? 'not_started';
+      const completionPercent = profile?.profileCompletionPercent ?? 0;
+      const hasDraft = completionPercent > 0 && kycStatus === 'not_started';
+
+      kycContext = {
+        kycStatus,
+        profileCompletionPercent: completionPercent,
+        hasDraft,
+      };
+    }
+
+    return {
+      user: this.sanitize(updatedUser),
+      tokens,
+      ...(kycContext && { kycContext }),
+    };
   }
 
   async getProfile(userId: string): Promise<object> {

@@ -4,6 +4,10 @@ import {
   tenantWelcomeTemplate,
   TenantWelcomeEmailData,
 } from './templates/tenant-welcome.template';
+import {
+  ClientWelcomeEmailData,
+  clientWelcomeTemplate,
+} from './templates/client-welcome.template';
 
 @Injectable()
 export class EmailService {
@@ -29,6 +33,16 @@ export class EmailService {
 
     await this.transporter.sendMail({
       from: `"${process.env.SMTP_FROM}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendClientWelcome(data: ClientWelcomeEmailData): Promise<void> {
+    const { subject, html } = clientWelcomeTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,
       subject,
       html,
