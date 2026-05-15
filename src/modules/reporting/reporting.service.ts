@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Client } from '../clients/schemas/client.schema';
+// import { Client } from '../clients/schemas/client.schema';
 import { Invoice } from '../billing/schemas/billing.schema';
 import { KycRecord } from '../kyc/schemas/kyc-record.schema';
 import { Alert, ComplianceCase } from '../compliance/schemas/compliance.schema';
@@ -10,7 +10,7 @@ import { Project } from '../projects/schemas/project.schema';
 @Injectable()
 export class ReportingService {
   constructor(
-    @InjectModel(Client.name) private clientModel: Model<any>,
+    // @InjectModel(Client.name) private clientModel: Model<any>,
     @InjectModel(Invoice.name) private invoiceModel: Model<any>,
     @InjectModel(KycRecord.name) private kycModel: Model<any>,
     @InjectModel(Alert.name) private alertModel: Model<any>,
@@ -18,18 +18,24 @@ export class ReportingService {
     @InjectModel(Project.name) private projectModel: Model<any>,
   ) {}
 
-  async generateComplianceReport(organizationId: string, fromDate?: string, toDate?: string) {
+  async generateComplianceReport(
+    organizationId: string,
+    fromDate?: string,
+    toDate?: string,
+  ) {
     const orgId = new Types.ObjectId(organizationId);
     const dateFilter: any = {};
     if (fromDate) dateFilter.$gte = new Date(fromDate);
     if (toDate) dateFilter.$lte = new Date(toDate);
-    const createdAt = Object.keys(dateFilter).length ? { createdAt: dateFilter } : {};
+    const createdAt = Object.keys(dateFilter).length
+      ? { createdAt: dateFilter }
+      : {};
 
     const [
       kycStats,
       alertStats,
       caseStats,
-      clientRiskDistribution,
+      // clientRiskDistribution,
     ] = await Promise.all([
       this.kycModel.aggregate([
         { $match: { organizationId: orgId, ...createdAt } },
@@ -43,10 +49,10 @@ export class ReportingService {
         { $match: { organizationId: orgId, ...createdAt } },
         { $group: { _id: '$status', count: { $sum: 1 } } },
       ]),
-      this.clientModel.aggregate([
-        { $match: { organizationId: orgId } },
-        { $group: { _id: '$riskLevel', count: { $sum: 1 } } },
-      ]),
+      // this.clientModel.aggregate([
+      //   { $match: { organizationId: orgId } },
+      //   { $group: { _id: '$riskLevel', count: { $sum: 1 } } },
+      // ]),
     ]);
 
     return {
@@ -57,16 +63,22 @@ export class ReportingService {
       kycByStatus: this.arrayToObject(kycStats),
       alertsBySeverity: this.arrayToObject(alertStats),
       casesByStatus: this.arrayToObject(caseStats),
-      clientsByRisk: this.arrayToObject(clientRiskDistribution),
+      // clientsByRisk: this.arrayToObject(clientRiskDistribution),
     };
   }
 
-  async generateFinancialReport(organizationId: string, fromDate?: string, toDate?: string) {
+  async generateFinancialReport(
+    organizationId: string,
+    fromDate?: string,
+    toDate?: string,
+  ) {
     const orgId = new Types.ObjectId(organizationId);
     const dateFilter: any = {};
     if (fromDate) dateFilter.$gte = new Date(fromDate);
     if (toDate) dateFilter.$lte = new Date(toDate);
-    const createdAt = Object.keys(dateFilter).length ? { createdAt: dateFilter } : {};
+    const createdAt = Object.keys(dateFilter).length
+      ? { createdAt: dateFilter }
+      : {};
 
     const [invoiceStats, monthlyRevenue, topClients] = await Promise.all([
       this.invoiceModel.aggregate([
@@ -142,47 +154,47 @@ export class ReportingService {
     };
   }
 
-  async generateClientReport(organizationId: string) {
-    const orgId = new Types.ObjectId(organizationId);
-    const [statusDist, typeDist, riskDist, onboardingTrend] = await Promise.all([
-      this.clientModel.aggregate([
-        { $match: { organizationId: orgId } },
-        { $group: { _id: '$status', count: { $sum: 1 } } },
-      ]),
-      this.clientModel.aggregate([
-        { $match: { organizationId: orgId } },
-        { $group: { _id: '$type', count: { $sum: 1 } } },
-      ]),
-      this.clientModel.aggregate([
-        { $match: { organizationId: orgId } },
-        { $group: { _id: '$riskLevel', count: { $sum: 1 } } },
-      ]),
-      this.clientModel.aggregate([
-        { $match: { organizationId: orgId } },
-        {
-          $group: {
-            _id: {
-              year: { $year: '$createdAt' },
-              month: { $month: '$createdAt' },
-            },
-            count: { $sum: 1 },
-          },
-        },
-        { $sort: { '_id.year': 1, '_id.month': 1 } },
-        { $limit: 12 },
-      ]),
-    ]);
+  // async generateClientReport(organizationId: string) {
+  //   const orgId = new Types.ObjectId(organizationId);
+  //   const [statusDist, typeDist, riskDist, onboardingTrend] = await Promise.all([
+  //     this.clientModel.aggregate([
+  //       { $match: { organizationId: orgId } },
+  //       { $group: { _id: '$status', count: { $sum: 1 } } },
+  //     ]),
+  //     this.clientModel.aggregate([
+  //       { $match: { organizationId: orgId } },
+  //       { $group: { _id: '$type', count: { $sum: 1 } } },
+  //     ]),
+  //     this.clientModel.aggregate([
+  //       { $match: { organizationId: orgId } },
+  //       { $group: { _id: '$riskLevel', count: { $sum: 1 } } },
+  //     ]),
+  //     this.clientModel.aggregate([
+  //       { $match: { organizationId: orgId } },
+  //       {
+  //         $group: {
+  //           _id: {
+  //             year: { $year: '$createdAt' },
+  //             month: { $month: '$createdAt' },
+  //           },
+  //           count: { $sum: 1 },
+  //         },
+  //       },
+  //       { $sort: { '_id.year': 1, '_id.month': 1 } },
+  //       { $limit: 12 },
+  //     ]),
+  //   ]);
 
-    return {
-      reportType: 'client',
-      generatedAt: new Date(),
-      organizationId,
-      byStatus: this.arrayToObject(statusDist),
-      byType: this.arrayToObject(typeDist),
-      byRiskLevel: this.arrayToObject(riskDist),
-      onboardingTrend,
-    };
-  }
+  //   return {
+  //     reportType: 'client',
+  //     generatedAt: new Date(),
+  //     organizationId,
+  //     byStatus: this.arrayToObject(statusDist),
+  //     byType: this.arrayToObject(typeDist),
+  //     byRiskLevel: this.arrayToObject(riskDist),
+  //     onboardingTrend,
+  //   };
+  // }
 
   async generateProjectReport(organizationId: string) {
     const orgId = new Types.ObjectId(organizationId);
@@ -208,8 +220,8 @@ export class ReportingService {
 
   async getDashboardSummary(organizationId: string) {
     const orgId = new Types.ObjectId(organizationId);
-    const [clients, invoices, alerts, cases, kycs] = await Promise.all([
-      this.clientModel.countDocuments({ organizationId: orgId }),
+    const [clients, invoices, alerts, cases] = await Promise.all([
+      // this.clientModel.countDocuments({ organizationId: orgId }),
       this.invoiceModel.aggregate([
         { $match: { organizationId: orgId } },
         {
@@ -217,26 +229,41 @@ export class ReportingService {
             _id: null,
             totalInvoiced: { $sum: '$totalAmount' },
             totalPaid: { $sum: '$paidAmount' },
-            overdueCount: { $sum: { $cond: [{ $eq: ['$status', 'overdue'] }, 1, 0] } },
+            overdueCount: {
+              $sum: { $cond: [{ $eq: ['$status', 'overdue'] }, 1, 0] },
+            },
           },
         },
       ]),
       this.alertModel.countDocuments({ organizationId: orgId, status: 'open' }),
-      this.caseModel.countDocuments({ organizationId: orgId, status: { $in: ['open', 'investigating'] } }),
-      this.kycModel.countDocuments({ organizationId: orgId, status: 'pending' }),
+      this.caseModel.countDocuments({
+        organizationId: orgId,
+        status: { $in: ['open', 'investigating'] },
+      }),
+      this.kycModel.countDocuments({
+        organizationId: orgId,
+        status: 'pending',
+      }),
     ]);
 
     return {
       clients: { total: clients },
-      billing: invoices[0] || { totalInvoiced: 0, totalPaid: 0, overdueCount: 0 },
-      compliance: { openAlerts: alerts, activeCases: cases, pendingKyc: kycs },
+      billing: invoices[0] || {
+        totalInvoiced: 0,
+        totalPaid: 0,
+        overdueCount: 0,
+      },
+      compliance: { openAlerts: alerts, activeCases: cases },
     };
   }
 
   private arrayToObject(arr: Array<{ _id: string; count: number }>) {
-    return arr.reduce((acc, item) => {
-      acc[item._id] = item.count;
-      return acc;
-    }, {} as Record<string, number>);
+    return arr.reduce(
+      (acc, item) => {
+        acc[item._id] = item.count;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
   }
 }

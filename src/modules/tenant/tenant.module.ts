@@ -14,6 +14,7 @@ import {
   ClientProfileRecord,
   ClientProfileSchema,
 } from './schemas/client-profile.schema';
+import { OnboardingSchema } from '../clients/schemas';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import {
       { name: User.name, schema: UserSchema },
       { name: 'TenantSubscription', schema: TenantSubscriptionSchema },
       { name: ClientProfileRecord.name, schema: ClientProfileSchema },
+      { name: 'OnboardingSubmission', schema: OnboardingSchema },
     ]),
   ],
   controllers: [TenantController],

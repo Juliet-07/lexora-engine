@@ -34,6 +34,8 @@ export class TenantClientsService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(ClientProfileRecord.name)
     private readonly profileModel: Model<ClientProfileDocument>,
+    @InjectModel('OnboardingSubmission')
+    private readonly onboardingModel: Model<any>,
     @InjectModel('TenantSubscription')
     private readonly subscriptionModel: Model<any>,
     private readonly mailService: EmailService,
@@ -101,7 +103,8 @@ export class TenantClientsService {
       tenantBusinessName:
         (tenant as any)?.tenantProfile?.businessName || 'Your Provider',
       tempPassword,
-      loginUrl: `${process.env.APP_URL || 'http://localhost:3000'}/login`,
+      loginUrl: `${process.env.CLIENT_APP_URL || 'http://localhost:3000'}/login`,
+      clientType: client.clientProfile.classifications,
     });
 
     const obj = client.toObject();
@@ -198,15 +201,21 @@ export class TenantClientsService {
       .lean();
     if (!client) throw new NotFoundException('Client not found');
 
-    const profile = await this.profileModel
-      .findOne({ userId: new Types.ObjectId(clientId) })
-      .populate('assignedTo', 'firstName lastName email roles')
-      .lean();
+    const [profile, onboarding] = await Promise.all([
+      this.profileModel
+        .findOne({ userId: new Types.ObjectId(clientId) })
+        .populate('assignedTo', 'firstName lastName email roles')
+        .lean(),
+      this.onboardingModel
+        .findOne({ clientId: new Types.ObjectId(clientId) })
+        .lean(),
+    ]);
 
     return {
       ...client,
       fullName: `${client.firstName} ${client.lastName}`,
       profile: profile || null,
+      onboarding: onboarding || null,
     };
   }
 
@@ -235,7 +244,7 @@ export class TenantClientsService {
       {
         $match: {
           'profile.kycStatus': {
-            $in: ['submitted', 'in_progress', 'not_started'],
+            $in: ['not_started'],
           },
         },
       },
@@ -263,6 +272,67 @@ export class TenantClientsService {
     return paginate(items, countResult[0]?.total || 0, page, limit);
   }
 
+  async getOnboardingInProgress(tenantId: string, pagination: PaginationDto) {
+    const { skip, limit, page } = pagination;
+
+    const pipeline: any[] = [
+      {
+        $match: {
+          userType: UserType.CLIENT,
+          tenantId: new Types.ObjectId(tenantId),
+        },
+      },
+      {
+        $lookup: {
+          from: 'client_profiles',
+          localField: '_id',
+          foreignField: 'userId',
+          as: 'profile',
+        },
+      },
+      { $unwind: { path: '$profile', preserveNullAndEmptyArrays: true } },
+      {
+        // ✅ Clients actively filling or who have submitted
+        $match: {
+          'profile.kycStatus': { $in: ['in_progress', 'submitted'] },
+        },
+      },
+      {
+        $lookup: {
+          from: 'onboarding_submissions',
+          localField: '_id',
+          foreignField: 'clientId',
+          as: 'onboarding',
+        },
+      },
+      { $unwind: { path: '$onboarding', preserveNullAndEmptyArrays: true } },
+      {
+        $addFields: {
+          fullName: { $concat: ['$firstName', ' ', '$lastName'] },
+          classifications: '$profile.classifications',
+          kycStatus: '$profile.kycStatus',
+          country: '$profile.address.country',
+          completionPercent: '$onboarding.completionPercent',
+          submittedAt: '$onboarding.submittedAt',
+          lastSavedAt: '$onboarding.lastSavedAt',
+          documents: '$onboarding.documents',
+        },
+      },
+      { $project: { password: 0, passwordResetToken: 0 } },
+      { $sort: { createdAt: -1 } },
+    ];
+
+    const [items, countResult] = await Promise.all([
+      this.userModel.aggregate([
+        ...pipeline,
+        { $skip: skip },
+        { $limit: limit },
+      ]),
+      this.userModel.aggregate([...pipeline, { $count: 'total' }]),
+    ]);
+
+    return paginate(items, countResult[0]?.total || 0, page, limit);
+  }
   // ═══════════════════════════════════════════════════════════
   // APPROVE CLIENT
   // ═══════════════════════════════════════════════════════════

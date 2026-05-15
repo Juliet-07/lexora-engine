@@ -49,11 +49,11 @@ export class ReportingController {
     return this.service.generateFinancialReport(orgId, from, to);
   }
 
-  @Get('clients')
-  @ApiOperation({ summary: 'Generate client analytics report' })
-  getClientReport(@CurrentUser('organizationId') orgId: string) {
-    return this.service.generateClientReport(orgId);
-  }
+  // @Get('clients')
+  // @ApiOperation({ summary: 'Generate client analytics report' })
+  // getClientReport(@CurrentUser('organizationId') orgId: string) {
+  //   return this.service.generateClientReport(orgId);
+  // }
 
   @Get('projects')
   @ApiOperation({ summary: 'Generate project analytics report' })

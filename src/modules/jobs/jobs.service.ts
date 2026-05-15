@@ -5,7 +5,7 @@ import { Model, Types } from 'mongoose';
 import { Invoice, InvoiceStatus } from '../billing/schemas/billing.schema';
 import { KycRecord, KycStatus } from '../kyc/schemas/kyc-record.schema';
 import { ScreeningResult } from '../kyc/schemas/screening-result.schema';
-import { Client } from '../clients/schemas/client.schema';
+// import { Client } from '../clients/schemas/client.schema';
 
 @Injectable()
 export class JobsService {
@@ -15,7 +15,7 @@ export class JobsService {
     @InjectModel(Invoice.name) private invoiceModel: Model<any>,
     @InjectModel(KycRecord.name) private kycModel: Model<any>,
     @InjectModel(ScreeningResult.name) private screeningModel: Model<any>,
-    @InjectModel(Client.name) private clientModel: Model<any>,
+    // @InjectModel(Client.name) private clientModel: Model<any>,
   ) {}
 
   /**

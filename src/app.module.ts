@@ -16,7 +16,7 @@ import { appConfig, databaseConfig, jwtConfig } from './config';
 import { AuthModule } from './modules/auth/auth.module';
 import { SuperAdminModule } from './modules/super_admin/super_admin.module';
 import { TenantModule } from './modules/tenant/tenant.module';
-import { ClientsModule } from './modules/clients/clients.module';
+import { ClientModule } from './modules/clients/client.module';
 import { KycModule } from './modules/kyc/kyc.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { ProjectsModule } from './modules/projects/projects.module';
@@ -81,7 +81,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     AuthModule,
     SuperAdminModule,
     TenantModule,
-    ClientsModule,
+    ClientModule,
     KycModule,
     DocumentsModule,
     ProjectsModule,

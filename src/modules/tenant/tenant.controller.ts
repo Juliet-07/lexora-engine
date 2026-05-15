@@ -96,7 +96,7 @@ export class TenantController {
   // ── Pending Approvals (Onboarding & CDD queue) ────────────
   @Get('pending-approvals')
   @ApiOperation({
-    summary: 'List clients pending KYC approval',
+    summary: 'List clients who are yet to start their KYC process',
     description:
       'Returns clients with kycStatus: not_started | in_progress | submitted',
   })
@@ -106,6 +106,19 @@ export class TenantController {
     @Query() pagination: PaginationDto,
   ) {
     return this.tenantClientService.getPendingApprovals(t || u, pagination);
+  }
+
+  @Get('onboarding')
+  @ApiOperation({
+    summary: 'List clients actively filling or who have submitted onboarding',
+    description: 'Returns clients with kycStatus: in_progress | submitted',
+  })
+  getOnboardingInProgress(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Query() pagination: PaginationDto,
+  ) {
+    return this.tenantClientService.getOnboardingInProgress(t || u, pagination);
   }
 
   // ── Quick-add ─────────────────────────────────────────────
