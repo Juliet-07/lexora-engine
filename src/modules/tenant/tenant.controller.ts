@@ -223,6 +223,26 @@ export class TenantController {
     return this.tenantClientService.rejectClient(id, t || u, u, reason);
   }
 
+  // ── Reactivate ─────────────────────────────────────────────
+  @Patch(':id/reactivate')
+  @Roles(
+    TenantRole.TENANT_OWNER,
+    TenantRole.TENANT_ADMIN,
+    TenantRole.TENANT_COMPLIANCE,
+  )
+  @ApiOperation({
+    summary: 'Reactivate a rejected/inactive client [owner, admin, compliance]',
+    description:
+      'Sets client status back to pending and resets KYC to not_started so they can redo onboarding.',
+  })
+  reactivate(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.tenantClientService.reactivateClient(id, t || u, u);
+  }
+
   // ── Request info ──────────────────────────────────────────
   @Post(':id/request-info')
   @HttpCode(HttpStatus.OK)

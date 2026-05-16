@@ -401,9 +401,64 @@ export class TenantClientsService {
       },
     );
 
-    return { success: true, message: 'Client rejected' };
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.businessName firstName')
+      .lean();
+
+    await this.mailService.sendClientRejection({
+      to: client.email,
+      firstName: client.firstName,
+      tenantBusinessName:
+        (tenant as any)?.tenantProfile?.businessName || 'Your Provider',
+      reason:
+        reason ||
+        'Your application did not meet our current verification requirements',
+      loginUrl: `${process.env.CLIENT_APP_URL}`,
+    });
+
+    return { success: true, message: 'Client rejected and notified via email' };
   }
 
+  async reactivateClient(
+    clientId: string,
+    tenantId: string,
+    reactivatedBy: string,
+  ) {
+    const client = await this.userModel.findOne({
+      _id: clientId,
+      tenantId: new Types.ObjectId(tenantId),
+      userType: UserType.CLIENT,
+      status: AccountStatus.INACTIVE,
+    });
+    if (!client)
+      throw new NotFoundException('Client not found or is not inactive');
+
+    await this.userModel.findByIdAndUpdate(clientId, {
+      status: AccountStatus.PENDING,
+    });
+
+    await this.profileModel.findOneAndUpdate(
+      { userId: new Types.ObjectId(clientId) },
+      {
+        kycStatus: 'not_started',
+        $push: {
+          'metadata.auditTrail': {
+            action: 'reactivated',
+            performedBy: reactivatedBy,
+            timestamp: new Date(),
+            note: 'Account reactivated — client may re-submit onboarding',
+          },
+        },
+      },
+    );
+
+    return {
+      success: true,
+      message:
+        'Client reactivated. They can now log in and redo their onboarding.',
+    };
+  }
   // ═══════════════════════════════════════════════════════════
   // REQUEST INFO
   // ═══════════════════════════════════════════════════════════

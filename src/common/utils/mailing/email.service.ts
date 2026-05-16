@@ -8,6 +8,10 @@ import {
   ClientWelcomeEmailData,
   clientWelcomeTemplate,
 } from './templates/client-welcome.template';
+import {
+  ClientRejectionEmailData,
+  clientRejectionTemplate,
+} from './templates/client-rejection.template';
 
 @Injectable()
 export class EmailService {
@@ -41,6 +45,16 @@ export class EmailService {
 
   async sendClientWelcome(data: ClientWelcomeEmailData): Promise<void> {
     const { subject, html } = clientWelcomeTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendClientRejection(data: ClientRejectionEmailData): Promise<void> {
+    const { subject, html } = clientRejectionTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

@@ -70,10 +70,10 @@ export enum SubscriptionStatus {
 
 // ── Platform module keys ──────────────────────────────────────
 export enum PlatformModuleKey {
-  KYC = 'kyc/aml',
+  KYC = 'kyc_aml',
   GRC = 'grc',
   CRM = 'crm',
-  HR_PM = 'hr/pm',
+  HR_PM = 'hr_pm',
 }
 
 // ── All roles in a single array (for validation) ─────────────

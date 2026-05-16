@@ -12,7 +12,7 @@ export class SaveOnboardingDto {
     type: Object,
     description:
       'Partial or full form data — merged onto existing draft. ' +
-      'Send only the fields that changed. Everything else is preserved.',
+      'Only fields present in this payload are updated, the rest are preserved.',
     example: {
       fullName: 'Jane Smith',
       dob: '1990-05-15',
@@ -28,8 +28,7 @@ export class SaveOnboardingDto {
   @ApiPropertyOptional({
     type: Object,
     description:
-      'Step completion map from the frontend stepper. ' +
-      'Keys are step IDs (details, employment, wealth, identification, declaration, ownership, aml). ' +
+      'Which form steps are complete — keys are step IDs from the frontend stepper. ' +
       'Stored so the progress bar survives a page refresh.',
     example: { details: true, employment: true, wealth: false },
   })
@@ -37,36 +36,46 @@ export class SaveOnboardingDto {
   @IsObject()
   sectionCompletion?: Record<string, boolean>;
 
-  @ApiPropertyOptional({ example: 60 })
+  @ApiPropertyOptional({ example: 60, minimum: 0, maximum: 100 })
   @IsOptional()
   @IsNumber()
   completionPercent?: number;
 }
 
 export class SubmitOnboardingDto {
-  @ApiProperty({ type: Object, description: 'Complete final form data' })
+  @ApiProperty({
+    type: Object,
+    description: 'Complete final form data',
+  })
   @IsObject()
   formData: Record<string, any>;
 
-  @ApiProperty({ description: 'All information is true and accurate' })
+  @ApiProperty({
+    description: 'Client confirms all information is true and accurate',
+  })
   @IsBoolean()
   agreeTrue: boolean;
 
-  @ApiProperty({ description: 'Agreed to notify of material changes' })
+  @ApiProperty({ description: 'Client agrees to notify of material changes' })
   @IsBoolean()
   agreeUpdate: boolean;
 
-  @ApiProperty({ description: 'Consented to data processing' })
+  @ApiProperty({
+    description: 'Client consents to data processing for KYC/AML purposes',
+  })
   @IsBoolean()
   agreeConsent: boolean;
 
-  @ApiProperty({ example: 'Jane Smith' })
+  @ApiProperty({
+    example: 'Jane Smith',
+    description: 'Full legal name as signature',
+  })
   @IsString()
   signature: string;
 
   @ApiPropertyOptional({
     example: 'CEO',
-    description: 'Required for corporate clients',
+    description: 'Signatory title — required for corporate clients',
   })
   @IsOptional()
   @IsString()
@@ -74,7 +83,10 @@ export class SubmitOnboardingDto {
 }
 
 export class AddDocumentDto {
-  @ApiProperty({ example: 'Passport Copy' })
+  @ApiProperty({
+    example: 'Passport Copy',
+    description: 'Human-readable document label',
+  })
   @IsString()
   name: string;
 
@@ -87,13 +99,14 @@ export class AddDocumentDto {
       'beneficial_owner',
       'other',
     ],
+    example: 'identity',
   })
   @IsString()
   category: string;
 
   @ApiProperty({
-    example: 'https://wekraftdocs.blob.core.windows.net/lexora/passport.pdf',
-    description: 'Azure Blob URL from your uploader — only the URL is stored',
+    example: 'http://localhost:3001/uploads/onboarding/abc123.pdf',
+    description: 'URL returned by POST /client/onboarding/upload',
   })
   @IsString()
   url: string;
@@ -103,12 +116,12 @@ export class AddDocumentDto {
   @IsString()
   mimeType?: string;
 
-  @ApiPropertyOptional({ example: 204800 })
+  @ApiPropertyOptional({ example: 204800, description: 'File size in bytes' })
   @IsOptional()
   @IsNumber()
   size?: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'International passport, valid until 2028' })
   @IsOptional()
   @IsString()
   description?: string;
@@ -116,7 +129,8 @@ export class AddDocumentDto {
 
 export class RemoveDocumentDto {
   @ApiProperty({
-    example: 'https://wekraftdocs.blob.core.windows.net/lexora/passport.pdf',
+    example: 'http://localhost:3001/uploads/onboarding/abc123.pdf',
+    description: 'The URL of the document to remove from the onboarding record',
   })
   @IsString()
   url: string;
