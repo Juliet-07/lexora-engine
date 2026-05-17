@@ -15,7 +15,12 @@ import {
   ApiResponse,
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-import { RegisterDto, LoginDto, ChangePasswordDto } from './dto/auth.dto';
+import {
+  RegisterDto,
+  LoginDto,
+  ChangePasswordDto,
+  UpdateProfileDto,
+} from './dto/auth.dto';
 import {
   Public,
   Roles,
@@ -53,6 +58,19 @@ export class AuthController {
   @ApiOperation({ summary: 'Get current user profile' })
   async getProfile(@CurrentUser('sub') userId: string) {
     return this.authService.getProfile(userId);
+  }
+
+  @Patch('profile')
+  @ApiOperation({
+    summary: 'Update profile details',
+    description:
+      'Update firstName, lastName, or phone. Works for all user types.',
+  })
+  updateProfile(
+    @CurrentUser('sub') userId: string,
+    @Body() dto: UpdateProfileDto,
+  ) {
+    return this.authService.updateProfile(userId, dto);
   }
 
   @Patch('change-password')

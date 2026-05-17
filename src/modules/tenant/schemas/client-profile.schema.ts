@@ -11,21 +11,23 @@ export type ClientProfileDocument = ClientProfileRecord & Document;
  */
 @Schema({ timestamps: true, collection: 'client_profiles' })
 export class ClientProfileRecord {
-  // Reference back to the user record
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, unique: true })
   userId: Types.ObjectId;
 
-  // The tenant that manages this client
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   tenantId: Types.ObjectId;
 
-  // Who within the tenant added/manages this client
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   assignedTo: Types.ObjectId;
 
-  // Classifications — a client can be multiple types
   @Prop({ type: String, enum: ClientClassification, default: null })
   classifications: ClientClassification;
+
+  @Prop({ type: Date, default: null })
+  verificationCompletedAt: Date | null;
+
+  @Prop({ type: Object, default: null })
+  verificationResults: Record<string, any> | null;
 
   // ── Address ──────────────────────────────────────────────
   @Prop({ type: Object, default: {} })
@@ -109,9 +111,3 @@ export class ClientProfileRecord {
 
 export const ClientProfileSchema =
   SchemaFactory.createForClass(ClientProfileRecord);
-ClientProfileSchema.index({ userId: 1 }, { unique: true });
-ClientProfileSchema.index({ tenantId: 1 });
-ClientProfileSchema.index({ classifications: 1 });
-ClientProfileSchema.index({ assignedTo: 1 });
-ClientProfileSchema.index({ kycStatus: 1 });
-ClientProfileSchema.index({ riskLevel: 1 });

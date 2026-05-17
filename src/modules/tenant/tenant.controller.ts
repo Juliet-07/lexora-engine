@@ -18,7 +18,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 
-import { TenantService } from './tenant.service';
+import { TenantService } from './services/tenant.service';
 import {
   UpdateTenantProfileDto,
   InviteTeamMemberDto,
@@ -39,7 +39,7 @@ import {
   UpdateClientStatusDto,
   RequestClientInfoDto,
 } from './dto/client.dto';
-import { TenantClientsService } from './tenant-client.service';
+import { TenantClientsService } from './services/tenant-client.service';
 
 @ApiTags('Tenant')
 @ApiBearerAuth('bearerAuth')
@@ -65,7 +65,7 @@ export class TenantController {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // PROFILE
+  // TENANT PROFILE
   // ═══════════════════════════════════════════════════════════
 
   @Get('profile')
@@ -92,35 +92,6 @@ export class TenantController {
   getStats(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
     return this.tenantClientService.getClientStats(t || u);
   }
-
-  // ── Pending Approvals (Onboarding & CDD queue) ────────────
-  @Get('pending-approvals')
-  @ApiOperation({
-    summary: 'List clients who are yet to start their KYC process',
-    description:
-      'Returns clients with kycStatus: not_started | in_progress | submitted',
-  })
-  getPendingApprovals(
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-    @Query() pagination: PaginationDto,
-  ) {
-    return this.tenantClientService.getPendingApprovals(t || u, pagination);
-  }
-
-  @Get('onboarding')
-  @ApiOperation({
-    summary: 'List clients actively filling or who have submitted onboarding',
-    description: 'Returns clients with kycStatus: in_progress | submitted',
-  })
-  getOnboardingInProgress(
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-    @Query() pagination: PaginationDto,
-  ) {
-    return this.tenantClientService.getOnboardingInProgress(t || u, pagination);
-  }
-
   // ── Quick-add ─────────────────────────────────────────────
   @Post('create-client')
   @ApiOperation({
@@ -159,16 +130,32 @@ export class TenantController {
     return this.tenantClientService.getClientById(id, t || u);
   }
 
-  // ── Full profile update ───────────────────────────────────
-  @Patch(':id/profile')
-  @ApiOperation({ summary: 'Complete or update client full profile' })
-  updateProfile(
-    @Param('id') id: string,
-    @Body() dto: UpdateClientProfileDto,
+  // ── Pending Approvals (Onboarding & CDD queue) ────────────
+  @Get('pending-approvals')
+  @ApiOperation({
+    summary: 'List clients who are yet to start their KYC process',
+    description:
+      'Returns clients with kycStatus: not_started | in_progress | submitted',
+  })
+  getPendingApprovals(
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @Query() pagination: PaginationDto,
   ) {
-    return this.tenantClientService.updateClientProfile(id, dto, t || u);
+    return this.tenantClientService.getPendingApprovals(t || u, pagination);
+  }
+
+  @Get('onboarding')
+  @ApiOperation({
+    summary: 'List clients actively filling or who have submitted onboarding',
+    description: 'Returns clients with kycStatus: in_progress | submitted',
+  })
+  getOnboardingInProgress(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Query() pagination: PaginationDto,
+  ) {
+    return this.tenantClientService.getOnboardingInProgress(t || u, pagination);
   }
 
   // ── Assign ────────────────────────────────────────────────
@@ -189,6 +176,29 @@ export class TenantController {
   }
 
   // ── Approve ───────────────────────────────────────────────
+
+  @Post(':id/verify')
+  @Roles(
+    TenantRole.TENANT_OWNER,
+    TenantRole.TENANT_ADMIN,
+    TenantRole.TENANT_COMPLIANCE,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Run AML/KYC verifications [compliance]',
+    description:
+      'Runs PEP screening, sanctions check, UBO identification, and adverse media ' +
+      'screening against OpenSanctions. Computes a risk score and saves all results. ' +
+      'Must be completed before approval is allowed.',
+  })
+  runVerifications(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.tenantClientService.runVerifications(id, t || u, u);
+  }
+
   @Post(':id/approve')
   @Roles(
     TenantRole.TENANT_OWNER,
@@ -196,7 +206,12 @@ export class TenantController {
     TenantRole.TENANT_COMPLIANCE,
   )
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Approve a client [compliance]' })
+  @ApiOperation({
+    summary: 'Approve a client [compliance]',
+    description:
+      'Client must have submitted their onboarding AND verifications must be ' +
+      'marked complete before approval is allowed.',
+  })
   approve(
     @Param('id') id: string,
     @CurrentUser('sub') u: string,
@@ -273,30 +288,17 @@ export class TenantController {
     return this.tenantClientService.updateClientStatus(id, dto, t || u);
   }
 
-  // ── Reset password ────────────────────────────────────────
-  // @Post(':id/reset-password')
-  // @HttpCode(HttpStatus.OK)
-  // @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
-  // @ApiOperation({ summary: 'Reset client password [owner, admin]' })
-  // resetPassword(
-  //   @Param('id') id: string,
-  //   @CurrentUser('sub') u: string,
-  //   @CurrentUser('tenantId') t: string,
-  // ) {
-  //   return this.service.resetClientPassword(id, t || u);
-  // }
-
   // ── Remove ────────────────────────────────────────────────
-  // @Delete(':id')
-  // @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
-  // @ApiOperation({ summary: 'Deactivate client [owner, admin]' })
-  // remove(
-  //   @Param('id') id: string,
-  //   @CurrentUser('sub') u: string,
-  //   @CurrentUser('tenantId') t: string,
-  // ) {
-  //   return this.service.removeClient(id, t || u);
-  // }
+  @Delete(':id')
+  @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
+  @ApiOperation({ summary: 'Deactivate client [owner, admin]' })
+  remove(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.tenantClientService.deleteClient(id, t || u);
+  }
   // ═══════════════════════════════════════════════════════════
   // MODULES
   // ═══════════════════════════════════════════════════════════
@@ -392,19 +394,6 @@ export class TenantController {
     const resolvedTenantId = tenantId || userId;
     return this.service.updateTeamMemberStatus(id, dto, resolvedTenantId);
   }
-
-  //   @Post('team/:id/reset-password')
-  //   @HttpCode(HttpStatus.OK)
-  //   @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
-  //   @ApiOperation({ summary: 'Reset team member password [owner, admin]' })
-  //   resetTeamMemberPassword(
-  //     @Param('id') id: string,
-  //     @CurrentUser('sub') userId: string,
-  //     @CurrentUser('tenantId') tenantId: string,
-  //   ) {
-  //     const resolvedTenantId = tenantId || userId;
-  //     return this.service.resetTeamMemberPassword(id, resolvedTenantId);
-  //   }
 
   @Delete('team/:id')
   @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)

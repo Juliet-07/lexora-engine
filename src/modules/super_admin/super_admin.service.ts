@@ -17,6 +17,8 @@ import {
   SubscriptionPlanDocument,
   TenantSubscription,
   TenantSubscriptionDocument,
+  RiskRules,
+  RiskRulesDocument,
 } from './schemas';
 import {
   CreateTenantDto,
@@ -30,6 +32,7 @@ import {
   AssignTenantSubscriptionDto,
   UpdateTenantSubscriptionStatusDto,
   AddAddonModulesDto,
+  CreateRiskRulesDto,
 } from './dto/superadmin.dto';
 import {
   UserType,
@@ -52,8 +55,73 @@ export class SuperAdminService {
     private readonly planModel: Model<SubscriptionPlanDocument>,
     @InjectModel(TenantSubscription.name)
     private readonly subscriptionModel: Model<TenantSubscriptionDocument>,
+    @InjectModel(RiskRules.name)
+    private readonly riskRulesModel: Model<RiskRulesDocument>,
     private readonly mailService: EmailService,
   ) {}
+
+  // ═══════════════════════════════════════════════════════════
+  // DASHBOARD
+  // ═══════════════════════════════════════════════════════════
+
+  async getDashboard() {
+    const [
+      totalTenants,
+      activeTenants,
+      suspendedTenants,
+      pendingTenants,
+      totalClients,
+      subscriptionBreakdown,
+      recentTenants,
+      moduleCount,
+    ] = await Promise.all([
+      this.userModel.countDocuments({ userType: UserType.TENANT }),
+      this.userModel.countDocuments({
+        userType: UserType.TENANT,
+        status: AccountStatus.ACTIVE,
+      }),
+      this.userModel.countDocuments({
+        userType: UserType.TENANT,
+        status: AccountStatus.SUSPENDED,
+      }),
+      this.userModel.countDocuments({
+        userType: UserType.TENANT,
+        status: AccountStatus.PENDING,
+      }),
+      this.userModel.countDocuments({ userType: UserType.CLIENT }),
+      this.subscriptionModel.aggregate([
+        {
+          $group: {
+            _id: '$plan',
+            count: { $sum: 1 },
+            active: { $sum: { $cond: [{ $eq: ['$status', 'active'] }, 1, 0] } },
+          },
+        },
+        { $sort: { count: -1 } },
+      ]),
+      this.userModel
+        .find({ userType: UserType.TENANT })
+        .select('-password')
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .lean(),
+      this.moduleModel.countDocuments({ isActive: true }),
+    ]);
+
+    return {
+      overview: {
+        totalTenants,
+        activeTenants,
+        suspendedTenants,
+        pendingTenants,
+        totalClients,
+        activeModules: moduleCount,
+      },
+      subscriptionBreakdown,
+      recentTenants,
+      generatedAt: new Date(),
+    };
+  }
 
   // ═══════════════════════════════════════════════════════════
   // TENANT MANAGEMENT
@@ -155,9 +223,13 @@ export class SuperAdminService {
 
     // Attach subscription to each tenant
     const tenantIds = items.map((t) => t._id);
-    const subscriptions = await this.subscriptionModel
-      .find({ tenantId: { $in: tenantIds } })
-      .lean();
+    const [subscriptions, clientCounts] = await Promise.all([
+      this.subscriptionModel.find({ tenantId: { $in: tenantIds } }).lean(),
+      this.userModel.aggregate([
+        { $match: { userType: UserType.CLIENT, tenantId: { $in: tenantIds } } },
+        { $group: { _id: '$tenantId', count: { $sum: 1 } } },
+      ]),
+    ]);
 
     const subMap = subscriptions.reduce(
       (m, s) => {
@@ -167,9 +239,18 @@ export class SuperAdminService {
       {} as Record<string, any>,
     );
 
+    const countMap = clientCounts.reduce(
+      (m, c) => {
+        m[c._id.toString()] = c.count;
+        return m;
+      },
+      {} as Record<string, number>,
+    );
+
     const enriched = items.map((t) => ({
       ...t,
       subscription: subMap[t._id.toString()] || null,
+      clientCount: countMap[t._id.toString()] ?? 0,
     }));
 
     return paginate(enriched, total, page, limit);
@@ -249,18 +330,11 @@ export class SuperAdminService {
     });
     if (!tenant) throw new NotFoundException('Tenant not found');
 
-    // Soft-delete: deactivate tenant and all their clients
-    await this.userModel.updateMany(
-      { tenantId: new Types.ObjectId(id) },
-      { status: AccountStatus.INACTIVE },
-    );
-    await this.userModel.findByIdAndUpdate(id, {
-      status: AccountStatus.INACTIVE,
-    });
-    await this.subscriptionModel.findOneAndUpdate(
-      { tenantId: new Types.ObjectId(id) },
-      { status: SubscriptionStatus.CANCELLED, cancelledAt: new Date() },
-    );
+    await Promise.all([
+      this.userModel.deleteOne({ _id: id }),
+      this.userModel.deleteMany({ tenantId: new Types.ObjectId(id) }),
+      this.subscriptionModel.deleteOne({ tenantId: new Types.ObjectId(id) }),
+    ]);
   }
 
   //   async resetTenantPassword(id: string): Promise<{ tempPassword: string }> {
@@ -630,66 +704,34 @@ export class SuperAdminService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // DASHBOARD
+  // RISK RULES
   // ═══════════════════════════════════════════════════════════
 
-  async getDashboard() {
-    const [
-      totalTenants,
-      activeTenants,
-      suspendedTenants,
-      pendingTenants,
-      totalClients,
-      subscriptionBreakdown,
-      recentTenants,
-      moduleCount,
-    ] = await Promise.all([
-      this.userModel.countDocuments({ userType: UserType.TENANT }),
-      this.userModel.countDocuments({
-        userType: UserType.TENANT,
-        status: AccountStatus.ACTIVE,
-      }),
-      this.userModel.countDocuments({
-        userType: UserType.TENANT,
-        status: AccountStatus.SUSPENDED,
-      }),
-      this.userModel.countDocuments({
-        userType: UserType.TENANT,
-        status: AccountStatus.PENDING,
-      }),
-      this.userModel.countDocuments({ userType: UserType.CLIENT }),
-      this.subscriptionModel.aggregate([
-        {
-          $group: {
-            _id: '$plan',
-            count: { $sum: 1 },
-            active: { $sum: { $cond: [{ $eq: ['$status', 'active'] }, 1, 0] } },
-          },
-        },
-        { $sort: { count: -1 } },
-      ]),
-      this.userModel
-        .find({ userType: UserType.TENANT })
-        .select('-password')
-        .sort({ createdAt: -1 })
-        .limit(5)
-        .lean(),
-      this.moduleModel.countDocuments({ isActive: true }),
-    ]);
+  async getRiskRules(): Promise<RiskRulesDocument> {
+    let rules = await this.riskRulesModel.findOne().lean();
+    if (!rules) {
+      // Return sensible defaults if none set yet
+      return {
+        highRisk: 75,
+        mediumRisk: 40,
+        autoFlagTransaction: 10000,
+        reviewPeriod: 180,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any;
+    }
+    return rules as RiskRulesDocument;
+  }
 
-    return {
-      overview: {
-        totalTenants,
-        activeTenants,
-        suspendedTenants,
-        pendingTenants,
-        totalClients,
-        activeModules: moduleCount,
-      },
-      subscriptionBreakdown,
-      recentTenants,
-      generatedAt: new Date(),
-    };
+  async createOrUpdateRiskRules(
+    dto: CreateRiskRulesDto,
+  ): Promise<RiskRulesDocument> {
+    const rules = await this.riskRulesModel.findOneAndUpdate(
+      {},
+      { $set: dto },
+      { new: true, upsert: true },
+    );
+    return rules;
   }
 
   // ═══════════════════════════════════════════════════════════

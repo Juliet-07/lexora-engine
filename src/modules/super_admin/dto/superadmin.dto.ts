@@ -11,6 +11,7 @@ import {
   IsDateString,
   Min,
   ValidateNested,
+  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
@@ -338,4 +339,69 @@ export class AddAddonModulesDto {
   @ApiProperty({ isArray: true, enum: PlatformModuleKey })
   @IsArray()
   modules: PlatformModuleKey[];
+}
+export class CreateRiskRulesDto {
+  @ApiProperty({
+    description:
+      'Risk score threshold (0–100) above which a client is HIGH RISK',
+    example: 75,
+  })
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  highRisk: number;
+
+  @ApiProperty({
+    description:
+      'Risk score threshold (0–100) above which a client is MEDIUM RISK',
+    example: 40,
+  })
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  mediumRisk: number;
+
+  @ApiProperty({
+    description: 'Transaction amount (USD) that triggers auto-flag for review',
+    example: 10000,
+  })
+  @IsNumber()
+  @Min(0)
+  autoFlagTransaction: number;
+
+  @ApiProperty({
+    description: 'How often (in days) an approved client must be re-reviewed',
+    example: 180,
+  })
+  @IsNumber()
+  @Min(1)
+  reviewPeriod: number;
+}
+
+export class UpdateRiskRulesDto {
+  @ApiPropertyOptional({ example: 75 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  highRisk?: number;
+
+  @ApiPropertyOptional({ example: 40 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  mediumRisk?: number;
+
+  @ApiPropertyOptional({ example: 10000 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  autoFlagTransaction?: number;
+
+  @ApiPropertyOptional({ example: 180 })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  reviewPeriod?: number;
 }

@@ -3,15 +3,16 @@ import {
   NotFoundException,
   ConflictException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, type QueryFilter } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
-import { User, UserDocument } from '../auth/schemas/user.schema';
+import { User, UserDocument } from '../../auth/schemas/user.schema';
 import {
   ClientProfileRecord,
   ClientProfileDocument,
-} from './schemas/client-profile.schema';
+} from '../schemas/client-profile.schema';
 import {
   QuickAddClientDto,
   UpdateClientProfileDto,
@@ -19,14 +20,16 @@ import {
   AssignClientDto,
   UpdateClientStatusDto,
   RequestClientInfoDto,
-} from './dto/client.dto';
+} from '../dto/client.dto';
 import {
   UserType,
   ClientRole,
   AccountStatus,
-} from '../../common/interfaces/user-role.enum';
-import { PaginationDto, paginate } from '../../common/pagination.dto';
-import { EmailService } from '../../common/utils/mailing/email.service';
+} from '../../../common/interfaces/user-role.enum';
+import { PaginationDto, paginate } from '../../../common/pagination.dto';
+import { EmailService } from '../../../common/utils/mailing/email.service';
+import { timestamp } from 'rxjs';
+import { VerificationService } from './verification.service';
 
 @Injectable()
 export class TenantClientsService {
@@ -39,6 +42,7 @@ export class TenantClientsService {
     @InjectModel('TenantSubscription')
     private readonly subscriptionModel: Model<any>,
     private readonly mailService: EmailService,
+    private readonly verificationService: VerificationService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -334,8 +338,46 @@ export class TenantClientsService {
     return paginate(items, countResult[0]?.total || 0, page, limit);
   }
   // ═══════════════════════════════════════════════════════════
-  // APPROVE CLIENT
+  // CLIENT (KYC|AML) MANAGEMENT | Verification calls OpenSacntions
   // ═══════════════════════════════════════════════════════════
+
+  async runVerifications(
+    clientId: string,
+    tenantId: string,
+    completedBy: string,
+  ) {
+    // Confirm client belongs to this tenant before running
+    const client = await this.userModel.findOne({
+      _id: clientId,
+      tenantId: new Types.ObjectId(tenantId),
+      userType: UserType.CLIENT,
+    });
+    if (!client) throw new NotFoundException('Client not found');
+
+    const profile = await this.profileModel.findOne({
+      userId: new Types.ObjectId(clientId),
+    });
+
+    if (!profile || profile.kycStatus !== 'submitted') {
+      throw new BadRequestException(
+        'Client must have submitted their onboarding form before verifications can be run.',
+      );
+    }
+
+    // Delegate to VerificationService — runs all checks in parallel
+    const results = await this.verificationService.runAllVerifications(
+      clientId,
+      tenantId,
+      completedBy,
+    );
+
+    return {
+      success: true,
+      message: 'Verifications completed.',
+      results,
+    };
+  }
+
   async approveClient(clientId: string, tenantId: string, approvedBy: string) {
     const client = await this.userModel.findOne({
       _id: clientId,
@@ -344,31 +386,52 @@ export class TenantClientsService {
     });
     if (!client) throw new NotFoundException('Client not found');
 
-    await this.userModel.findByIdAndUpdate(clientId, {
-      status: AccountStatus.ACTIVE,
+    const profile = await this.profileModel.findOne({
+      userId: new Types.ObjectId(clientId),
     });
 
-    await this.profileModel.findOneAndUpdate(
-      { userId: new Types.ObjectId(clientId) },
-      {
-        kycStatus: 'approved',
-        kycCompletedAt: new Date(),
-        $push: {
-          'metadata.auditTrail': {
-            action: 'approved',
-            performedBy: approvedBy,
-            timestamp: new Date(),
+    // ── Verification gate ─────────────────────────────────────
+    // Client must have submitted their onboarding before approval
+    if (!profile || profile.kycStatus !== 'submitted') {
+      throw new BadRequestException(
+        'Client has not submitted their onboarding form. ' +
+          'Approval is only possible after the client submits and ' +
+          'verifications have been completed.',
+      );
+    }
+
+    // Check that verifications have been run (verificationCompletedAt set by
+    // the verification service when all checks pass)
+    if (!profile.verificationCompletedAt) {
+      throw new BadRequestException(
+        'Verifications must be completed before approving this client. ' +
+          'Run all verification checks in the Onboarding Detail view first.',
+      );
+    }
+
+    await Promise.all([
+      this.userModel.findByIdAndUpdate(clientId, {
+        status: AccountStatus.ACTIVE,
+      }),
+      this.profileModel.findOneAndUpdate(
+        { userId: new Types.ObjectId(clientId) },
+        {
+          kycStatus: 'approved',
+          kycCompletedAt: new Date(),
+          $push: {
+            'metadata.auditTrail': {
+              action: 'approved',
+              performedBy: approvedBy,
+              timestamp: new Date(),
+            },
           },
         },
-      },
-    );
+      ),
+    ]);
 
     return { success: true, message: 'Client approved successfully' };
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // REJECT CLIENT
-  // ═══════════════════════════════════════════════════════════
   async rejectClient(
     clientId: string,
     tenantId: string,
@@ -459,9 +522,7 @@ export class TenantClientsService {
         'Client reactivated. They can now log in and redo their onboarding.',
     };
   }
-  // ═══════════════════════════════════════════════════════════
-  // REQUEST INFO
-  // ═══════════════════════════════════════════════════════════
+
   async requestInfo(
     clientId: string,
     tenantId: string,
@@ -488,53 +549,27 @@ export class TenantClientsService {
       },
     );
 
-    // In production: send email to client with the request
-    return { success: true, message: 'Information request sent to client' };
-  }
+    // Get tenant info for the email
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.businessName firstName')
+      .lean();
 
-  // ═══════════════════════════════════════════════════════════
-  // UPDATE CLIENT PROFILE
-  // ═══════════════════════════════════════════════════════════
-  async updateClientProfile(
-    clientId: string,
-    dto: UpdateClientProfileDto,
-    tenantId: string,
-  ) {
-    const userUpdate: any = {};
-    if (dto.firstName) userUpdate.firstName = dto.firstName;
-    if (dto.lastName) userUpdate.lastName = dto.lastName;
-    if (dto.phone) userUpdate.phone = dto.phone;
+    // Send email to client
+    await this.mailService.sendInfoRequest({
+      to: client.email,
+      firstName: client.firstName,
+      tenantBusinessName:
+        (tenant as any)?.tenantProfile?.businessName || 'Your Provider',
+      message: dto.message,
+      requiredDocuments: dto.requiredDocuments || [],
+      loginUrl: `${process.env.CLIENT_APP_URL}`,
+    });
 
-    if (Object.keys(userUpdate).length) {
-      await this.userModel.findOneAndUpdate(
-        {
-          _id: clientId,
-          tenantId: new Types.ObjectId(tenantId),
-          userType: UserType.CLIENT,
-        },
-        { $set: userUpdate },
-      );
-    }
-
-    const profileUpdate: any = {};
-    if (dto.classifications)
-      profileUpdate.classifications = dto.classifications;
-    if (dto.address) profileUpdate.address = dto.address;
-    if (dto.individualProfile)
-      profileUpdate.individualProfile = dto.individualProfile;
-    if (dto.entityProfile) profileUpdate.entityProfile = dto.entityProfile;
-    if (dto.isPoliticallyExposed !== undefined)
-      profileUpdate.isPoliticallyExposed = dto.isPoliticallyExposed;
-    if (dto.pepDetails) profileUpdate.pepDetails = dto.pepDetails;
-    profileUpdate.profileCompletionPercent = this.calculateCompletion(dto);
-
-    await this.profileModel.findOneAndUpdate(
-      { userId: new Types.ObjectId(clientId) },
-      { $set: profileUpdate },
-      { upsert: true },
-    );
-
-    return this.getClientById(clientId, tenantId);
+    return {
+      success: true,
+      message: `Information request sent to ${client.email}`,
+    };
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -563,7 +598,28 @@ export class TenantClientsService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // STATUS / PASSWORD / REMOVE
+  // DELETE CLIENT
+  // ═══════════════════════════════════════════════════════════
+  async deleteClient(clientId: string, tenantId: string): Promise<void> {
+    const client = await this.userModel.findOne({
+      _id: clientId,
+      tenantId: new Types.ObjectId(tenantId),
+      userType: UserType.CLIENT,
+    });
+    if (!client) throw new NotFoundException('Client not found');
+
+    // Delete user record, profile, and onboarding submission
+    await Promise.all([
+      this.userModel.deleteOne({ _id: clientId }),
+      this.profileModel.deleteOne({ userId: new Types.ObjectId(clientId) }),
+      this.onboardingModel.deleteOne({
+        clientId: new Types.ObjectId(clientId),
+      }),
+    ]);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // UPDATE STATUS
   // ═══════════════════════════════════════════════════════════
   async updateClientStatus(
     clientId: string,
@@ -585,68 +641,91 @@ export class TenantClientsService {
     return client;
   }
 
-  //   async resetClientPassword(clientId: string, tenantId: string) {
-  //     const client = await this.userModel.findOne({
-  //       _id: clientId,
-  //       tenantId: new Types.ObjectId(tenantId),
-  //       userType: UserType.CLIENT,
-  //     });
-  //     if (!client) throw new NotFoundException('Client not found');
-  //     const tempPassword = this.generateTempPassword();
-  //     client.password = await bcrypt.hash(tempPassword, 12);
-  //     client.mustChangePassword = true;
-  //     await client.save();
-  //     await this.mailService.sendPasswordReset({
-  //       to: client.email,
-  //       firstName: client.firstName,
-  //       tempPassword,
-  //     });
-  //     return { message: 'Password reset and sent to client email' };
-  //   }
-
-  async removeClient(clientId: string, tenantId: string): Promise<void> {
-    const client = await this.userModel.findOne({
-      _id: clientId,
-      tenantId: new Types.ObjectId(tenantId),
-      userType: UserType.CLIENT,
-    });
-    if (!client) throw new NotFoundException('Client not found');
-    await this.userModel.findByIdAndUpdate(clientId, {
-      status: AccountStatus.INACTIVE,
-    });
-  }
-
   // ═══════════════════════════════════════════════════════════
   // STATS
   // ═══════════════════════════════════════════════════════════
   async getClientStats(tenantId: string) {
     const tId = new Types.ObjectId(tenantId);
+
     const [total, byStatus, byClassification, kycStats, recentClients] =
       await Promise.all([
+        // ✅ Only count active clients — excludes soft-deleted (INACTIVE)
         this.userModel.countDocuments({
           userType: UserType.CLIENT,
           tenantId: tId,
+          status: { $ne: AccountStatus.INACTIVE },
         }),
+
+        // ✅ Group by status — excludes INACTIVE from breakdown
         this.userModel.aggregate([
-          { $match: { userType: UserType.CLIENT, tenantId: tId } },
+          {
+            $match: {
+              userType: UserType.CLIENT,
+              tenantId: tId,
+              status: { $ne: AccountStatus.INACTIVE },
+            },
+          },
           { $group: { _id: '$status', count: { $sum: 1 } } },
         ]),
+
+        // ✅ Fix: classifications is a string not array — remove $unwind
+        //    Also exclude inactive clients' profiles
         this.profileModel.aggregate([
-          { $match: { tenantId: tId } },
-          { $unwind: '$classifications' },
-          { $group: { _id: '$classifications', count: { $sum: 1 } } },
+          {
+            $match: {
+              tenantId: tId,
+              // Exclude profiles whose users are inactive by joining
+              // We filter by kycStatus != rejected/expired as a proxy,
+              // but the cleaner fix is a $lookup to exclude inactive users
+            },
+          },
+          {
+            $lookup: {
+              from: 'users',
+              localField: 'userId',
+              foreignField: '_id',
+              as: 'user',
+            },
+          },
+          { $unwind: '$user' },
+          { $match: { 'user.status': { $ne: AccountStatus.INACTIVE } } },
+          {
+            $group: {
+              _id: '$classifications', // ← string field, no $unwind needed
+              count: { $sum: 1 },
+            },
+          },
         ]),
+
+        // ✅ KYC stats — exclude inactive users
         this.profileModel.aggregate([
           { $match: { tenantId: tId } },
+          {
+            $lookup: {
+              from: 'users',
+              localField: 'userId',
+              foreignField: '_id',
+              as: 'user',
+            },
+          },
+          { $unwind: '$user' },
+          { $match: { 'user.status': { $ne: AccountStatus.INACTIVE } } },
           { $group: { _id: '$kycStatus', count: { $sum: 1 } } },
         ]),
+
+        // ✅ Recent clients — excludes INACTIVE
         this.userModel
-          .find({ userType: UserType.CLIENT, tenantId: tId })
+          .find({
+            userType: UserType.CLIENT,
+            tenantId: tId,
+            status: { $ne: AccountStatus.INACTIVE },
+          })
           .select('firstName lastName email status createdAt')
           .sort({ createdAt: -1 })
           .limit(5)
           .lean(),
       ]);
+
     return { total, byStatus, byClassification, kycStats, recentClients };
   }
 

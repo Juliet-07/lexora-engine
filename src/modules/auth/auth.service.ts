@@ -151,12 +151,43 @@ export class AuthService {
     return user as UserDocument;
   }
 
+  async updateProfile(userId: string, dto: UpdateProfileDto): Promise<object> {
+    const update: any = {};
+    if (dto.firstName) update.firstName = dto.firstName;
+    if (dto.lastName) update.lastName = dto.lastName;
+    if (dto.phone) update.phone = dto.phone;
+
+    if (!Object.keys(update).length) {
+      throw new BadRequestException('No fields provided to update');
+    }
+
+    const user = await this.userModel
+      .findByIdAndUpdate(userId, { $set: update }, { new: true })
+      .select('-password -passwordResetToken');
+
+    if (!user) throw new NotFoundException('User not found');
+    return user;
+  }
+
   async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
+    if (dto.newPassword !== dto.confirmPassword) {
+      throw new BadRequestException(
+        'New password and confirm password do not match',
+      );
+    }
+
     const user = await this.userModel.findById(userId).select('+password');
     if (!user) throw new NotFoundException('User not found');
 
     const valid = await bcrypt.compare(dto.currentPassword, user.password);
     if (!valid) throw new BadRequestException('Current password is incorrect');
+
+    const isSame = await bcrypt.compare(dto.newPassword, user.password);
+    if (isSame) {
+      throw new BadRequestException(
+        'New password must be different from your current password',
+      );
+    }
 
     const hashed = await bcrypt.hash(dto.newPassword, 12);
 

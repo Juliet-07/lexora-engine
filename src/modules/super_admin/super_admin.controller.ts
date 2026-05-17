@@ -33,6 +33,8 @@ import {
   AssignTenantSubscriptionDto,
   UpdateTenantSubscriptionStatusDto,
   AddAddonModulesDto,
+  CreateRiskRulesDto,
+  UpdateRiskRulesDto,
 } from './dto/superadmin.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -117,21 +119,23 @@ export class SuperAdminController {
     return this.service.updateTenantStatus(id, dto);
   }
 
-//   @Post('tenants/:id/reset-password')
-//   @HttpCode(HttpStatus.OK)
-//   @ApiOperation({
-//     summary: 'Reset tenant password',
-//     description: 'Generates a new temp password and emails it to the tenant.',
-//   })
-//   resetTenantPassword(@Param('id') id: string) {
-//     return this.service.resetTenantPassword(id);
-//   }
+  //   @Post('tenants/:id/reset-password')
+  //   @HttpCode(HttpStatus.OK)
+  //   @ApiOperation({
+  //     summary: 'Reset tenant password',
+  //     description: 'Generates a new temp password and emails it to the tenant.',
+  //   })
+  //   resetTenantPassword(@Param('id') id: string) {
+  //     return this.service.resetTenantPassword(id);
+  //   }
 
   @Delete('tenants/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
-    summary: 'Soft-delete (deactivate) a tenant',
+    summary: 'Permanently delete a tenant',
     description:
-      'Deactivates the tenant and all their clients. Cancels subscription.',
+      '⚠️ IRREVERSIBLE. Deletes the tenant, all their clients, team members, ' +
+      'and subscription from the database.',
   })
   deleteTenant(@Param('id') id: string) {
     return this.service.deleteTenant(id);
@@ -270,4 +274,39 @@ export class SuperAdminController {
   ) {
     return this.service.getAllSubscriptions(pagination, status);
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // RISK RULES
+  // ═══════════════════════════════════════════════════════════
+
+  @Get('risk-rules')
+  @ApiOperation({
+    summary: 'Get platform risk rules',
+    description:
+      'Returns the current risk scoring thresholds and auto-flag settings. ' +
+      'Returns defaults if none have been configured yet.',
+  })
+  getRiskRules() {
+    return this.service.getRiskRules();
+  }
+
+  @Post('risk-rules')
+  @ApiOperation({
+    summary: 'Create or update risk rules',
+    description:
+      'Sets the platform-wide risk scoring configuration. ' +
+      'Only one set of rules exists — calling this again updates them.',
+  })
+  upsertRiskRules(@Body() dto: CreateRiskRulesDto) {
+    return this.service.createOrUpdateRiskRules(dto);
+  }
+
+  // @Patch('risk-rules')
+  // @ApiOperation({
+  //   summary: 'Partially update risk rules',
+  //   description: 'Update one or more risk rule fields without replacing all.',
+  // })
+  // updateRiskRules(@Body() dto: UpdateRiskRulesDto) {
+  //   return this.service.createOrUpdateRiskRules(dto);
+  // }
 }

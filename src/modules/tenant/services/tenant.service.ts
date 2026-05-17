@@ -10,21 +10,21 @@ import { Model, Types } from 'mongoose';
 import type { QueryFilter } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 
-import { User, UserDocument } from '../auth/schemas/user.schema';
+import { User, UserDocument } from '../../auth/schemas/user.schema';
 import {
   UpdateTenantProfileDto,
   InviteTeamMemberDto,
   UpdateTeamMemberDto,
   UpdateTeamMemberStatusDto,
   TeamMemberFilterDto,
-} from './dto/tenant.dto';
+} from '../dto/tenant.dto';
 import {
   UserType,
   TenantRole,
   AccountStatus,
-} from '../../common/interfaces/user-role.enum';
-import { PaginationDto, paginate } from '../../common/pagination.dto';
-import { EmailService } from '../../common/utils/mailing/email.service';
+} from '../../../common/interfaces/user-role.enum';
+import { PaginationDto, paginate } from '../../../common/pagination.dto';
+import { EmailService } from '../../../common/utils/mailing/email.service';
 
 // Role hierarchy — members can only assign roles below their own level
 const ROLE_HIERARCHY: Record<string, number> = {
@@ -179,70 +179,70 @@ export class TenantService {
   // TEAM MANAGEMENT
   // ═══════════════════════════════════════════════════════════
 
-//   async inviteTeamMember(
-//     dto: InviteTeamMemberDto,
-//     tenantId: string,
-//     invitedBy: string,
-//     inviterRoles: string[],
-//   ): Promise<UserDocument> {
-//     this.enforceRoleHierarchy(inviterRoles, dto.role);
+  // async inviteTeamMember(
+  //   dto: InviteTeamMemberDto,
+  //   tenantId: string,
+  //   invitedBy: string,
+  //   inviterRoles: string[],
+  // ): Promise<UserDocument> {
+  //   this.enforceRoleHierarchy(inviterRoles, dto.role);
 
-//     if (dto.role === TenantRole.TENANT_OWNER) {
-//       const existingOwner = await this.userModel.findOne({
-//         tenantId: new Types.ObjectId(tenantId),
-//         roles: { $in: [TenantRole.TENANT_OWNER] },
-//         userType: UserType.TENANT,
-//       });
-//       if (existingOwner) {
-//         throw new ConflictException(
-//           'A tenant owner already exists. Transfer ownership instead.',
-//         );
-//       }
-//     }
+  //   if (dto.role === TenantRole.TENANT_OWNER) {
+  //     const existingOwner = await this.userModel.findOne({
+  //       tenantId: new Types.ObjectId(tenantId),
+  //       roles: { $in: [TenantRole.TENANT_OWNER] },
+  //       userType: UserType.TENANT,
+  //     });
+  //     if (existingOwner) {
+  //       throw new ConflictException(
+  //         'A tenant owner already exists. Transfer ownership instead.',
+  //       );
+  //     }
+  //   }
 
-//     const emailTaken = await this.userModel.findOne({
-//       email: dto.email.toLowerCase(),
-//     });
-//     if (emailTaken)
-//       throw new ConflictException('Email already registered on the platform');
+  //   const emailTaken = await this.userModel.findOne({
+  //     email: dto.email.toLowerCase(),
+  //   });
+  //   if (emailTaken)
+  //     throw new ConflictException('Email already registered on the platform');
 
-//     const tempPassword = this.generateTempPassword();
-//     const hashedPassword = await bcrypt.hash(tempPassword, 12);
+  //   const tempPassword = this.generateTempPassword();
+  //   const hashedPassword = await bcrypt.hash(tempPassword, 12);
 
-//     const member = await this.userModel.create({
-//       userType: UserType.TENANT,
-//       firstName: dto.firstName,
-//       lastName: dto.lastName,
-//       email: dto.email.toLowerCase(),
-//       password: hashedPassword,
-//       phone: dto.phone,
-//       roles: [dto.role],
-//       status: AccountStatus.PENDING,
-//       tenantId: new Types.ObjectId(tenantId),
-//       createdBy: new Types.ObjectId(invitedBy),
-//       mustChangePassword: true,
-//     });
+  //   const member = await this.userModel.create({
+  //     userType: UserType.TENANT,
+  //     firstName: dto.firstName,
+  //     lastName: dto.lastName,
+  //     email: dto.email.toLowerCase(),
+  //     password: hashedPassword,
+  //     phone: dto.phone,
+  //     roles: [dto.role],
+  //     status: AccountStatus.PENDING,
+  //     tenantId: new Types.ObjectId(tenantId),
+  //     createdBy: new Types.ObjectId(invitedBy),
+  //     mustChangePassword: true,
+  //   });
 
-//     const tenant = await this.userModel
-//       .findById(tenantId)
-//       .select('tenantProfile.businessName firstName')
-//       .lean();
+  //   const tenant = await this.userModel
+  //     .findById(tenantId)
+  //     .select('tenantProfile.businessName firstName')
+  //     .lean();
 
-//     await this.mailService.sendClientWelcome({
-//       to: member.email,
-//       firstName: member.firstName,
-//       tenantBusinessName:
-//         (tenant as any)?.tenantProfile?.businessName ||
-//         (tenant as any)?.firstName ||
-//         'Your Organization',
-//       tempPassword,
-//       loginUrl: `${process.env.APP_URL || 'http://localhost:3000'}/login`,
-//     });
+  //   await this.mailService.sendClientWelcome({
+  //     to: member.email,
+  //     firstName: member.firstName,
+  //     tenantBusinessName:
+  //       (tenant as any)?.tenantProfile?.businessName ||
+  //       (tenant as any)?.firstName ||
+  //       'Your Organization',
+  //     tempPassword,
+  //     loginUrl: `${process.env.APP_URL || 'http://localhost:3000'}/login`,
+  //   });
 
-//     const obj = member.toObject();
-//     delete obj.password;
-//     return obj as UserDocument;
-//   }
+  //   const obj = member.toObject();
+  //   delete obj.password;
+  //   return obj as UserDocument;
+  // }
 
   async getTeamMembers(
     tenantId: string,
@@ -348,28 +348,6 @@ export class TenantService {
     if (!member) throw new NotFoundException('Team member not found');
     return member;
   }
-
-//   async resetTeamMemberPassword(memberId: string, tenantId: string) {
-//     const member = await this.userModel.findOne({
-//       _id: memberId,
-//       tenantId: new Types.ObjectId(tenantId),
-//       userType: UserType.TENANT,
-//     });
-//     if (!member) throw new NotFoundException('Team member not found');
-
-//     const tempPassword = this.generateTempPassword();
-//     member.password = await bcrypt.hash(tempPassword, 12);
-//     member.mustChangePassword = true;
-//     await member.save();
-
-//     await this.mailService.sendPasswordReset({
-//       to: member.email,
-//       firstName: member.firstName,
-//       tempPassword,
-//     });
-
-//     return { message: 'Password reset and sent to member email' };
-//   }
 
   async removeTeamMember(memberId: string, tenantId: string): Promise<void> {
     const member = await this.userModel.findOne({

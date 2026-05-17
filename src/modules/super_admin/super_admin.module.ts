@@ -9,6 +9,8 @@ import {
   SubscriptionPlanConfigSchema,
   TenantSubscription,
   TenantSubscriptionSchema,
+  RiskRules,
+  RiskRulesSchema,
 } from './schemas';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailModule } from 'src/common/utils/mailing/email.module';
@@ -24,6 +26,7 @@ import { EmailModule } from 'src/common/utils/mailing/email.module';
         schema: SubscriptionPlanConfigSchema,
       },
       { name: TenantSubscription.name, schema: TenantSubscriptionSchema },
+      { name: RiskRules.name, schema: RiskRulesSchema },
     ]),
   ],
   controllers: [SuperAdminController],
