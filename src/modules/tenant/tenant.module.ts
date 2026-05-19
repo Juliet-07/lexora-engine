@@ -5,6 +5,8 @@ import { TenantController } from './tenant.controller';
 import { TenantService } from './services/tenant.service';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import {
+  SubscriptionPlanConfig,
+  SubscriptionPlanConfigSchema,
   TenantSubscription,
   TenantSubscriptionSchema,
 } from '../super_admin/schemas/subscription.schema';
@@ -22,6 +24,10 @@ import { VerificationService } from './services/verification.service';
     EmailModule,
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
+      {
+        name: SubscriptionPlanConfig.name,
+        schema: SubscriptionPlanConfigSchema,
+      },
       { name: 'TenantSubscription', schema: TenantSubscriptionSchema },
       { name: ClientProfileRecord.name, schema: ClientProfileSchema },
       { name: 'OnboardingSubmission', schema: OnboardingSchema },

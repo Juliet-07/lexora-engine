@@ -25,6 +25,10 @@ import {
 } from '../../../common/interfaces/user-role.enum';
 import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
+import {
+  SubscriptionPlanConfig,
+  SubscriptionPlanDocument,
+} from 'src/modules/super_admin/schemas';
 
 // Role hierarchy — members can only assign roles below their own level
 const ROLE_HIERARCHY: Record<string, number> = {
@@ -40,6 +44,8 @@ const ROLE_HIERARCHY: Record<string, number> = {
 export class TenantService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(SubscriptionPlanConfig.name)
+    private readonly planModel: Model<SubscriptionPlanDocument>,
     @InjectModel('TenantSubscription')
     private readonly subscriptionModel: Model<any>,
     private readonly mailService: EmailService,
@@ -175,6 +181,59 @@ export class TenantService {
     };
   }
 
+  // ── Get available plans (for tenant to browse before upgrading) ──
+  async getAvailablePlans() {
+    return this.planModel
+      .find({ isActive: true })
+      .select(
+        'plan displayName description priceMonthly priceAnnual features maxClients maxUsers includedModules',
+      )
+      .sort({ priceMonthly: 1 })
+      .lean();
+  }
+
+  // ── Self-upgrade plan ─────────────────────────────────────────
+  async upgradePlan(tenantId: string, newPlan: string) {
+    const plan = await this.planModel
+      .findOne({ plan: newPlan, isActive: true })
+      .lean();
+    if (!plan)
+      throw new NotFoundException(`Plan "${newPlan}" not found or inactive`);
+
+    const current = await this.subscriptionModel.findOne({
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!current) throw new NotFoundException('No subscription found');
+
+    if (current.plan === newPlan) {
+      throw new BadRequestException('You are already on this plan');
+    }
+
+    // Update subscription with new plan's modules
+    const baseModules = plan.includedModules || [];
+    const addonModules = current.addonModules || [];
+    const activeModules = [...new Set([...baseModules, ...addonModules])];
+    const periodEnd = new Date(new Date().setMonth(new Date().getMonth() + 1));
+
+    await this.subscriptionModel.findOneAndUpdate(
+      { tenantId: new Types.ObjectId(tenantId) },
+      {
+        plan: newPlan,
+        status: 'active',
+        baseModules,
+        activeModules,
+        currentPeriodStart: new Date(),
+        currentPeriodEnd: periodEnd,
+        trialEndsAt: null,
+        cancelledAt: null,
+      },
+    );
+
+    return {
+      success: true,
+      message: `Successfully upgraded to the ${plan.plan || newPlan} plan.`,
+    };
+  }
   // ═══════════════════════════════════════════════════════════
   // TEAM MANAGEMENT
   // ═══════════════════════════════════════════════════════════

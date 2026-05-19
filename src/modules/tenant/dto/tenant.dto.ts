@@ -140,3 +140,9 @@ export class TeamMemberFilterDto {
 
   @ApiPropertyOptional() @IsOptional() @IsString() search?: string;
 }
+
+export class UpgradePlanDto {
+  @ApiProperty({ example: 'growth', description: 'Plan ID to upgrade to' })
+  @IsString()
+  plan: string;
+}

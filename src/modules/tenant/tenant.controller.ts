@@ -25,6 +25,7 @@ import {
   UpdateTeamMemberDto,
   UpdateTeamMemberStatusDto,
   TeamMemberFilterDto,
+  UpgradePlanDto,
 } from './dto/tenant.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -319,6 +320,29 @@ export class TenantController {
     return this.service.getMyModules(resolvedTenantId);
   }
 
+  @Get('plans')
+  @ApiOperation({
+    summary: 'Get available subscription plans',
+    description: 'Returns all active plans that the tenant can upgrade to.',
+  })
+  getAvailablePlans() {
+    return this.service.getAvailablePlans();
+  }
+
+  @Post('upgrade-plan')
+  @HttpCode(HttpStatus.OK)
+  @Roles(TenantRole.TENANT_OWNER)
+  @ApiOperation({
+    summary: 'Self-upgrade subscription plan [owner only]',
+    description: 'Tenant owner upgrades their subscription to a new plan.',
+  })
+  upgradePlan(
+    @Body() dto: UpgradePlanDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.upgradePlan(t || u, dto.plan);
+  }
   // ═══════════════════════════════════════════════════════════
   // TEAM MANAGEMENT
   // ═══════════════════════════════════════════════════════════

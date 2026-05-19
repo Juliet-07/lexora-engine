@@ -74,16 +74,6 @@ async function bootstrap() {
       )
       .addTag('Tenant', 'Tenant Management System')
       .addTag('KYC / AML', 'KYC submission, risk scoring, screening')
-      .addTag('Documents', 'Document management and e-signatures')
-      .addTag('Projects', 'Project, task and milestone management')
-      .addTag('Billing', 'Invoices and payment processing')
-      .addTag('Communications', 'Messaging and notifications')
-      .addTag(
-        'Compliance & Alerts',
-        'Compliance monitoring and case management',
-      )
-      .addTag('Reporting', 'Analytics and reporting')
-      .addTag('Background Jobs', 'Cron job management')
       .build();
 
     const document = SwaggerModule.createDocument(app, swaggerConfig);

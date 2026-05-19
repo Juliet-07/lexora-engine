@@ -18,13 +18,6 @@ import { SuperAdminModule } from './modules/super_admin/super_admin.module';
 import { TenantModule } from './modules/tenant/tenant.module';
 import { ClientModule } from './modules/clients/client.module';
 import { KycModule } from './modules/kyc/kyc.module';
-import { DocumentsModule } from './modules/documents/documents.module';
-import { ProjectsModule } from './modules/projects/projects.module';
-import { BillingModule } from './modules/billing/billing.module';
-import { CommunicationsModule } from './modules/communications/communications.module';
-import { ComplianceModule } from './modules/compliance/compliance.module';
-import { ReportingModule } from './modules/reporting/reporting.module';
-import { JobsModule } from './modules/jobs/jobs.module';
 
 // Guards, Filters, Interceptors
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
@@ -83,13 +76,6 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     TenantModule,
     ClientModule,
     KycModule,
-    DocumentsModule,
-    ProjectsModule,
-    BillingModule,
-    CommunicationsModule,
-    ComplianceModule,
-    ReportingModule,
-    JobsModule,
   ],
   providers: [
     Reflector,
