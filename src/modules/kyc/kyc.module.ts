@@ -32,6 +32,7 @@ import {
   WatchlistEntry,
   WatchlistEntrySchema,
 } from './schemas/watchlist.schema';
+import { ReportsService } from './services/reports.service';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import {
     StrService,
     ComplianceAlertsService,
     WatchlistService,
+    ReportsService,
   ],
   exports: [RiskEngineService, TransactionService, ComplianceAlertsService],
 })

@@ -48,6 +48,7 @@ import {
   WatchlistFilterDto,
 } from './dto/kyc.dto';
 import { StrStatus } from './schemas/str.schema';
+import { ReportsService } from './services/reports.service';
 
 const COMPLIANCE = [
   TenantRole.TENANT_OWNER,
@@ -66,6 +67,7 @@ export class KycController {
     private readonly str: StrService,
     private readonly alerts: ComplianceAlertsService,
     private readonly watchlist: WatchlistService,
+    private readonly reports: ReportsService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -584,5 +586,85 @@ export class KycController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.watchlist.adHocScreen(t || u, dto);
+  }
+  @Get('reports/operational')
+  @ApiOperation({
+    summary: 'Operational report',
+    description:
+      'Alerts generated/resolved, STRs filed, avg resolution time, ' +
+      'daily alert activity trend for last 30 days.',
+  })
+  getOperationalReport(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.reports.getOperationalReport(t || u);
+  }
+
+  @Get('reports/risk')
+  @ApiOperation({
+    summary: 'Risk analytics report',
+    description:
+      'Client risk distribution, verification outcomes (PEP/sanctions/adverse media), ' +
+      'top risk factors, high-risk client list, risk trend.',
+  })
+  getRiskAnalytics(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.reports.getRiskAnalytics(t || u);
+  }
+
+  @Get('reports/regulatory')
+  @ApiOperation({
+    summary: 'Regulatory dashboard',
+    description:
+      'FIU-facing metrics — STR stats, overdue periodic reviews, ' +
+      'sanctions/PEP hit counts, recent STR list.',
+  })
+  getRegulatoryDashboard(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.reports.getRegulatoryDashboard(t || u);
+  }
+
+  @Get('reports/trends')
+  @ApiOperation({
+    summary: 'Trend analysis',
+    description:
+      'Client growth, onboarding funnel, alert trend, ' +
+      'transaction volume trend and STR filings over last 6 months.',
+  })
+  getTrendAnalysis(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.reports.getTrendAnalysis(t || u);
+  }
+
+  @Get('reports/export/:type')
+  @Roles(
+    TenantRole.TENANT_OWNER,
+    TenantRole.TENANT_ADMIN,
+    TenantRole.TENANT_COMPLIANCE,
+  )
+  @ApiOperation({
+    summary: 'Export report as CSV',
+    description:
+      'type = operational | risk | regulatory | trends. ' +
+      'Returns a downloadable CSV file.',
+  })
+  async exportReport(
+    @Param('type') type: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const csv = await this.reports.exportCsv(t || u, type);
+    const filename = `lexora-${type}-report-${new Date().toISOString().split('T')[0]}.csv`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
   }
 }
