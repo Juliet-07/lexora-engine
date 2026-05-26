@@ -1,8 +1,13 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-
-import { TenantController } from './tenant.controller';
-import { TenantService } from './services/tenant.service';
+import { EngagementLetterController } from './controllers/engagement-letter.controller';
+import { TenantController } from './controllers/tenant.controller';
+import {
+  EngagementLetterService,
+  TenantClientsService,
+  VerificationService,
+  TenantService,
+} from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import {
   SubscriptionPlanConfig,
@@ -11,13 +16,18 @@ import {
   TenantSubscriptionSchema,
 } from '../super_admin/schemas/subscription.schema';
 import { EmailModule } from 'src/common/utils/mailing/email.module';
-import { TenantClientsService } from './services/tenant-client.service';
 import {
   ClientProfileRecord,
   ClientProfileSchema,
 } from './schemas/client-profile.schema';
 import { OnboardingSchema } from '../clients/schemas';
-import { VerificationService } from './services/verification.service';
+import {} from './services/verification.service';
+import {
+  ClientEngagementSigning,
+  ClientEngagementSigningSchema,
+  EngagementLetter,
+  EngagementLetterSchema,
+} from './schemas/engagement-letter.schema';
 
 @Module({
   imports: [
@@ -31,10 +41,20 @@ import { VerificationService } from './services/verification.service';
       { name: 'TenantSubscription', schema: TenantSubscriptionSchema },
       { name: ClientProfileRecord.name, schema: ClientProfileSchema },
       { name: 'OnboardingSubmission', schema: OnboardingSchema },
+      { name: EngagementLetter.name, schema: EngagementLetterSchema },
+      {
+        name: ClientEngagementSigning.name,
+        schema: ClientEngagementSigningSchema,
+      },
     ]),
   ],
-  controllers: [TenantController],
-  providers: [TenantService, TenantClientsService, VerificationService],
-  exports: [TenantService, TenantClientsService],
+  controllers: [TenantController, EngagementLetterController],
+  providers: [
+    TenantService,
+    TenantClientsService,
+    VerificationService,
+    EngagementLetterService,
+  ],
+  exports: [TenantService, TenantClientsService, EngagementLetterService],
 })
 export class TenantModule {}

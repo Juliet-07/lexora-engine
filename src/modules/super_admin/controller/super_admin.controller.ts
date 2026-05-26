@@ -19,7 +19,7 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 
-import { SuperAdminService } from './super_admin.service';
+import { SuperAdminService } from '../services/super_admin.service';
 import {
   CreateTenantDto,
   UpdateTenantDto,
@@ -35,15 +35,15 @@ import {
   AddAddonModulesDto,
   CreateRiskRulesDto,
   UpdateRiskRulesDto,
-} from './dto/superadmin.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { UserTypes, CurrentUser } from '../../common/decorators/index';
+} from '../dto/superadmin.dto';
+import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import {
   UserType,
   SubscriptionStatus,
-} from '../../common/interfaces/user-role.enum';
-import { PaginationDto } from '../../common/pagination.dto';
+} from '../../../common/interfaces/user-role.enum';
+import { PaginationDto } from '../../../common/pagination.dto';
 
 @ApiTags('SuperAdmin')
 @ApiBearerAuth('bearerAuth')

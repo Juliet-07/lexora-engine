@@ -30,6 +30,7 @@ import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
 import { timestamp } from 'rxjs';
 import { VerificationService } from './verification.service';
+import { EngagementLetterService } from './engagement-letter.service';
 
 @Injectable()
 export class TenantClientsService {
@@ -43,16 +44,97 @@ export class TenantClientsService {
     private readonly subscriptionModel: Model<any>,
     private readonly mailService: EmailService,
     private readonly verificationService: VerificationService,
+    private readonly engagementLetterService: EngagementLetterService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
   // QUICK ADD
   // ═══════════════════════════════════════════════════════════
+  // async quickAddClient(
+  //   dto: QuickAddClientDto,
+  //   tenantId: string,
+  //   addedBy: string,
+  // ) {
+  //   await this.enforceClientLimit(tenantId);
+
+  //   const emailTaken = await this.userModel.findOne({
+  //     email: dto.email.toLowerCase(),
+  //   });
+  //   if (emailTaken)
+  //     throw new ConflictException('Email already registered on the platform');
+
+  //   // Split fullName into firstName + lastName
+  //   const nameParts = dto.fullName.trim().split(/\s+/);
+  //   const firstName = nameParts[0];
+  //   const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '-';
+
+  //   const tempPassword = this.generateTempPassword();
+  //   const hashedPassword = await bcrypt.hash(tempPassword, 12);
+
+  //   const client = await this.userModel.create({
+  //     userType: UserType.CLIENT,
+  //     firstName,
+  //     lastName,
+  //     email: dto.email.toLowerCase(),
+  //     password: hashedPassword,
+  //     phone: dto.phoneNumber,
+  //     roles: [ClientRole.CLIENT_PRIMARY],
+  //     status: AccountStatus.PENDING,
+  //     tenantId: new Types.ObjectId(tenantId),
+  //     createdBy: new Types.ObjectId(addedBy),
+  //     mustChangePassword: true,
+  //     clientProfile: {
+  //       classifications: dto.clientType,
+  //     },
+  //   });
+
+  //   // Create extended profile
+  //   await this.profileModel.create({
+  //     userId: client._id,
+  //     tenantId: new Types.ObjectId(tenantId),
+  //     assignedTo: new Types.ObjectId(addedBy),
+  //     classifications: dto.clientType,
+  //     kycStatus: 'not_started',
+  //   });
+
+  //   // Get tenant business name
+  //   const tenant = await this.userModel
+  //     .findById(tenantId)
+  //     .select('tenantProfile.businessName firstName')
+  //     .lean();
+
+  //   await this.mailService.sendClientWelcome({
+  //     to: client.email,
+  //     firstName,
+  //     tenantBusinessName:
+  //       (tenant as any)?.tenantProfile?.businessName || 'Your Provider',
+  //     tempPassword,
+  //     loginUrl: `${process.env.CLIENT_APP_URL || 'http://localhost:3000'}/login`,
+  //     clientType: client.clientProfile.classifications,
+  //   });
+
+  //   const obj = client.toObject();
+  //   delete obj.password;
+  //   return {
+  //     success: true,
+  //     message:
+  //       'Client added successfully. Login credentials sent to their email.',
+  //     data: obj,
+  //   };
+  // }
+
   async quickAddClient(
     dto: QuickAddClientDto,
     tenantId: string,
     addedBy: string,
   ) {
+    // ── 1. Check engagement document setup FIRST ───────────────
+    // This throws ForbiddenException if tenant hasn't set up their
+    // document and hasn't explicitly bypassed the requirement.
+    const { requiresSigning, letter } =
+      await this.engagementLetterService.checkTenantSetup(tenantId);
+
+    // ── 2. Standard checks ─────────────────────────────────────
     await this.enforceClientLimit(tenantId);
 
     const emailTaken = await this.userModel.findOne({
@@ -61,22 +143,28 @@ export class TenantClientsService {
     if (emailTaken)
       throw new ConflictException('Email already registered on the platform');
 
-    // Split fullName into firstName + lastName
     const nameParts = dto.fullName.trim().split(/\s+/);
     const firstName = nameParts[0];
     const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '-';
 
-    const tempPassword = this.generateTempPassword();
-    const hashedPassword = await bcrypt.hash(tempPassword, 12);
+    // ── 3. Create client with placeholder password ─────────────
+    // Real password is only set after engagement letter is signed.
+    // If bypass is on, we set a real password immediately below.
+    const placeholderPassword = await bcrypt.hash(
+      `placeholder-${Date.now()}`,
+      12,
+    );
 
     const client = await this.userModel.create({
       userType: UserType.CLIENT,
       firstName,
       lastName,
       email: dto.email.toLowerCase(),
-      password: hashedPassword,
+      password: placeholderPassword,
       phone: dto.phoneNumber,
       roles: [ClientRole.CLIENT_PRIMARY],
+      // Status stays PENDING until engagement letter is signed
+      // (or PENDING immediately if bypass is on — same status, different path)
       status: AccountStatus.PENDING,
       tenantId: new Types.ObjectId(tenantId),
       createdBy: new Types.ObjectId(addedBy),
@@ -86,26 +174,55 @@ export class TenantClientsService {
       },
     });
 
-    // Create extended profile
     await this.profileModel.create({
       userId: client._id,
       tenantId: new Types.ObjectId(tenantId),
       assignedTo: new Types.ObjectId(addedBy),
       classifications: dto.clientType,
       kycStatus: 'not_started',
+      engagementLetterSigned: false,
+      engagementLetterSignedAt: null,
     });
 
-    // Get tenant business name
     const tenant = await this.userModel
       .findById(tenantId)
       .select('tenantProfile.businessName firstName')
       .lean();
+    const businessName =
+      (tenant as any)?.tenantProfile?.businessName || 'Your Provider';
+
+    // ── 4. Route based on setup ────────────────────────────────
+    if (requiresSigning && letter) {
+      // Send engagement letter to prospect — NO credentials yet
+      await this.engagementLetterService.sendEngagementLetterToClient(
+        client._id.toString(),
+        tenantId,
+        letter,
+      );
+
+      const obj = client.toObject();
+      delete obj.password;
+      return {
+        success: true,
+        message:
+          'Prospect added. Engagement document sent to their email for signing. ' +
+          'They will receive login credentials once they sign.',
+        data: obj,
+      };
+    }
+
+    // Bypass is on — send credentials immediately (old flow)
+    const tempPassword = this.generateTempPassword();
+    const hashedPassword = await bcrypt.hash(tempPassword, 12);
+
+    await this.userModel.findByIdAndUpdate(client._id, {
+      password: hashedPassword,
+    });
 
     await this.mailService.sendClientWelcome({
       to: client.email,
       firstName,
-      tenantBusinessName:
-        (tenant as any)?.tenantProfile?.businessName || 'Your Provider',
+      tenantBusinessName: businessName,
       tempPassword,
       loginUrl: `${process.env.CLIENT_APP_URL || 'http://localhost:3000'}/login`,
       clientType: client.clientProfile.classifications,
@@ -120,7 +237,7 @@ export class TenantClientsService {
       data: obj,
     };
   }
-
+  
   // ═══════════════════════════════════════════════════════════
   // GET CLIENTS (Onboarding & CDD list view)
   // ═══════════════════════════════════════════════════════════

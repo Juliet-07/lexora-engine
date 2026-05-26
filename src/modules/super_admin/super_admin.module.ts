@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { SuperAdminController } from './super_admin.controller';
-import { SuperAdminService } from './super_admin.service';
+import { SuperAdminController } from './controller/super_admin.controller';
+import { SuperAdminService } from './services/super_admin.service';
 import {
   PlatformModule,
   PlatformModuleSchema,
@@ -14,6 +14,7 @@ import {
 } from './schemas';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailModule } from 'src/common/utils/mailing/email.module';
+import { SubscriptionExpiryService } from './services/subscription-expiry.service';
 
 @Module({
   imports: [
@@ -30,7 +31,7 @@ import { EmailModule } from 'src/common/utils/mailing/email.module';
     ]),
   ],
   controllers: [SuperAdminController],
-  providers: [SuperAdminService],
+  providers: [SuperAdminService, SubscriptionExpiryService],
   exports: [SuperAdminService, MongooseModule],
 })
 export class SuperAdminModule {}

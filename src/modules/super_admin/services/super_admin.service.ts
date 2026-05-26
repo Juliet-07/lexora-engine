@@ -9,7 +9,7 @@ import { Model, Types } from 'mongoose';
 import type { QueryFilter } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
-import { User, UserDocument } from '../auth/schemas/user.schema';
+import { User, UserDocument } from '../../auth/schemas/user.schema';
 import {
   PlatformModule,
   PlatformModuleDocument,
@@ -19,7 +19,7 @@ import {
   TenantSubscriptionDocument,
   RiskRules,
   RiskRulesDocument,
-} from './schemas';
+} from '../schemas';
 import {
   CreateTenantDto,
   UpdateTenantDto,
@@ -33,7 +33,7 @@ import {
   UpdateTenantSubscriptionStatusDto,
   AddAddonModulesDto,
   CreateRiskRulesDto,
-} from './dto/superadmin.dto';
+} from '../dto/superadmin.dto';
 import {
   UserType,
   TenantRole,
@@ -41,9 +41,9 @@ import {
   SubscriptionPlan,
   SubscriptionStatus,
   PlatformModuleKey,
-} from '../../common/interfaces/user-role.enum';
-import { PaginationDto, paginate } from '../../common/pagination.dto';
-import { EmailService } from '../../common/utils/mailing/email.service';
+} from '../../../common/interfaces/user-role.enum';
+import { PaginationDto, paginate } from '../../../common/pagination.dto';
+import { EmailService } from '../../../common/utils/mailing/email.service';
 
 @Injectable()
 export class SuperAdminService {
@@ -395,6 +395,13 @@ export class SuperAdminService {
 
     const module = await this.moduleModel.create(dto);
 
+    if (dto.includedInPlans && dto.includedInPlans.length > 0) {
+      await this.planModel.updateMany(
+        { plan: { $in: dto.includedInPlans } },
+        { $addToSet: { includedModules: module.key } },
+      );
+    }
+
     await this.subscriptionModel.updateMany(
       {
         plan: SubscriptionPlan.FREE,
@@ -442,10 +449,49 @@ export class SuperAdminService {
     key: string,
     dto: UpdateModuleDto,
   ): Promise<PlatformModuleDocument> {
+    const before = await this.moduleModel.findOne({ key }).lean();
+    if (!before) throw new NotFoundException(`Module ${key} not found`);
+
     const mod = await this.moduleModel.findOneAndUpdate({ key }, dto, {
       new: true,
     });
-    if (!mod) throw new NotFoundException(`Module "${key}" not found`);
+
+    // ── Sync plan configs if includedInPlans changed ─────────────────────────
+    if (dto.includedInPlans) {
+      const prevPlans: string[] = before.includedInPlans ?? [];
+      const nextPlans: string[] = dto.includedInPlans ?? [];
+
+      // Plans newly added — push module key into those plan configs
+      const addedToPlans = nextPlans.filter((p) => !prevPlans.includes(p));
+      if (addedToPlans.length > 0) {
+        await Promise.all([
+          this.planModel.updateMany(
+            { plan: { $in: addedToPlans } },
+            { $addToSet: { includedModules: key } },
+          ),
+          this.subscriptionModel.updateMany(
+            {
+              plan: { $in: addedToPlans },
+              status: {
+                $in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL],
+              },
+            },
+            { $addToSet: { baseModules: key, activeModules: key } },
+          ),
+        ]);
+      }
+
+      // Plans removed — pull module key from those plan configs
+      const removedFromPlans = prevPlans.filter((p) => !nextPlans.includes(p));
+      if (removedFromPlans.length > 0) {
+        await Promise.all([
+          this.planModel.updateMany(
+            { plan: { $in: removedFromPlans } },
+            { $pull: { includedModules: key } },
+          ),
+        ]);
+      }
+    }
     return mod;
   }
 
@@ -472,6 +518,8 @@ export class SuperAdminService {
           },
         },
       );
+
+      await this.planModel.updateMany({}, { $pull: { includedModules: key } });
     } else {
       // Re-activating — restore to free plan subscriptions automatically
       await this.subscriptionModel.updateMany(
@@ -491,6 +539,11 @@ export class SuperAdminService {
 
       // Restore to paid plans that include it
       if (mod.includedInPlans?.length > 0) {
+        await this.planModel.updateMany(
+          { plan: { $in: mod.includedInPlans } },
+          { $addToSet: { includedModules: key } },
+        );
+
         await this.subscriptionModel.updateMany(
           {
             plan: { $in: mod.includedInPlans },
@@ -514,6 +567,21 @@ export class SuperAdminService {
   async deleteModule(key: string): Promise<void> {
     const mod = await this.moduleModel.findOneAndDelete({ key });
     if (!mod) throw new NotFoundException(`Module "${key}" not found`);
+
+    // Clean up plan configs and subscriptions on delete too
+    await Promise.all([
+      this.planModel.updateMany({}, { $pull: { includedModules: key } }),
+      this.subscriptionModel.updateMany(
+        {},
+        {
+          $pull: {
+            baseModules: key,
+            addonModules: key,
+            activeModules: key,
+          },
+        },
+      ),
+    ]);
   }
 
   // ═══════════════════════════════════════════════════════════

@@ -18,7 +18,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 
-import { TenantService } from './services/tenant.service';
+import { TenantService } from '../services/tenant.service';
 import {
   UpdateTenantProfileDto,
   InviteTeamMemberDto,
@@ -26,12 +26,12 @@ import {
   UpdateTeamMemberStatusDto,
   TeamMemberFilterDto,
   UpgradePlanDto,
-} from './dto/tenant.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { UserTypes, Roles, CurrentUser } from '../../common/decorators/index';
-import { UserType, TenantRole } from '../../common/interfaces/user-role.enum';
-import { PaginationDto } from '../../common/pagination.dto';
+} from '../dto/tenant.dto';
+import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { UserTypes, Roles, CurrentUser } from '../../../common/decorators/index';
+import { UserType, TenantRole } from '../../../common/interfaces/user-role.enum';
+import { PaginationDto } from '../../../common/pagination.dto';
 import {
   QuickAddClientDto,
   UpdateClientProfileDto,
@@ -39,8 +39,8 @@ import {
   AssignClientDto,
   UpdateClientStatusDto,
   RequestClientInfoDto,
-} from './dto/client.dto';
-import { TenantClientsService } from './services/tenant-client.service';
+} from '../dto/client.dto';
+import { TenantClientsService } from '../services/tenant-client.service';
 
 @ApiTags('Tenant')
 @ApiBearerAuth('bearerAuth')
