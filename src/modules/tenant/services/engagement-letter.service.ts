@@ -295,7 +295,15 @@ export class EngagementLetterService {
       .lean();
 
     // Return the public URL path for the PDF iframe
-    const pdfUrl = `${process.env.APP_URL}/${(letter as any).filePath.replace(/\\/g, '/')}`;
+    // const pdfUrl = `${process.env.APP_URL}/${(letter as any).filePath.replace(/\\/g, '/')}`;
+    // filePath may be absolute (/home/.../uploads/engagement/file.pdf)
+    // or relative (uploads/engagement/file.pdf)
+    // We only want the part from 'uploads/' onwards
+    const rawPath = (letter as any).filePath.replace(/\\/g, '/');
+    const uploadsIndex = rawPath.indexOf('uploads/');
+    const relativePath =
+      uploadsIndex !== -1 ? rawPath.slice(uploadsIndex) : rawPath;
+    const pdfUrl = `${process.env.APP_URL}/${relativePath}`;
 
     return {
       token,

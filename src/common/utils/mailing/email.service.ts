@@ -48,6 +48,10 @@ import {
   SubscriptionExpiredData,
   subscriptionExpiredTemplate,
 } from './templates/subscription-expired.template';
+import {
+  EngagementLetterReminderData,
+  engagementLetterReminderTemplate,
+} from './templates/engagement-letter-reminder.template';
 
 @Injectable()
 export class EmailService {
@@ -135,6 +139,17 @@ export class EmailService {
     });
   }
 
+  async sendEngagementLetterReminder(
+    data: EngagementLetterReminderData,
+  ): Promise<void> {
+    const { subject, html } = engagementLetterReminderTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
   // ─── New: Send credentials to client after they sign the engagement letter ───
 
   async sendClientCredentialsAfterSigning(

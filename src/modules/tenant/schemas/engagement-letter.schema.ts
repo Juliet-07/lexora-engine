@@ -90,10 +90,11 @@ export class ClientEngagementSigning {
   @Prop({ default: null })
   signedIpAddress: string | null;
 
-  // Path to the generated signed certificate PDF
-  // e.g. /uploads/engagement/signed/clientId-timestamp.pdf
   @Prop({ default: null })
   signedCertificatePath: string | null;
+
+  @Prop({ type: [Number], default: [] })
+  remindersSent: number[];
 }
 
 export const ClientEngagementSigningSchema = SchemaFactory.createForClass(

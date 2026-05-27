@@ -28,6 +28,7 @@ import {
   EngagementLetter,
   EngagementLetterSchema,
 } from './schemas/engagement-letter.schema';
+import { EngagementReminderService } from './services/engagement-letter-reminder.service';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import {
     TenantClientsService,
     VerificationService,
     EngagementLetterService,
+    EngagementReminderService,
   ],
   exports: [TenantService, TenantClientsService, EngagementLetterService],
 })
