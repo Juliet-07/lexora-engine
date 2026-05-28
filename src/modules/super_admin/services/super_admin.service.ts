@@ -180,7 +180,7 @@ export class SuperAdminService {
       firstName,
       businessName: dto.businessName,
       tempPassword,
-      loginUrl: `${process.env.APP_URL}`,
+      loginUrl: `${process.env.TENANT_APP_URL}`,
     });
 
     return tenant;

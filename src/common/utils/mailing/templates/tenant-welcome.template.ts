@@ -12,8 +12,7 @@ export function tenantWelcomeTemplate(data: TenantWelcomeEmailData): {
 } {
   const { to, firstName, businessName, tempPassword, loginUrl } = data;
   const year = new Date().getFullYear();
-  const firmName =
-    process.env.SMTP_FROM;
+  const firmName = process.env.SMTP_FROM;
 
   return {
     subject: `Portal Access Granted – ${businessName}`,
@@ -61,7 +60,7 @@ export function tenantWelcomeTemplate(data: TenantWelcomeEmailData): {
                     <p style="margin:0 0 20px;font-size:15px;color:#333333;line-height:1.7;">
                       On behalf of our team, we are pleased to confirm that
                       <strong>${businessName}</strong> has been successfully onboarded
-                      to our legal practice management platform. Your firm portal is now
+                      to our business management platform. Your firm portal is now
                       active and ready for use.
                     </p>
                     <p style="margin:0 0 28px;font-size:15px;color:#333333;line-height:1.7;">
