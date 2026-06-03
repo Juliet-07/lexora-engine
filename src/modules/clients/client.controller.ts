@@ -39,6 +39,7 @@ import { extname, join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { diskStorage } from 'multer';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { IsOptional, IsString, MinLength } from 'class-validator';
 
 // ─────────────────────────────────────────────────────────────
 // MULTER CONFIG — saves to ./uploads/onboarding/
@@ -78,6 +79,17 @@ const fileFilter = (
     );
   }
 };
+
+export class RespondToAlertDto {
+  @IsString()
+  @MinLength(10, { message: 'Response must be at least 10 characters.' })
+  note: string;
+
+  @IsOptional()
+  @IsString()
+  documentUrl?: string;
+}
+
 // ─────────────────────────────────────────────────────────────
 // CLIENT DASHBOARD
 // ─────────────────────────────────────────────────────────────
@@ -88,12 +100,55 @@ const fileFilter = (
 export class ClientDashboardController {
   constructor(private readonly dashboardService: ClientDashboardService) {}
 
+  // ─────────────────────────────────────────────────────────────
+  // DASHBOARD
+  // ─────────────────────────────────────────────────────────────
   @Get('dashboard')
   @ApiOperation({
     summary: 'Client dashboard — profile, onboarding status, KYC status',
   })
   getDashboard(@CurrentUser('sub') clientId: string) {
     return this.dashboardService.getDashboard(clientId);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // ALERTS
+  // ─────────────────────────────────────────────────────────────
+  @Get('alerts')
+  @ApiOperation({
+    summary: 'Get all compliance alerts for this client',
+    description:
+      'Returns summary counts (open, acknowledged, resolved) and the full ' +
+      'alert list sorted newest first. Open alerts require a response.',
+  })
+  getMyAlerts(@CurrentUser('sub') clientId: string) {
+    return this.dashboardService.getMyAlerts(clientId);
+  }
+
+  @Get('alerts/:id')
+  @ApiOperation({ summary: 'Get a single compliance alert by ID' })
+  getMyAlertById(
+    @Param('id') id: string,
+    @CurrentUser('sub') clientId: string,
+  ) {
+    return this.dashboardService.getMyAlertById(id, clientId);
+  }
+
+  @Post('alerts/:id/respond')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Acknowledge alert and submit a response',
+    description:
+      'Client confirms they have seen the alert and provides their explanation. ' +
+      'Optionally attach a document URL as supporting evidence. ' +
+      'Alert moves from OPEN to ACKNOWLEDGED. Can only respond once.',
+  })
+  respondToAlert(
+    @Param('id') id: string,
+    @CurrentUser('sub') clientId: string,
+    @Body() dto: RespondToAlertDto,
+  ) {
+    return this.dashboardService.respondToAlert(id, clientId, dto);
   }
 }
 

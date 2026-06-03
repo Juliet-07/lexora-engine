@@ -4,27 +4,28 @@ import { Document, Types } from 'mongoose';
 export type ComplianceAlertDocument = ComplianceAlert & Document;
 
 export enum AlertType {
-  SANCTIONS_HIT    = 'sanctions_hit',
-  PEP_MATCH        = 'pep_match',
-  ADVERSE_MEDIA    = 'adverse_media',
+  SANCTIONS_HIT = 'sanctions_hit',
+  PEP_MATCH = 'pep_match',
+  ADVERSE_MEDIA = 'adverse_media',
   HIGH_RISK_CLIENT = 'high_risk_client',
-  REVIEW_OVERDUE   = 'review_overdue',
-  UBO_FLAGGED      = 'ubo_flagged',
+  REVIEW_OVERDUE = 'review_overdue',
+  UBO_FLAGGED = 'ubo_flagged',
   TRANSACTION_FLAG = 'transaction_flag',
-  WATCHLIST_HIT    = 'watchlist_hit',
-  MANUAL           = 'manual',
+  WATCHLIST_HIT = 'watchlist_hit',
+  MANUAL = 'manual',
 }
 
 export enum AlertSeverity {
-  LOW      = 'low',
-  MEDIUM   = 'medium',
-  HIGH     = 'high',
+  LOW = 'low',
+  MEDIUM = 'medium',
+  HIGH = 'high',
   CRITICAL = 'critical',
 }
 
 export enum AlertStatus {
-  OPEN      = 'open',
-  REVIEWED  = 'reviewed',
+  OPEN = 'open',
+  ACKNOWLEDGED = 'acknowledged',
+  REVIEWED = 'reviewed',
   DISMISSED = 'dismissed',
   ESCALATED = 'escalated',
 }
@@ -54,6 +55,22 @@ export class ComplianceAlert {
 
   @Prop({ type: Object, default: null })
   metadata: Record<string, any> | null;
+
+  @Prop({
+    type: {
+      note: { type: String, default: '' },
+      documentUrl: { type: String, default: null },
+      acknowledgedAt: { type: Date, required: true },
+      respondedAt: { type: Date, required: true },
+    },
+    default: null,
+  })
+  clientResponse: {
+    note: string;
+    documentUrl: string | null;
+    acknowledgedAt: Date;
+    respondedAt: Date;
+  } | null;
 
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   reviewedBy: Types.ObjectId | null;

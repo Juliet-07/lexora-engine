@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   Query,
+  Res,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -29,8 +30,15 @@ import {
 } from '../dto/tenant.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
-import { UserTypes, Roles, CurrentUser } from '../../../common/decorators/index';
-import { UserType, TenantRole } from '../../../common/interfaces/user-role.enum';
+import {
+  UserTypes,
+  Roles,
+  CurrentUser,
+} from '../../../common/decorators/index';
+import {
+  UserType,
+  TenantRole,
+} from '../../../common/interfaces/user-role.enum';
 import { PaginationDto } from '../../../common/pagination.dto';
 import {
   QuickAddClientDto,
@@ -41,6 +49,7 @@ import {
   RequestClientInfoDto,
 } from '../dto/client.dto';
 import { TenantClientsService } from '../services/tenant-client.service';
+import { Response } from 'express';
 
 @ApiTags('Tenant')
 @ApiBearerAuth('bearerAuth')
@@ -299,6 +308,30 @@ export class TenantController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.tenantClientService.deleteClient(id, t || u);
+  }
+
+  // ── Report ────────────────────────────────────────────────
+  @Get('my-clients/:id/report')
+  @ApiOperation({ summary: 'Download full KYC report for a client as PDF' })
+  async downloadClientReport(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const { filePath, fileName } =
+      await this.tenantClientService.generateClientReport(id, t || u);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+
+    const stream = require('fs').createReadStream(filePath);
+    stream.pipe(res);
+
+    // Clean up file after streaming
+    stream.on('end', () => {
+      require('fs').unlink(filePath, () => {});
+    });
   }
   // ═══════════════════════════════════════════════════════════
   // MODULES

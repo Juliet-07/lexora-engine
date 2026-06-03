@@ -52,6 +52,14 @@ import {
   EngagementLetterReminderData,
   engagementLetterReminderTemplate,
 } from './templates/engagement-letter-reminder.template';
+import {
+  OnboardingSubmittedNotificationData,
+  onboardingSubmittedNotificationTemplate,
+} from './templates/client-onboarding-submitted.template';
+import {
+  ComplianceAlertEmailData,
+  complianceAlertTemplate,
+} from './templates/compliance-alert.template';
 
 @Injectable()
 export class EmailService {
@@ -228,6 +236,28 @@ export class EmailService {
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.toTenant,
       subject: `[Copy] ${subject}`,
+      html,
+    });
+  }
+
+  async sendOnboardingSubmittedNotification(
+    data: OnboardingSubmittedNotificationData,
+  ): Promise<void> {
+    const { subject, html } = onboardingSubmittedNotificationTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendComplianceAlert(data: ComplianceAlertEmailData): Promise<void> {
+    const { subject, html } = complianceAlertTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
       html,
     });
   }

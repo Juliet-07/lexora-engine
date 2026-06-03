@@ -695,9 +695,7 @@ export class VerificationService {
     }
 
     const formData: Record<string, any> = (onboarding as any)?.formData ?? {};
-    const isIndividual =
-      profile.classifications === 'individual' ||
-      profile.classifications === 'corporate';
+    const isIndividual = profile.classifications === 'individual';
 
     const fullName = `${client.firstName} ${client.lastName}`.trim();
 

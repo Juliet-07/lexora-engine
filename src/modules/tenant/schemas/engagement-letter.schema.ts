@@ -17,15 +17,15 @@ export class EngagementLetter {
   documentType: 'engagement_letter' | 'terms_and_agreement';
 
   // Display title e.g. "Terms of Engagement & Client Authorization"
-  @Prop({ required: true })
+  @Prop({ default: '' })
   title: string;
 
   // Path on disk: /uploads/engagement/filename.pdf
-  @Prop({ required: true })
+  @Prop({ default: '' })
   filePath: string;
 
   // Original filename the tenant uploaded
-  @Prop({ required: true })
+  @Prop({ default: '' })
   originalFileName: string;
 
   // File size in bytes

@@ -21,6 +21,7 @@ import {
   ClientProfileDocument,
   ClientProfileRecord,
 } from 'src/modules/tenant/schemas/client-profile.schema';
+import { EmailService } from 'src/common/utils/mailing/email.service';
 
 @Injectable()
 export class OnboardingService {
@@ -31,6 +32,7 @@ export class OnboardingService {
     private readonly userModel: Model<UserDocument>,
     @InjectModel(ClientProfileRecord.name)
     private readonly profileModel: Model<ClientProfileDocument>,
+    private readonly mailService: EmailService,
   ) {}
 
   // ── GET — load draft or create empty ─────────────────────
@@ -78,10 +80,13 @@ export class OnboardingService {
       });
     }
 
-    if (
-      record.status === OnboardingStatus.SUBMITTED ||
-      record.status === OnboardingStatus.APPROVED
-    ) {
+    if (record.status === OnboardingStatus.APPROVED) {
+      throw new BadRequestException(
+        'This form has already been approved and can no longer be edited.',
+      );
+    }
+
+    if (record.status === OnboardingStatus.SUBMITTED) {
       throw new BadRequestException(
         'This form has already been submitted. Contact your advisor to request changes.',
       );
@@ -128,12 +133,17 @@ export class OnboardingService {
         'No onboarding form found. Open the form first.',
       );
     }
-    if (
-      record.status === OnboardingStatus.SUBMITTED ||
-      record.status === OnboardingStatus.APPROVED
-    ) {
-      throw new BadRequestException('Already submitted.');
+
+    if (record.status === OnboardingStatus.APPROVED) {
+      throw new BadRequestException(
+        'This form has been approved and can no longer be submitted.',
+      );
     }
+
+    if (record.status === OnboardingStatus.SUBMITTED) {
+      throw new BadRequestException('Already Submitted');
+    }
+
     if (!dto.agreeTrue || !dto.agreeUpdate || !dto.agreeConsent) {
       throw new BadRequestException(
         'All declaration checkboxes must be accepted before submitting.',
@@ -171,6 +181,11 @@ export class OnboardingService {
       { new: true },
     );
 
+    const client = await this.userModel
+      .findById(clientId)
+      .select('firstName lastName email tenantId')
+      .lean();
+
     await Promise.all([
       this.userModel.findByIdAndUpdate(clientId, {
         'clientProfile.kycStatus': 'submitted',
@@ -190,6 +205,38 @@ export class OnboardingService {
         },
       ),
     ]);
+
+    if (client && (client as any).tenantId) {
+      try {
+        const tenant = await this.userModel
+          .findById((client as any).tenantId)
+          .select('email firstName tenantProfile.businessName')
+          .lean();
+
+        if (tenant) {
+          const clientFullName = `${(client as any).firstName} ${(client as any).lastName}`;
+          const businessName =
+            (tenant as any)?.tenantProfile?.businessName || 'Your Firm';
+          const dashboardUrl = `${process.env.TENANT_APP_URL}/clients/onboarding/${clientId}`;
+
+          await this.mailService.sendOnboardingSubmittedNotification({
+            to: (tenant as any).email,
+            tenantFirstName: (tenant as any).firstName,
+            clientName: clientFullName,
+            clientEmail: (client as any).email,
+            submittedAt: new Date(),
+            businessName,
+            dashboardUrl,
+          });
+        }
+      } catch (err) {
+        // Log but don't throw — email failure must not fail the submission
+        console.error(
+          'Failed to notify tenant of onboarding submission:',
+          err.message,
+        );
+      }
+    }
 
     return submitted;
   }

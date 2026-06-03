@@ -31,6 +31,9 @@ import { EmailService } from '../../../common/utils/mailing/email.service';
 import { timestamp } from 'rxjs';
 import { VerificationService } from './verification.service';
 import { EngagementLetterService } from './engagement-letter.service';
+import * as PDFDocument from 'pdfkit';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class TenantClientsService {
@@ -50,79 +53,6 @@ export class TenantClientsService {
   // ═══════════════════════════════════════════════════════════
   // QUICK ADD
   // ═══════════════════════════════════════════════════════════
-  // async quickAddClient(
-  //   dto: QuickAddClientDto,
-  //   tenantId: string,
-  //   addedBy: string,
-  // ) {
-  //   await this.enforceClientLimit(tenantId);
-
-  //   const emailTaken = await this.userModel.findOne({
-  //     email: dto.email.toLowerCase(),
-  //   });
-  //   if (emailTaken)
-  //     throw new ConflictException('Email already registered on the platform');
-
-  //   // Split fullName into firstName + lastName
-  //   const nameParts = dto.fullName.trim().split(/\s+/);
-  //   const firstName = nameParts[0];
-  //   const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '-';
-
-  //   const tempPassword = this.generateTempPassword();
-  //   const hashedPassword = await bcrypt.hash(tempPassword, 12);
-
-  //   const client = await this.userModel.create({
-  //     userType: UserType.CLIENT,
-  //     firstName,
-  //     lastName,
-  //     email: dto.email.toLowerCase(),
-  //     password: hashedPassword,
-  //     phone: dto.phoneNumber,
-  //     roles: [ClientRole.CLIENT_PRIMARY],
-  //     status: AccountStatus.PENDING,
-  //     tenantId: new Types.ObjectId(tenantId),
-  //     createdBy: new Types.ObjectId(addedBy),
-  //     mustChangePassword: true,
-  //     clientProfile: {
-  //       classifications: dto.clientType,
-  //     },
-  //   });
-
-  //   // Create extended profile
-  //   await this.profileModel.create({
-  //     userId: client._id,
-  //     tenantId: new Types.ObjectId(tenantId),
-  //     assignedTo: new Types.ObjectId(addedBy),
-  //     classifications: dto.clientType,
-  //     kycStatus: 'not_started',
-  //   });
-
-  //   // Get tenant business name
-  //   const tenant = await this.userModel
-  //     .findById(tenantId)
-  //     .select('tenantProfile.businessName firstName')
-  //     .lean();
-
-  //   await this.mailService.sendClientWelcome({
-  //     to: client.email,
-  //     firstName,
-  //     tenantBusinessName:
-  //       (tenant as any)?.tenantProfile?.businessName || 'Your Provider',
-  //     tempPassword,
-  //     loginUrl: `${process.env.CLIENT_APP_URL || 'http://localhost:3000'}/login`,
-  //     clientType: client.clientProfile.classifications,
-  //   });
-
-  //   const obj = client.toObject();
-  //   delete obj.password;
-  //   return {
-  //     success: true,
-  //     message:
-  //       'Client added successfully. Login credentials sent to their email.',
-  //     data: obj,
-  //   };
-  // }
-
   async quickAddClient(
     dto: QuickAddClientDto,
     tenantId: string,
@@ -237,7 +167,7 @@ export class TenantClientsService {
       data: obj,
     };
   }
-  
+
   // ═══════════════════════════════════════════════════════════
   // GET CLIENTS (Onboarding & CDD list view)
   // ═══════════════════════════════════════════════════════════
@@ -652,19 +582,28 @@ export class TenantClientsService {
     });
     if (!client) throw new NotFoundException('Client not found');
 
-    await this.profileModel.findOneAndUpdate(
-      { userId: new Types.ObjectId(clientId) },
-      {
-        kycStatus: 'in_progress',
-        $push: {
-          'metadata.infoRequests': {
-            message: dto.message,
-            requiredDocuments: dto.requiredDocuments || [],
-            requestedAt: new Date(),
+    await Promise.all([
+      this.profileModel.findOneAndUpdate(
+        { userId: new Types.ObjectId(clientId) },
+        {
+          kycStatus: 'in_progress',
+          $push: {
+            'metadata.infoRequests': {
+              message: dto.message,
+              requiredDocuments: dto.requiredDocuments || [],
+              requestedAt: new Date(),
+            },
           },
         },
-      },
-    );
+      ),
+
+      this.onboardingModel.findOneAndUpdate(
+        {
+          clientId: new Types.ObjectId(clientId),
+        },
+        { $set: { status: 'under_review' } },
+      ),
+    ]);
 
     // Get tenant info for the email
     const tenant = await this.userModel
@@ -680,7 +619,7 @@ export class TenantClientsService {
         (tenant as any)?.tenantProfile?.businessName || 'Your Provider',
       message: dto.message,
       requiredDocuments: dto.requiredDocuments || [],
-      loginUrl: `${process.env.CLIENT_APP_URL}`,
+      loginUrl: `${process.env.CLIENT_APP_URL}/login`,
     });
 
     return {
@@ -844,6 +783,268 @@ export class TenantClientsService {
       ]);
 
     return { total, byStatus, byClassification, kycStats, recentClients };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // REPORT
+  // ═══════════════════════════════════════════════════════════
+  async generateClientReport(
+    clientId: string,
+    tenantId: string,
+  ): Promise<{ filePath: string; fileName: string }> {
+    const client = await this.userModel
+      .findOne({
+        _id: clientId,
+        tenantId: new Types.ObjectId(tenantId),
+        userType: UserType.CLIENT,
+      })
+      .select('-password -passwordResetToken')
+      .lean();
+
+    if (!client) throw new NotFoundException('Client not found');
+
+    const [profile, onboarding] = await Promise.all([
+      this.profileModel
+        .findOne({ userId: new Types.ObjectId(clientId) })
+        .populate('assignedTo', 'firstName lastName email')
+        .lean(),
+      this.onboardingModel
+        .findOne({ clientId: new Types.ObjectId(clientId) })
+        .lean(),
+    ]);
+
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.businessName')
+      .lean();
+
+    const businessName =
+      (tenant as any)?.tenantProfile?.businessName || 'Lexora';
+    const clientFullName = `${(client as any).firstName} ${(client as any).lastName}`;
+
+    // ── Generate PDF ──────────────────────────────────────────
+    const reportDir = path.join(process.cwd(), 'uploads', 'reports');
+    if (!fs.existsSync(reportDir)) {
+      fs.mkdirSync(reportDir, { recursive: true });
+    }
+
+    const fileName = `kyc-report-${clientId}-${Date.now()}.pdf`;
+    const filePath = path.join(reportDir, fileName);
+
+    await new Promise<void>((resolve, reject) => {
+      const doc = new PDFDocument({
+        size: 'A4',
+        margins: { top: 60, bottom: 60, left: 72, right: 72 },
+      });
+      const stream = fs.createWriteStream(filePath);
+      doc.pipe(stream);
+
+      const pageWidth = doc.page.width;
+      const PURPLE = '#4B0082';
+      const GOLD = '#C9A84C';
+      const DARK = '#1A1A2E';
+      const GREY = '#6B7280';
+
+      // ── Header ──────────────────────────────────────────────
+      doc.rect(0, 0, pageWidth, 80).fill(PURPLE);
+      doc
+        .fillColor('#FFFFFF')
+        .fontSize(22)
+        .font('Helvetica-Bold')
+        .text('LEXORA', 72, 24);
+      doc
+        .fillColor('rgba(255,255,255,0.7)')
+        .fontSize(10)
+        .font('Helvetica')
+        .text('KYC Client Report', 72, 50);
+      doc
+        .fillColor('#FFFFFF')
+        .fontSize(11)
+        .font('Helvetica-Bold')
+        .text(businessName, 0, 32, { align: 'right', width: pageWidth - 72 });
+
+      // Gold bar
+      doc.rect(0, 80, pageWidth, 4).fill(GOLD);
+
+      doc.moveDown(3);
+
+      // ── Report title ─────────────────────────────────────────
+      doc
+        .fillColor(DARK)
+        .fontSize(18)
+        .font('Helvetica-Bold')
+        .text('KYC Client Report', { align: 'center' });
+      doc.moveDown(0.3);
+      doc
+        .fillColor(GREY)
+        .fontSize(11)
+        .font('Helvetica')
+        .text(`Generated: ${new Date().toLocaleString('en-GB')}`, {
+          align: 'center',
+        });
+
+      doc.moveDown(1.5);
+      doc
+        .moveTo(72, doc.y)
+        .lineTo(pageWidth - 72, doc.y)
+        .strokeColor(GOLD)
+        .lineWidth(1.5)
+        .stroke();
+      doc.moveDown(1.2);
+
+      // Helper: section heading
+      const section = (title: string) => {
+        doc.moveDown(0.5);
+        doc.rect(72, doc.y, pageWidth - 144, 24).fill('#F0EBF8');
+        doc
+          .fillColor(PURPLE)
+          .fontSize(10)
+          .font('Helvetica-Bold')
+          .text(title.toUpperCase(), 80, doc.y - 18, {
+            width: pageWidth - 160,
+          });
+        doc.moveDown(1.2);
+      };
+
+      // Helper: row
+      const row = (label: string, value: string) => {
+        const y = doc.y;
+        doc
+          .fillColor(GREY)
+          .fontSize(9)
+          .font('Helvetica-Bold')
+          .text(label.toUpperCase(), 72, y, { width: 160 });
+        doc
+          .fillColor(DARK)
+          .fontSize(11)
+          .font('Helvetica')
+          .text(value || '—', 240, y, { width: pageWidth - 312 });
+        doc.moveDown(0.9);
+      };
+
+      // ── Client Identity ───────────────────────────────────────
+      section('Client Identity');
+      row('Full Name', clientFullName);
+      row('Email', (client as any).email);
+      row('Phone', (client as any).phone || '—');
+      row('Client Type', (profile as any)?.classifications || '—');
+      row('Status', (client as any).status);
+      row(
+        'Account Created',
+        new Date((client as any).createdAt).toLocaleDateString('en-GB'),
+      );
+
+      // ── KYC Status ────────────────────────────────────────────
+      section('KYC Status');
+      row('KYC Status', (profile as any)?.kycStatus || '—');
+      row('Risk Level', (profile as any)?.riskLevel || 'Unrated');
+      row(
+        'Politically Exposed',
+        (profile as any)?.isPoliticallyExposed ? 'Yes' : 'No',
+      );
+      row(
+        'KYC Completed',
+        (profile as any)?.kycCompletedAt
+          ? new Date((profile as any).kycCompletedAt).toLocaleDateString(
+              'en-GB',
+            )
+          : '—',
+      );
+      row(
+        'Verification Completed',
+        (profile as any)?.verificationCompletedAt
+          ? new Date(
+              (profile as any).verificationCompletedAt,
+            ).toLocaleDateString('en-GB')
+          : '—',
+      );
+
+      // ── Form Data ─────────────────────────────────────────────
+      if (onboarding?.formData) {
+        section('Submitted Form Data');
+        const formData = onboarding.formData as Record<string, any>;
+        const skip = ['_declaration'];
+
+        for (const [key, val] of Object.entries(formData)) {
+          if (skip.includes(key)) continue;
+          if (typeof val === 'object' && val !== null) {
+            // Nested object (e.g. address, individual profile)
+            const label = key.replace(/([A-Z])/g, ' $1').trim();
+            doc
+              .fillColor(PURPLE)
+              .fontSize(10)
+              .font('Helvetica-Bold')
+              .text(label.toUpperCase(), 72, doc.y, { width: pageWidth - 144 });
+            doc.moveDown(0.5);
+            for (const [k, v] of Object.entries(val)) {
+              if (v) row(k.replace(/([A-Z])/g, ' $1').trim(), String(v));
+            }
+          } else if (val) {
+            row(key.replace(/([A-Z])/g, ' $1').trim(), String(val));
+          }
+        }
+      }
+
+      // ── Documents ─────────────────────────────────────────────
+      if (onboarding?.documents?.length > 0) {
+        section('Uploaded Documents');
+        onboarding.documents.forEach((doc_: any, i: number) => {
+          row(`Document ${i + 1}`, doc_.name || doc_.type || 'Document');
+        });
+      }
+
+      // ── Verification Results ──────────────────────────────────
+      if ((profile as any)?.verificationResults) {
+        section('Verification Results');
+        const results = (profile as any).verificationResults as Record<
+          string,
+          any
+        >;
+        for (const [check, result] of Object.entries(results)) {
+          if (typeof result === 'object' && result !== null) {
+            row(
+              check.replace(/([A-Z])/g, ' $1').trim(),
+              `${(result as any).status || '—'}${(result as any).detail ? ` — ${(result as any).detail}` : ''}`,
+            );
+          }
+        }
+      }
+
+      // ── Declaration ───────────────────────────────────────────
+      const declaration = onboarding?.formData?._declaration;
+      if (declaration) {
+        section('Declaration');
+        row('Signature', declaration.signature || '—');
+        row('Signatory Title', declaration.signatoryTitle || '—');
+        row(
+          'Signed At',
+          declaration.signedAt
+            ? new Date(declaration.signedAt).toLocaleString('en-GB')
+            : '—',
+        );
+        row('IP Address', declaration.ipAddress || '—');
+      }
+
+      // ── Footer ────────────────────────────────────────────────
+      const footerY = doc.page.height - 60;
+      doc.rect(0, footerY - 10, pageWidth, 70).fill(PURPLE);
+      doc
+        .fillColor('rgba(255,255,255,0.6)')
+        .fontSize(9)
+        .font('Helvetica')
+        .text(
+          `Generated by Lexora · ${new Date().toLocaleDateString('en-GB')} · ${businessName} · CONFIDENTIAL`,
+          0,
+          footerY + 4,
+          { align: 'center', width: pageWidth },
+        );
+
+      doc.end();
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    });
+
+    return { filePath, fileName };
   }
 
   // ═══════════════════════════════════════════════════════════

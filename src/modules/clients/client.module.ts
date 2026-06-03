@@ -17,6 +17,11 @@ import {
   ClientProfileRecord,
   ClientProfileSchema,
 } from '../tenant/schemas/client-profile.schema';
+import {
+  ComplianceAlert,
+  ComplianceAlertSchema,
+} from '../kyc/schemas/compliance-alert.schema';
+import { EmailService } from 'src/common/utils/mailing/email.service';
 
 @Module({
   imports: [
@@ -24,10 +29,11 @@ import {
       { name: User.name, schema: UserSchema },
       { name: OnboardingSubmission.name, schema: OnboardingSchema },
       { name: ClientProfileRecord.name, schema: ClientProfileSchema },
+      { name: ComplianceAlert.name, schema: ComplianceAlertSchema },
     ]),
   ],
   controllers: [ClientDashboardController, ClientOnboardingController],
-  providers: [OnboardingService, ClientDashboardService],
+  providers: [OnboardingService, ClientDashboardService, EmailService],
   exports: [OnboardingService, ClientDashboardService],
 })
 export class ClientModule {}

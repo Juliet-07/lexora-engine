@@ -101,7 +101,7 @@ export class EngagementLetterService {
     tenantId: string,
   ): Promise<EngagementLetterDocument | null> {
     return this.letterModel
-      .findOne({ tenantId: new Types.ObjectId(tenantId), isActive: true })
+      .findOne({ tenantId: new Types.ObjectId(tenantId) })
       .lean() as any;
   }
 
@@ -131,25 +131,27 @@ export class EngagementLetterService {
     tenantId: string,
     bypass: boolean,
   ): Promise<{ bypassSigning: boolean }> {
-    const letter = await this.letterModel.findOneAndUpdate(
-      { tenantId: new Types.ObjectId(tenantId) },
-      { bypassSigning: bypass },
-      { new: true },
-    );
+    const existing = await this.letterModel.findOne({
+      tenantId: new Types.ObjectId(tenantId),
+    });
 
-    // If no letter exists yet but they want to bypass — store the preference
-    // on a placeholder record so quickAddClient can read it
-    if (!letter) {
+    if (existing) {
+      await this.letterModel.findOneAndUpdate(
+        { tenantId: new Types.ObjectId(tenantId) },
+        { bypassSigning: bypass },
+        { new: true },
+      );
+    } else {
       await this.letterModel.create({
         tenantId: new Types.ObjectId(tenantId),
         documentType: 'engagement_letter',
-        title: '',
+        title: 'bypass',
         filePath: '',
         originalFileName: '',
         fileSize: 0,
         version: 0,
         bypassSigning: bypass,
-        isActive: false, // not active — no real document, just preference
+        isActive: false,
       });
     }
 

@@ -33,6 +33,7 @@ import {
   WatchlistEntrySchema,
 } from './schemas/watchlist.schema';
 import { ReportsService } from './services/reports.service';
+import { EmailService } from 'src/common/utils/mailing/email.service';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { ReportsService } from './services/reports.service';
     ComplianceAlertsService,
     WatchlistService,
     ReportsService,
+    EmailService,
   ],
   exports: [RiskEngineService, TransactionService, ComplianceAlertsService],
 })
