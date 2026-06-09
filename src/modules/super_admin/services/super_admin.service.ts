@@ -137,13 +137,17 @@ export class SuperAdminService {
     if (existing)
       throw new ConflictException('Email already registered on the platform');
 
-    // Generate a secure temporary password
-    const tempPassword = this.generateTempPassword();
-    const hashedPassword = await bcrypt.hash(tempPassword, 12);
-
     // Derive firstName/lastName: use DTO or fall back to contactPerson
     const firstName = dto.firstName || dto.contactPerson?.firstName || 'Tenant';
     const lastName = dto.lastName || dto.contactPerson?.lastName || 'Admin';
+    const isPaidPlan = dto.plan && dto.plan !== SubscriptionPlan.FREE;
+
+    // Generate a secure temporary password
+    const tempPassword = this.generateTempPassword();
+    const passwordToHash = isPaidPlan
+      ? `placeholder-${Date.now()}-${Math.random()}`
+      : tempPassword;
+    const hashedPassword = await bcrypt.hash(passwordToHash, 12);
 
     const tenant = await this.userModel.create({
       userType: UserType.TENANT,
@@ -153,7 +157,9 @@ export class SuperAdminService {
       password: hashedPassword,
       phone: dto.phone || dto.contactPerson?.phone,
       roles: [dto.role || TenantRole.TENANT_OWNER],
-      status: AccountStatus.PENDING, // activated on first login
+      status: isPaidPlan
+        ? AccountStatus.AWAITING_PAYMENT
+        : AccountStatus.PENDING,
       createdBy: new Types.ObjectId(createdBy),
       mustChangePassword: true,
       tenantProfile: {
@@ -175,13 +181,15 @@ export class SuperAdminService {
     );
 
     // Send credentials by email
-    await this.mailService.sendTenantWelcome({
-      to: tenant.email,
-      firstName,
-      businessName: dto.businessName,
-      tempPassword,
-      loginUrl: `${process.env.TENANT_APP_URL}`,
-    });
+    if (!isPaidPlan) {
+      await this.mailService.sendTenantWelcome({
+        to: tenant.email,
+        firstName,
+        businessName: dto.businessName,
+        tempPassword,
+        loginUrl: `${process.env.TENANT_APP_URL}`,
+      });
+    }
 
     return tenant;
   }
@@ -616,13 +624,138 @@ export class SuperAdminService {
     plan: string,
     dto: UpdateSubscriptionPlanDto,
   ): Promise<SubscriptionPlanDocument> {
-    const p = await this.planModel.findOneAndUpdate({ plan }, dto, {
+    const before = await this.planModel.findOne({ plan }).lean();
+    if (!before) throw new NotFoundException(`Plan "${plan}" not found`);
+
+    const updated = await this.planModel.findOneAndUpdate({ plan }, dto, {
       new: true,
     });
-    if (!p) throw new NotFoundException(`Plan "${plan}" not found`);
-    return p;
-  }
 
+    if (dto.includedModules !== undefined) {
+      const prevModules: string[] = before.includedModules ?? [];
+      const nextModules: string[] = dto.includedModules ?? [];
+
+      const added = nextModules.filter((m) => !prevModules.includes(m));
+      const removed = prevModules.filter((m) => !nextModules.includes(m));
+
+      if (added.length > 0 || removed.length > 0) {
+        const affectedSubs = await this.subscriptionModel
+          .find({
+            plan,
+            status: {
+              $in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL],
+            },
+          })
+          .lean();
+
+        await Promise.all(
+          affectedSubs.map(async (sub) => {
+            let newBaseModules: string[] = [...(sub.baseModules || [])];
+
+            if (added.length > 0) {
+              newBaseModules = [...new Set([...newBaseModules, ...added])];
+            }
+            if (removed.length > 0) {
+              newBaseModules = newBaseModules.filter(
+                (m) => !removed.includes(m),
+              );
+            }
+
+            const newActiveModules: string[] = [
+              ...new Set([...newBaseModules, ...(sub.addonModules || [])]),
+            ];
+
+            await this.subscriptionModel.findByIdAndUpdate(sub._id, {
+              baseModules: newBaseModules as PlatformModuleKey[],
+              activeModules: newActiveModules as PlatformModuleKey[],
+            });
+          }),
+        );
+      }
+    }
+
+    return updated;
+  }
+  async repairSubscriptionModules(): Promise<{
+    plansFixed: number;
+    subscriptionsFixed: number;
+    summary: Record<string, string[]>;
+  }> {
+    // ── Step 1: Build plan → modules map from PlatformModule collection ───────
+    const allModules = await this.moduleModel.find({ isActive: true }).lean();
+
+    // Map: planKey → [moduleKey, moduleKey, ...]
+    const planModuleMap: Record<string, string[]> = {};
+
+    for (const mod of allModules) {
+      const plans: string[] = mod.includedInPlans ?? [];
+      for (const plan of plans) {
+        if (!planModuleMap[plan]) planModuleMap[plan] = [];
+        if (!planModuleMap[plan].includes(mod.key)) {
+          planModuleMap[plan].push(mod.key);
+        }
+      }
+    }
+
+    console.log('Plan → Modules map built:', planModuleMap);
+
+    // ── Step 2: Update each SubscriptionPlanConfig with correct includedModules
+    let plansFixed = 0;
+    const allPlans = await this.planModel.find({}).lean();
+
+    for (const plan of allPlans) {
+      const correctModules = planModuleMap[plan.plan] ?? [];
+      await this.planModel.findByIdAndUpdate(plan._id, {
+        includedModules: correctModules,
+      });
+      plansFixed++;
+      console.log(
+        `Plan "${plan.plan}" → modules: [${correctModules.join(', ')}]`,
+      );
+    }
+
+    // ── Step 3: Update each TenantSubscription with correct modules ───────────
+    let subscriptionsFixed = 0;
+    const allSubs = await this.subscriptionModel.find({}).lean();
+
+    for (const sub of allSubs) {
+      let baseModules: string[] = [];
+
+      if (sub.plan === 'free') {
+        // FREE plan gets ALL active modules
+        baseModules = allModules.map((m) => m.key);
+      } else {
+        // Paid plan gets modules from the plan config
+        baseModules = planModuleMap[sub.plan] ?? [];
+      }
+
+      // activeModules = baseModules + any addon modules already on this subscription
+      const activeModules = [
+        ...new Set([...baseModules, ...(sub.addonModules ?? [])]),
+      ];
+
+      await this.subscriptionModel.findByIdAndUpdate(sub._id, {
+        baseModules: baseModules as any,
+        activeModules: activeModules as any,
+      });
+
+      subscriptionsFixed++;
+      console.log(
+        `Subscription for tenant ${sub.tenantId} (${sub.plan}) → ` +
+          `baseModules: [${baseModules.join(', ')}]`,
+      );
+    }
+
+    console.log(
+      `\nRepair complete: ${plansFixed} plans, ${subscriptionsFixed} subscriptions fixed.`,
+    );
+
+    return {
+      plansFixed,
+      subscriptionsFixed,
+      summary: planModuleMap,
+    };
+  }
   // ═══════════════════════════════════════════════════════════
   // TENANT SUBSCRIPTION MANAGEMENT
   // ═══════════════════════════════════════════════════════════

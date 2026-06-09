@@ -25,6 +25,7 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { PaymentModule } from './modules/payment/payment.module';
 
 @Module({
   imports: [
@@ -76,6 +77,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     TenantModule,
     ClientModule,
     KycModule,
+    PaymentModule,
   ],
   providers: [
     Reflector,

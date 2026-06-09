@@ -60,6 +60,12 @@ import {
   ComplianceAlertEmailData,
   complianceAlertTemplate,
 } from './templates/compliance-alert.template';
+import {
+  PaymentInvoiceEmailData,
+  paymentInvoiceTemplate,
+  PaymentReceiptEmailData,
+  paymentReceiptTemplate,
+} from './templates/payment-emails.template';
 
 @Injectable()
 export class EmailService {
@@ -254,6 +260,26 @@ export class EmailService {
 
   async sendComplianceAlert(data: ComplianceAlertEmailData): Promise<void> {
     const { subject, html } = complianceAlertTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendPaymentReceipt(data: PaymentReceiptEmailData): Promise<void> {
+    const { subject, html } = paymentReceiptTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendPaymentInvoice(data: PaymentInvoiceEmailData): Promise<void> {
+    const { subject, html } = paymentInvoiceTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

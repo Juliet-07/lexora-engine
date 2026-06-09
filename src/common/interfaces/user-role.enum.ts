@@ -50,6 +50,7 @@ export enum AccountStatus {
   INACTIVE = 'inactive',
   SUSPENDED = 'suspended',
   PENDING = 'pending',
+  AWAITING_PAYMENT = 'awaiting_payment',
 }
 
 // ── Subscription plans ────────────────────────────────────────

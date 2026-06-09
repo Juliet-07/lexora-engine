@@ -28,6 +28,8 @@ import { EmailService } from '../../../common/utils/mailing/email.service';
 import {
   SubscriptionPlanConfig,
   SubscriptionPlanDocument,
+  PlatformModule,
+  PlatformModuleDocument,
 } from 'src/modules/super_admin/schemas';
 
 // Role hierarchy — members can only assign roles below their own level
@@ -48,6 +50,8 @@ export class TenantService {
     private readonly planModel: Model<SubscriptionPlanDocument>,
     @InjectModel('TenantSubscription')
     private readonly subscriptionModel: Model<any>,
+    @InjectModel(PlatformModule.name)
+    private readonly moduleModel: Model<PlatformModuleDocument>,
     private readonly mailService: EmailService,
   ) {}
 
@@ -210,7 +214,30 @@ export class TenantService {
     }
 
     // Update subscription with new plan's modules
-    const baseModules = plan.includedModules || [];
+    let baseModules: string[] = [];
+
+    if (newPlan === 'free') {
+      // FREE plan gets all active modules
+      const allModules = await this.moduleModel
+        .find({ isActive: true })
+        .select('key')
+        .lean();
+      baseModules = allModules.map((m) => m.key);
+    } else {
+      // Paid plan: find all active modules that include this plan
+      const planModules = await this.moduleModel
+        .find({ isActive: true, includedInPlans: newPlan })
+        .select('key')
+        .lean();
+      baseModules = planModules.map((m) => m.key);
+
+      // Fallback: if no modules found via includedInPlans, try planConfig
+      // (handles edge case where modules haven't been linked yet)
+      if (baseModules.length === 0 && plan.includedModules?.length > 0) {
+        baseModules = plan.includedModules;
+      }
+    }
+
     const addonModules = current.addonModules || [];
     const activeModules = [...new Set([...baseModules, ...addonModules])];
     const periodEnd = new Date(new Date().setMonth(new Date().getMonth() + 1));

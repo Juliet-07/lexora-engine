@@ -309,4 +309,9 @@ export class SuperAdminController {
   // updateRiskRules(@Body() dto: UpdateRiskRulesDto) {
   //   return this.service.createOrUpdateRiskRules(dto);
   // }
+
+  @Post('repair-subscriptions')
+  repairSubscriptions() {
+    return this.service.repairSubscriptionModules();
+  }
 }
