@@ -12,6 +12,7 @@ export enum UserType {
   SUPER_ADMIN = 'super_admin',
   TENANT = 'tenant',
   CLIENT = 'client',
+  EMPLOYEE = 'employee',
 }
 
 // ── SuperAdmin roles ─────────────────────────────────────────
@@ -39,9 +40,15 @@ export enum ClientClassification {
 
 // ── Client roles (access within client portal) ────────────────
 export enum ClientRole {
+  // KYC / onboarding roles
   CLIENT_PRIMARY = 'client_primary', // main account holder
   CLIENT_SECONDARY = 'client_secondary', // additional contact / signatory
   CLIENT_VIEWER = 'client_viewer', // read-only access
+
+  // HR / corporate roles
+  CLIENT_EMPLOYEE = 'client_employee', // employee of the corporate client
+  CLIENT_BOARD = 'client_board', // board member
+  CLIENT_CLIENT = 'client_client', // the client's own customer (CRM)
 }
 
 // ── Tenant/Account status ─────────────────────────────────────

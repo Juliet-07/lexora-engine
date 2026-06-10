@@ -12,7 +12,7 @@ import { User, UserSchema } from '../auth/schemas/user.schema';
 import {
   SubscriptionPlanConfig,
   SubscriptionPlanConfigSchema,
-  TenantSubscription,
+  // TenantSubscription,
   TenantSubscriptionSchema,
 } from '../super_admin/schemas/subscription.schema';
 import { EmailModule } from 'src/common/utils/mailing/email.module';
@@ -30,6 +30,7 @@ import {
 } from './schemas/engagement-letter.schema';
 import { EngagementReminderService } from './services/engagement-letter-reminder.service';
 import { PlatformModule, PlatformModuleSchema } from '../super_admin/schemas';
+import { Employee, EmployeeSchema } from '../hr/schemas';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { PlatformModule, PlatformModuleSchema } from '../super_admin/schemas';
         schema: ClientEngagementSigningSchema,
       },
       { name: PlatformModule.name, schema: PlatformModuleSchema },
+      { name: Employee.name, schema: EmployeeSchema },
     ]),
   ],
   controllers: [TenantController, EngagementLetterController],

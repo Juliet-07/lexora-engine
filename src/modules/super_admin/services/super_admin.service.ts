@@ -65,6 +65,11 @@ export class SuperAdminService {
   // ═══════════════════════════════════════════════════════════
 
   async getDashboard() {
+    const rootTenantFilter = {
+      userType: UserType.TENANT,
+      $or: [{ tenantId: null }, { tenantId: { $exists: false } }],
+    };
+
     const [
       totalTenants,
       activeTenants,
@@ -75,20 +80,26 @@ export class SuperAdminService {
       recentTenants,
       moduleCount,
     ] = await Promise.all([
-      this.userModel.countDocuments({ userType: UserType.TENANT }),
+      // ── All four tenant counts use rootTenantFilter ──────────
+      this.userModel.countDocuments(rootTenantFilter),
+
       this.userModel.countDocuments({
-        userType: UserType.TENANT,
+        ...rootTenantFilter,
         status: AccountStatus.ACTIVE,
       }),
+
       this.userModel.countDocuments({
-        userType: UserType.TENANT,
+        ...rootTenantFilter,
         status: AccountStatus.SUSPENDED,
       }),
+
       this.userModel.countDocuments({
-        userType: UserType.TENANT,
+        ...rootTenantFilter,
         status: AccountStatus.PENDING,
       }),
+
       this.userModel.countDocuments({ userType: UserType.CLIENT }),
+
       this.subscriptionModel.aggregate([
         {
           $group: {
@@ -99,12 +110,14 @@ export class SuperAdminService {
         },
         { $sort: { count: -1 } },
       ]),
+
       this.userModel
-        .find({ userType: UserType.TENANT })
+        .find(rootTenantFilter)
         .select('-password')
         .sort({ createdAt: -1 })
         .limit(5)
         .lean(),
+
       this.moduleModel.countDocuments({ isActive: true }),
     ]);
 
@@ -194,15 +207,91 @@ export class SuperAdminService {
     return tenant;
   }
 
+  // async getTenants(pagination: PaginationDto, filters: TenantFilterDto) {
+  //   const query: QueryFilter<UserDocument> = { userType: UserType.TENANT };
+
+  //   if (filters.status) query.status = filters.status;
+  //   if (filters.industry)
+  //     query['tenantProfile.industry'] = {
+  //       $regex: filters.industry,
+  //       $options: 'i',
+  //     };
+  //   if (filters.search) {
+  //     query.$or = [
+  //       {
+  //         'tenantProfile.businessName': {
+  //           $regex: filters.search,
+  //           $options: 'i',
+  //         },
+  //       },
+  //       { email: { $regex: filters.search, $options: 'i' } },
+  //       { firstName: { $regex: filters.search, $options: 'i' } },
+  //       { lastName: { $regex: filters.search, $options: 'i' } },
+  //     ];
+  //   }
+
+  //   const { skip, limit, page } = pagination;
+  //   const [items, total] = await Promise.all([
+  //     this.userModel
+  //       .find(query)
+  //       .skip(skip)
+  //       .limit(limit)
+  //       .select('-password -passwordResetToken')
+  //       .sort({ createdAt: -1 })
+  //       .lean(),
+  //     this.userModel.countDocuments(query),
+  //   ]);
+
+  //   // Attach subscription to each tenant
+  //   const tenantIds = items.map((t) => t._id);
+  //   const [subscriptions, clientCounts] = await Promise.all([
+  //     this.subscriptionModel.find({ tenantId: { $in: tenantIds } }).lean(),
+  //     this.userModel.aggregate([
+  //       { $match: { userType: UserType.CLIENT, tenantId: { $in: tenantIds } } },
+  //       { $group: { _id: '$tenantId', count: { $sum: 1 } } },
+  //     ]),
+  //   ]);
+
+  //   const subMap = subscriptions.reduce(
+  //     (m, s) => {
+  //       m[s.tenantId.toString()] = s;
+  //       return m;
+  //     },
+  //     {} as Record<string, any>,
+  //   );
+
+  //   const countMap = clientCounts.reduce(
+  //     (m, c) => {
+  //       m[c._id.toString()] = c.count;
+  //       return m;
+  //     },
+  //     {} as Record<string, number>,
+  //   );
+
+  //   const enriched = items.map((t) => ({
+  //     ...t,
+  //     subscription: subMap[t._id.toString()] || null,
+  //     clientCount: countMap[t._id.toString()] ?? 0,
+  //   }));
+
+  //   return paginate(enriched, total, page, limit);
+  // }
+
   async getTenants(pagination: PaginationDto, filters: TenantFilterDto) {
-    const query: QueryFilter<UserDocument> = { userType: UserType.TENANT };
+    // Only root tenant accounts — team members have tenantId set (pointing to owner)
+    // Root tenants have tenantId: null (they are the owner, not under anyone)
+    const query: QueryFilter<UserDocument> = {
+      userType: UserType.TENANT,
+      $or: [{ tenantId: null }, { tenantId: { $exists: false } }],
+    };
 
     if (filters.status) query.status = filters.status;
-    if (filters.industry)
+    if (filters.industry) {
       query['tenantProfile.industry'] = {
         $regex: filters.industry,
         $options: 'i',
       };
+    }
     if (filters.search) {
       query.$or = [
         {
@@ -218,6 +307,7 @@ export class SuperAdminService {
     }
 
     const { skip, limit, page } = pagination;
+
     const [items, total] = await Promise.all([
       this.userModel
         .find(query)
@@ -229,12 +319,31 @@ export class SuperAdminService {
       this.userModel.countDocuments(query),
     ]);
 
-    // Attach subscription to each tenant
     const tenantIds = items.map((t) => t._id);
-    const [subscriptions, clientCounts] = await Promise.all([
+
+    const [subscriptions, clientCounts, userCounts] = await Promise.all([
       this.subscriptionModel.find({ tenantId: { $in: tenantIds } }).lean(),
+
+      // Count KYC clients per tenant
       this.userModel.aggregate([
-        { $match: { userType: UserType.CLIENT, tenantId: { $in: tenantIds } } },
+        {
+          $match: {
+            userType: UserType.CLIENT,
+            tenantId: { $in: tenantIds },
+          },
+        },
+        { $group: { _id: '$tenantId', count: { $sum: 1 } } },
+      ]),
+
+      // Count team members per tenant
+      // Team members: userType TENANT + tenantId pointing to the owner
+      this.userModel.aggregate([
+        {
+          $match: {
+            userType: UserType.TENANT,
+            tenantId: { $in: tenantIds },
+          },
+        },
         { $group: { _id: '$tenantId', count: { $sum: 1 } } },
       ]),
     ]);
@@ -247,7 +356,15 @@ export class SuperAdminService {
       {} as Record<string, any>,
     );
 
-    const countMap = clientCounts.reduce(
+    const clientCountMap = clientCounts.reduce(
+      (m, c) => {
+        m[c._id.toString()] = c.count;
+        return m;
+      },
+      {} as Record<string, number>,
+    );
+
+    const userCountMap = userCounts.reduce(
       (m, c) => {
         m[c._id.toString()] = c.count;
         return m;
@@ -258,12 +375,12 @@ export class SuperAdminService {
     const enriched = items.map((t) => ({
       ...t,
       subscription: subMap[t._id.toString()] || null,
-      clientCount: countMap[t._id.toString()] ?? 0,
+      clientCount: clientCountMap[t._id.toString()] ?? 0,
+      userCount: userCountMap[t._id.toString()] ?? 0, // team members added
     }));
 
     return paginate(enriched, total, page, limit);
   }
-
   async getTenantById(
     id: string,
   ): Promise<UserDocument & { subscription?: any }> {

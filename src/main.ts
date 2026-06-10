@@ -76,6 +76,7 @@ async function bootstrap() {
       )
       .addTag('Tenant', 'Tenant Management System')
       .addTag('KYC / AML', 'KYC submission, risk scoring, screening')
+      .addTag('HR', 'Employement Management, Payroll, Leave Management')
       .build();
 
     const document = SwaggerModule.createDocument(app, swaggerConfig);

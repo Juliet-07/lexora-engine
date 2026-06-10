@@ -380,23 +380,23 @@ export class TenantController {
   // TEAM MANAGEMENT
   // ═══════════════════════════════════════════════════════════
 
-  //   @Post('team')
-  //   @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
-  //   @ApiOperation({
-  //     summary: 'Invite a new team member [owner, admin]',
-  //     description:
-  //       'Creates a team member account under this tenant and emails them credentials. ' +
-  //       'Role hierarchy enforced — you can only assign roles below your own level.',
-  //   })
-  //   inviteTeamMember(
-  //     @Body() dto: InviteTeamMemberDto,
-  //     @CurrentUser('sub') userId: string,
-  //     @CurrentUser('tenantId') tenantId: string,
-  //     @CurrentUser('roles') roles: string[],
-  //   ) {
-  //     const resolvedTenantId = tenantId || userId;
-  //     return this.service.inviteTeamMember(dto, resolvedTenantId, userId, roles);
-  //   }
+  @Post('team')
+  @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
+  @ApiOperation({
+    summary: 'Invite a new team member [owner, admin]',
+    description:
+      'Creates a team member account under this tenant and emails them credentials. ' +
+      'Role hierarchy enforced — you can only assign roles below your own level.',
+  })
+  inviteTeamMember(
+    @Body() dto: InviteTeamMemberDto,
+    @CurrentUser('sub') userId: string,
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('roles') roles: string[],
+  ) {
+    const resolvedTenantId = tenantId || userId;
+    return this.service.inviteTeamMember(dto, resolvedTenantId, userId, roles);
+  }
 
   @Get('team')
   @ApiOperation({ summary: 'List all team members' })

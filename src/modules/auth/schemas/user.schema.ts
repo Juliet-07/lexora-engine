@@ -127,6 +127,9 @@ export class User {
 
   @Prop({ type: Object, default: {} })
   metadata: Record<string, any>;
+
+  @Prop({ type: Types.ObjectId, ref: 'ClientProfileRecord', default: null })
+  clientId: Types.ObjectId | null;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

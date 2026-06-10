@@ -28,7 +28,6 @@ import {
 } from '../../../common/interfaces/user-role.enum';
 import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
-import { timestamp } from 'rxjs';
 import { VerificationService } from './verification.service';
 import { EngagementLetterService } from './engagement-letter.service';
 import * as PDFDocument from 'pdfkit';

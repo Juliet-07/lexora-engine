@@ -31,6 +31,7 @@ import {
   PlatformModule,
   PlatformModuleDocument,
 } from 'src/modules/super_admin/schemas';
+import { Employee, EmployeeDocument } from 'src/modules/hr/schemas';
 
 // Role hierarchy — members can only assign roles below their own level
 const ROLE_HIERARCHY: Record<string, number> = {
@@ -52,6 +53,8 @@ export class TenantService {
     private readonly subscriptionModel: Model<any>,
     @InjectModel(PlatformModule.name)
     private readonly moduleModel: Model<PlatformModuleDocument>,
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
     private readonly mailService: EmailService,
   ) {}
 
@@ -59,36 +62,115 @@ export class TenantService {
   // DASHBOARD
   // ═══════════════════════════════════════════════════════════
 
+  // async getDashboard(tenantId: string) {
+  //   const tId = new Types.ObjectId(tenantId);
+
+  //   const [teamByRole, subscription, recentMembers, totalTeam, activeTeam] =
+  //     await Promise.all([
+  //       this.userModel.aggregate([
+  //         { $match: { userType: UserType.TENANT, tenantId: tId } },
+  //         { $unwind: '$roles' },
+  //         { $group: { _id: '$roles', count: { $sum: 1 } } },
+  //       ]),
+  //       this.subscriptionModel
+  //         .findOne({ tenantId: tId })
+  //         .select('plan status activeModules trialEndsAt currentPeriodEnd')
+  //         .lean(),
+  //       this.userModel
+  //         .find({ userType: UserType.TENANT, tenantId: tId })
+  //         .select('firstName lastName email roles status createdAt')
+  //         .sort({ createdAt: -1 })
+  //         .limit(5)
+  //         .lean(),
+  //       this.userModel.countDocuments({
+  //         userType: UserType.TENANT,
+  //         tenantId: tId,
+  //       }),
+  //       this.userModel.countDocuments({
+  //         userType: UserType.TENANT,
+  //         tenantId: tId,
+  //         status: AccountStatus.ACTIVE,
+  //       }),
+  //     ]);
+
+  //   return {
+  //     team: {
+  //       total: totalTeam,
+  //       active: activeTeam,
+  //       byRole: teamByRole,
+  //       recentMembers,
+  //     },
+  //     subscription: {
+  //       plan: subscription?.plan || null,
+  //       status: subscription?.status || null,
+  //       activeModules: subscription?.activeModules || [],
+  //       trialEndsAt: subscription?.trialEndsAt || null,
+  //       currentPeriodEnd: subscription?.currentPeriodEnd || null,
+  //     },
+  //     generatedAt: new Date(),
+  //   };
+  // }
+
   async getDashboard(tenantId: string) {
     const tId = new Types.ObjectId(tenantId);
 
-    const [teamByRole, subscription, recentMembers, totalTeam, activeTeam] =
-      await Promise.all([
-        this.userModel.aggregate([
-          { $match: { userType: UserType.TENANT, tenantId: tId } },
-          { $unwind: '$roles' },
-          { $group: { _id: '$roles', count: { $sum: 1 } } },
-        ]),
-        this.subscriptionModel
-          .findOne({ tenantId: tId })
-          .select('plan status activeModules trialEndsAt currentPeriodEnd')
-          .lean(),
-        this.userModel
-          .find({ userType: UserType.TENANT, tenantId: tId })
-          .select('firstName lastName email roles status createdAt')
-          .sort({ createdAt: -1 })
-          .limit(5)
-          .lean(),
-        this.userModel.countDocuments({
-          userType: UserType.TENANT,
-          tenantId: tId,
-        }),
-        this.userModel.countDocuments({
-          userType: UserType.TENANT,
-          tenantId: tId,
-          status: AccountStatus.ACTIVE,
-        }),
-      ]);
+    const [
+      teamByRole,
+      subscription,
+      recentMembers,
+      totalTeam,
+      activeTeam,
+      // ── HR stats ──────────────────────────────────────────
+      totalEmployees,
+      activeEmployees,
+      employeesByClient,
+      hrRecentJoins,
+    ] = await Promise.all([
+      // Existing team queries
+      this.userModel.aggregate([
+        { $match: { userType: UserType.TENANT, tenantId: tId } },
+        { $unwind: '$roles' },
+        { $group: { _id: '$roles', count: { $sum: 1 } } },
+      ]),
+      this.subscriptionModel
+        .findOne({ tenantId: tId })
+        .select('plan status activeModules trialEndsAt currentPeriodEnd')
+        .lean(),
+      this.userModel
+        .find({ userType: UserType.TENANT, tenantId: tId })
+        .select('firstName lastName email roles status createdAt')
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .lean(),
+      this.userModel.countDocuments({
+        userType: UserType.TENANT,
+        tenantId: tId,
+      }),
+      this.userModel.countDocuments({
+        userType: UserType.TENANT,
+        tenantId: tId,
+        status: AccountStatus.ACTIVE,
+      }),
+
+      // HR queries
+      this.employeeModel.countDocuments({ tenantId: tId }),
+      this.employeeModel.countDocuments({
+        tenantId: tId,
+        employmentStatus: 'active',
+      }),
+      this.employeeModel.aggregate([
+        { $match: { tenantId: tId, employmentStatus: 'active' } },
+        { $group: { _id: '$clientId', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 5 },
+      ]),
+      this.employeeModel
+        .find({ tenantId: tId })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select('firstName lastName jobTitle department clientId startDate')
+        .lean(),
+    ]);
 
     return {
       team: {
@@ -104,10 +186,15 @@ export class TenantService {
         trialEndsAt: subscription?.trialEndsAt || null,
         currentPeriodEnd: subscription?.currentPeriodEnd || null,
       },
+      hr: {
+        totalEmployees,
+        activeEmployees,
+        employeesByClient,
+        recentJoins: hrRecentJoins,
+      },
       generatedAt: new Date(),
     };
   }
-
   // ═══════════════════════════════════════════════════════════
   // PROFILE
   // ═══════════════════════════════════════════════════════════
@@ -265,70 +352,73 @@ export class TenantService {
   // TEAM MANAGEMENT
   // ═══════════════════════════════════════════════════════════
 
-  // async inviteTeamMember(
-  //   dto: InviteTeamMemberDto,
-  //   tenantId: string,
-  //   invitedBy: string,
-  //   inviterRoles: string[],
-  // ): Promise<UserDocument> {
-  //   this.enforceRoleHierarchy(inviterRoles, dto.role);
+  async inviteTeamMember(
+    dto: InviteTeamMemberDto,
+    tenantId: string,
+    invitedBy: string,
+    inviterRoles: string[],
+  ): Promise<{ member: Record<string, any> }> {
+    this.enforceRoleHierarchy(inviterRoles, dto.role);
 
-  //   if (dto.role === TenantRole.TENANT_OWNER) {
-  //     const existingOwner = await this.userModel.findOne({
-  //       tenantId: new Types.ObjectId(tenantId),
-  //       roles: { $in: [TenantRole.TENANT_OWNER] },
-  //       userType: UserType.TENANT,
-  //     });
-  //     if (existingOwner) {
-  //       throw new ConflictException(
-  //         'A tenant owner already exists. Transfer ownership instead.',
-  //       );
-  //     }
-  //   }
+    if (dto.role === TenantRole.TENANT_OWNER) {
+      const existingOwner = await this.userModel.findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        roles: { $in: [TenantRole.TENANT_OWNER] },
+        userType: UserType.TENANT,
+      });
+      if (existingOwner) {
+        throw new ConflictException(
+          'A tenant owner already exists. Transfer ownership instead.',
+        );
+      }
+    }
 
-  //   const emailTaken = await this.userModel.findOne({
-  //     email: dto.email.toLowerCase(),
-  //   });
-  //   if (emailTaken)
-  //     throw new ConflictException('Email already registered on the platform');
+    const emailTaken = await this.userModel.findOne({
+      email: dto.email.toLowerCase(),
+    });
+    if (emailTaken)
+      throw new ConflictException('Email already registered on the platform');
 
-  //   const tempPassword = this.generateTempPassword();
-  //   const hashedPassword = await bcrypt.hash(tempPassword, 12);
+    const tempPassword = this.generateTempPassword();
+    const hashedPassword = await bcrypt.hash(tempPassword, 12);
 
-  //   const member = await this.userModel.create({
-  //     userType: UserType.TENANT,
-  //     firstName: dto.firstName,
-  //     lastName: dto.lastName,
-  //     email: dto.email.toLowerCase(),
-  //     password: hashedPassword,
-  //     phone: dto.phone,
-  //     roles: [dto.role],
-  //     status: AccountStatus.PENDING,
-  //     tenantId: new Types.ObjectId(tenantId),
-  //     createdBy: new Types.ObjectId(invitedBy),
-  //     mustChangePassword: true,
-  //   });
+    const member = await this.userModel.create({
+      userType: UserType.TENANT,
+      firstName: dto.firstName,
+      lastName: dto.lastName,
+      email: dto.email.toLowerCase(),
+      password: hashedPassword,
+      phone: dto.phone,
+      roles: [dto.role],
+      status: AccountStatus.PENDING,
+      tenantId: new Types.ObjectId(tenantId),
+      createdBy: new Types.ObjectId(invitedBy),
+      mustChangePassword: true,
+    });
 
-  //   const tenant = await this.userModel
-  //     .findById(tenantId)
-  //     .select('tenantProfile.businessName firstName')
-  //     .lean();
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.businessName firstName')
+      .lean();
 
-  //   await this.mailService.sendClientWelcome({
-  //     to: member.email,
-  //     firstName: member.firstName,
-  //     tenantBusinessName:
-  //       (tenant as any)?.tenantProfile?.businessName ||
-  //       (tenant as any)?.firstName ||
-  //       'Your Organization',
-  //     tempPassword,
-  //     loginUrl: `${process.env.APP_URL || 'http://localhost:3000'}/login`,
-  //   });
+    const businessName =
+      (tenant as any)?.tenantProfile?.businessName ||
+      (tenant as any)?.firstName ||
+      'Your Organization';
 
-  //   const obj = member.toObject();
-  //   delete obj.password;
-  //   return obj as UserDocument;
-  // }
+    await this.mailService.sendTeamMemberWelcome({
+      to: member.email,
+      firstName: member.firstName,
+      businessName,
+      role: dto.role,
+      tempPassword,
+      loginUrl: `${process.env.TENANT_APP_URL}`,
+    });
+
+    const obj = member.toObject();
+    delete obj.password;
+    return { member: obj };
+  }
 
   async getTeamMembers(
     tenantId: string,

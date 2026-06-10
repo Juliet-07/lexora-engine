@@ -66,6 +66,14 @@ import {
   PaymentReceiptEmailData,
   paymentReceiptTemplate,
 } from './templates/payment-emails.template';
+import {
+  TeamMemberWelcomeEmailData,
+  teamMemberWelcomeTemplate,
+} from './templates/team-member-welcome.template';
+import {
+  EmployeeWelcomeEmailData,
+  employeeWelcomeTemplate,
+} from './templates/employee-welcome.template';
 
 @Injectable()
 export class EmailService {
@@ -280,6 +288,26 @@ export class EmailService {
 
   async sendPaymentInvoice(data: PaymentInvoiceEmailData): Promise<void> {
     const { subject, html } = paymentInvoiceTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendTeamMemberWelcome(data: TeamMemberWelcomeEmailData): Promise<void> {
+    const { subject, html } = teamMemberWelcomeTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendEmployeeWelcome(data: EmployeeWelcomeEmailData): Promise<void> {
+    const { subject, html } = employeeWelcomeTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

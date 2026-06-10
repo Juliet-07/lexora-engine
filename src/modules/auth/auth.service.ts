@@ -148,6 +148,28 @@ export class AuthService {
       .lean();
 
     if (!user) throw new NotFoundException('User not found');
+
+    if (
+      (user as any).userType === 'client' ||
+      (user as any).userType === 'employee'
+    ) {
+      const profileQuery =
+        (user as any).userType === 'client'
+          ? { userId: new Types.ObjectId(userId) }
+          : { _id: new Types.ObjectId((user as any).clientId) };
+
+      const clientProfile = await this.clientProfileModel
+        .findOne(profileQuery)
+        .select('_id classifications kycStatus')
+        .lean();
+
+      return {
+        ...user,
+        clientProfileId: clientProfile?._id?.toString() ?? null,
+        clientClassifications: clientProfile?.classifications ?? null,
+        clientKycStatus: clientProfile?.kycStatus ?? null,
+      };
+    }
     return user as UserDocument;
   }
 

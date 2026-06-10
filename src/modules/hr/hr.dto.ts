@@ -1,0 +1,213 @@
+import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import {
+  IsString,
+  IsOptional,
+  IsEmail,
+  IsEnum,
+  IsNumber,
+  IsDateString,
+  IsBoolean,
+  Min,
+  IsArray,
+} from 'class-validator';
+import { EmploymentType, EmploymentStatus, Gender } from './schemas';
+
+// ─────────────────────────────────────────────────────────────
+// EMPLOYEE DTOs
+// ─────────────────────────────────────────────────────────────
+
+export class CreateEmployeeDto {
+  // ── Required ───────────────────────────────────────────────
+  @ApiProperty({ example: 'John' })
+  @IsString()
+  firstName: string;
+
+  @ApiProperty({ example: 'Doe' })
+  @IsString()
+  lastName: string;
+
+  @ApiProperty({ example: 'john.doe@company.com' })
+  @IsEmail()
+  email: string;
+
+  @ApiProperty({ example: 'Software Engineer' })
+  @IsString()
+  jobTitle: string;
+
+  @ApiProperty({ example: '2024-01-15' })
+  @IsDateString()
+  startDate: string;
+
+  @ApiProperty({
+    description: 'Client ID (corporate client this employee works for)',
+  })
+  @IsString()
+  clientId: string;
+
+  // ── Optional personal ─────────────────────────────────────
+  @ApiPropertyOptional({ example: '+250700000000' })
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @ApiPropertyOptional({ enum: Gender })
+  @IsOptional()
+  @IsEnum(Gender)
+  gender?: Gender;
+
+  @ApiPropertyOptional({ example: '1990-05-20' })
+  @IsOptional()
+  @IsDateString()
+  dateOfBirth?: string;
+
+  @ApiPropertyOptional({ example: 'Rwandan' })
+  @IsOptional()
+  @IsString()
+  nationality?: string;
+
+  @ApiPropertyOptional({ example: '1199900100123456' })
+  @IsOptional()
+  @IsString()
+  nationalId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  address?: {
+    street?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+  };
+
+  @ApiPropertyOptional({ example: 'Jane Doe' })
+  @IsOptional()
+  @IsString()
+  emergencyContactName?: string;
+
+  @ApiPropertyOptional({ example: '+250788000000' })
+  @IsOptional()
+  @IsString()
+  emergencyContactPhone?: string;
+
+  // ── Optional employment ───────────────────────────────────
+  @ApiPropertyOptional({ example: 'Engineering' })
+  @IsOptional()
+  @IsString()
+  department?: string;
+
+  @ApiPropertyOptional({ example: 'EMP-0001' })
+  @IsOptional()
+  @IsString()
+  reportsTo?: string;
+
+  @ApiPropertyOptional({
+    enum: EmploymentType,
+    default: EmploymentType.FULL_TIME,
+  })
+  @IsOptional()
+  @IsEnum(EmploymentType)
+  employmentType?: EmploymentType;
+
+  @ApiPropertyOptional({ example: '2024-04-15' })
+  @IsOptional()
+  @IsDateString()
+  probationEndDate?: string;
+
+  // ── Optional compensation ─────────────────────────────────
+  @ApiPropertyOptional({ example: 500000 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  salary?: number;
+
+  @ApiPropertyOptional({ example: 'RWF', default: 'RWF' })
+  @IsOptional()
+  @IsString()
+  salaryCurrency?: string;
+
+  @ApiPropertyOptional({ example: 'monthly' })
+  @IsOptional()
+  @IsString()
+  salaryFrequency?: string;
+
+  @ApiPropertyOptional({ example: 'Bank of Kigali' })
+  @IsOptional()
+  @IsString()
+  bankName?: string;
+
+  @ApiPropertyOptional({ example: '00123456789' })
+  @IsOptional()
+  @IsString()
+  bankAccountNumber?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  taxId?: string;
+
+  // ── Leave entitlements ────────────────────────────────────
+  @ApiPropertyOptional({ example: 21, default: 21 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  annualLeaveBalance?: number;
+
+  @ApiPropertyOptional({ example: 10, default: 10 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  sickLeaveBalance?: number;
+}
+
+export class UpdateEmployeeDto extends PartialType(CreateEmployeeDto) {
+  @ApiPropertyOptional({ enum: EmploymentStatus })
+  @IsOptional()
+  @IsEnum(EmploymentStatus)
+  employmentStatus?: EmploymentStatus;
+
+  @ApiPropertyOptional({ example: '2024-12-31' })
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+}
+
+export class EmployeeFilterDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  clientId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  department?: string;
+
+  @ApiPropertyOptional({ enum: EmploymentStatus })
+  @IsOptional()
+  @IsEnum(EmploymentStatus)
+  employmentStatus?: EmploymentStatus;
+
+  @ApiPropertyOptional({ enum: EmploymentType })
+  @IsOptional()
+  @IsEnum(EmploymentType)
+  employmentType?: EmploymentType;
+}
+
+export class TerminateEmployeeDto {
+  @ApiProperty({ example: '2024-12-31' })
+  @IsDateString()
+  endDate: string;
+
+  @ApiProperty({ example: 'Resignation' })
+  @IsString()
+  reason: string;
+
+  @ApiProperty({ enum: EmploymentStatus, example: EmploymentStatus.TERMINATED })
+  @IsEnum(EmploymentStatus)
+  status: EmploymentStatus;
+}

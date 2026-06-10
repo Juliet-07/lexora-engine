@@ -23,9 +23,10 @@ import { KycModule } from './modules/kyc/kyc.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
-import { TransformInterceptor } from './common/interceptors/transform.interceptor';
-import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { TransformInterceptor } from 'src/common/interceptors/transform.interceptor';
+import { LoggingInterceptor } from 'src/common/interceptors/logging.interceptor';
 import { PaymentModule } from './modules/payment/payment.module';
+import { HrModule } from './modules/hr/hr.module';
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ import { PaymentModule } from './modules/payment/payment.module';
     TenantModule,
     ClientModule,
     KycModule,
+    HrModule,
     PaymentModule,
   ],
   providers: [
