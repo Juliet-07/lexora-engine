@@ -1,8 +1,13 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
-import { Employee, EmployeeSchema } from './schemas/employee.schema';
-import { EmployeeService } from './services/employee.service';
+import {
+  Employee,
+  EmployeeAttendance,
+  EmployeeAttendanceSchema,
+  EmployeeSchema,
+} from './schemas/employee.schema';
+import { EmployeeService, LeaveService, AttendanceService } from './services';
 
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import {
@@ -18,9 +23,9 @@ import {
 import {
   LeaveRequest,
   LeaveRequestSchema,
-} from './schemas/leave-request.schema';
-import { LeavePolicy, LeavePolicySchema } from './schemas/leave-policy.schema';
-import { LeaveService } from './services';
+  LeavePolicy,
+  LeavePolicySchema,
+} from './schemas';
 
 @Module({
   imports: [
@@ -30,10 +35,11 @@ import { LeaveService } from './services';
       { name: ClientProfileRecord.name, schema: ClientProfileSchema },
       { name: LeaveRequest.name, schema: LeaveRequestSchema },
       { name: LeavePolicy.name, schema: LeavePolicySchema },
+      { name: EmployeeAttendance.name, schema: EmployeeAttendanceSchema },
     ]),
   ],
   controllers: [HrTenantController, HrEmployeeController, HrClientController],
-  providers: [EmployeeService, EmailService, LeaveService],
-  exports: [EmployeeService, LeaveService],
+  providers: [EmployeeService, EmailService, LeaveService, AttendanceService],
+  exports: [EmployeeService, LeaveService, AttendanceService],
 })
 export class HrModule {}

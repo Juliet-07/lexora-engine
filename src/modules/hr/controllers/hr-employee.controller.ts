@@ -7,6 +7,7 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  Query,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { EmployeeService } from '../services/employee.service';
@@ -14,6 +15,7 @@ import { LeaveService } from '../services/leave.service';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
 import { CreateLeaveRequestDto } from '../dtos';
+import { AttendanceService } from '../services';
 
 // ─────────────────────────────────────────────────────────────
 // EMPLOYEE SELF-SERVICE CONTROLLER
@@ -28,6 +30,7 @@ export class HrEmployeeController {
   constructor(
     private readonly employeeService: EmployeeService,
     private readonly leaveService: LeaveService,
+    private readonly attendanceService: AttendanceService,
   ) {}
 
   // ── Profile ───────────────────────────────────────────────
@@ -77,5 +80,60 @@ export class HrEmployeeController {
     @CurrentUser('sub') userId: string,
   ) {
     return this.leaveService.cancelLeaveRequest(id, userId);
+  }
+
+  @Get('attendance/active')
+  @ApiOperation({ summary: 'Get current active shift' })
+  getActiveShift(@CurrentUser('sub') userId: string) {
+    return this.attendanceService.getMyActiveShift(userId);
+  }
+
+  @Get('attendance/stats')
+  @ApiOperation({ summary: 'Get my attendance stats (week/month hours)' })
+  getAttendanceStats(@CurrentUser('sub') userId: string) {
+    return this.attendanceService.getMyAttendanceStats(userId);
+  }
+
+  @Get('attendance')
+  @ApiOperation({ summary: 'Get my attendance history' })
+  getMyAttendance(
+    @CurrentUser('sub') userId: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.attendanceService.getMyAttendance(
+      userId,
+      limit ? Number(limit) : 30,
+    );
+  }
+
+  @Post('attendance/clock-in')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Clock in for the day' })
+  clockIn(
+    @CurrentUser('sub') userId: string,
+    @Body() dto: { location?: string },
+  ) {
+    return this.attendanceService.clockIn(userId, dto);
+  }
+
+  @Post('attendance/break/start')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Start a break' })
+  startBreak(@CurrentUser('sub') userId: string) {
+    return this.attendanceService.startBreak(userId);
+  }
+
+  @Post('attendance/break/end')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'End a break' })
+  endBreak(@CurrentUser('sub') userId: string) {
+    return this.attendanceService.endBreak(userId);
+  }
+
+  @Post('attendance/clock-out')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Clock out' })
+  clockOut(@CurrentUser('sub') userId: string) {
+    return this.attendanceService.clockOut(userId);
   }
 }

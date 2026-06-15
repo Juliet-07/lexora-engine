@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
 export type EmployeeDocument = Employee & Document;
+export type EmployeeAttendanceDocument = EmployeeAttendance & Document;
 
 export enum EmploymentType {
   FULL_TIME = 'full_time',
@@ -23,6 +24,14 @@ export enum Gender {
   MALE = 'male',
   FEMALE = 'female',
   OTHER = 'other',
+}
+
+export enum EmployeeAttendanceStatus {
+  PRESENT = 'present',
+  LATE = 'late',
+  REMOTE = 'remote',
+  ABSENT = 'absent',
+  ON_LEAVE = 'on_leave',
 }
 
 @Schema({ timestamps: true, collection: 'hr_employees' })
@@ -167,3 +176,61 @@ export class Employee {
 }
 
 export const EmployeeSchema = SchemaFactory.createForClass(Employee);
+
+@Schema({ timestamps: true, collection: 'hr_employee_attendance' })
+export class EmployeeAttendance {
+  // Employee record _id
+  @Prop({ type: Types.ObjectId, ref: 'Employee', required: true, index: true })
+  employeeId: Types.ObjectId;
+
+  // The client this employee belongs to
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'ClientProfileRecord',
+    required: true,
+    index: true,
+  })
+  clientId: Types.ObjectId;
+
+  // The tenant managing this employee's HR
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  // Calendar date (start of day, midnight UTC — for unique index)
+  @Prop({ required: true })
+  date: Date;
+
+  @Prop({ required: true })
+  clockIn: Date;
+
+  @Prop({ default: null })
+  clockOut: Date | null;
+
+  // Total break minutes accumulated
+  @Prop({ default: 0 })
+  breakMinutes: number;
+
+  // Track active break start
+  @Prop({ default: null })
+  breakStartedAt: Date | null;
+
+  // Calculated on clock-out
+  @Prop({ default: null })
+  hoursWorked: number | null;
+
+  @Prop({ default: 'Office' })
+  location: string;
+
+  @Prop({
+    enum: EmployeeAttendanceStatus,
+    default: EmployeeAttendanceStatus.PRESENT,
+  })
+  status: EmployeeAttendanceStatus;
+
+  // Notes added by manager or HR
+  @Prop({ default: null })
+  note: string | null;
+}
+
+export const EmployeeAttendanceSchema =
+  SchemaFactory.createForClass(EmployeeAttendance);

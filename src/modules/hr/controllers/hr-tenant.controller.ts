@@ -15,7 +15,7 @@ import {
   ApiOperation,
   ApiQuery,
 } from '@nestjs/swagger';
-import { EmployeeService, LeaveService } from '../services';
+import { AttendanceService, EmployeeService, LeaveService } from '../services';
 import {
   CreateEmployeeDto,
   UpdateEmployeeDto,
@@ -40,6 +40,7 @@ export class HrTenantController {
   constructor(
     private readonly employeeService: EmployeeService,
     private readonly leaveService: LeaveService,
+    private readonly attendanceService: AttendanceService,
   ) {}
 
   // ── Stats ──────────────────────────────────────────────────
@@ -224,5 +225,29 @@ export class HrTenantController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.leaveService.reviewLeaveRequest(id, t || u, u, dto);
+  }
+
+  @Get('attendance/today')
+  @ApiOperation({
+    summary: "Today's attendance log — all employees [tenant]",
+    description:
+      'Returns clock-in/out status for every active employee today. Grouped with stats.',
+  })
+  getTodayAttendance(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Query('clientId') clientId?: string,
+  ) {
+    return this.attendanceService.getTodayAttendance(t || u, clientId);
+  }
+
+  @Get('attendance/trends')
+  @ApiOperation({ summary: 'Weekly attendance trends [tenant]' })
+  getWeeklyTrends(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Query('clientId') clientId?: string,
+  ) {
+    return this.attendanceService.getWeeklyTrends(t || u, clientId);
   }
 }
