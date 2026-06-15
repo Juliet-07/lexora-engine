@@ -8,7 +8,6 @@ import {
   Query,
   HttpCode,
   HttpStatus,
-  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -16,28 +15,32 @@ import {
   ApiOperation,
   ApiQuery,
 } from '@nestjs/swagger';
-
-import { EmployeeService } from './services/employee.service';
+import { EmployeeService, LeaveService } from '../services';
 import {
   CreateEmployeeDto,
   UpdateEmployeeDto,
   EmployeeFilterDto,
   TerminateEmployeeDto,
-} from './hr.dto';
-import { UserTypes, CurrentUser } from '../../common/decorators/index';
-import { UserType } from '../../common/interfaces/user-role.enum';
-import { PaginationDto } from '../../common/pagination.dto';
+  UpsertLeavePolicyDto,
+  LeaveFilterDto,
+  ReviewLeaveRequestDto,
+} from '../dtos';
+import { UserTypes, CurrentUser } from '../../../common/decorators/index';
+import { UserType } from '../../../common/interfaces/user-role.enum';
+import { PaginationDto } from '../../../common/pagination.dto';
 
 // ─────────────────────────────────────────────────────────────
 // TENANT HR CONTROLLER
 // ─────────────────────────────────────────────────────────────
-
 @ApiTags('HR')
 @ApiBearerAuth('bearerAuth')
 @UserTypes(UserType.TENANT)
 @Controller('hr')
 export class HrTenantController {
-  constructor(private readonly employeeService: EmployeeService) {}
+  constructor(
+    private readonly employeeService: EmployeeService,
+    private readonly leaveService: LeaveService,
+  ) {}
 
   // ── Stats ──────────────────────────────────────────────────
   @Get('stats')
@@ -144,60 +147,82 @@ export class HrTenantController {
       pagination,
     );
   }
-}
 
-// ─────────────────────────────────────────────────────────────
-// EMPLOYEE SELF-SERVICE CONTROLLER
-// ─────────────────────────────────────────────────────────────
+  // ── Leave Policy ──────────────────────────────────────────
 
-@ApiTags('HR — Employee Self-Service')
-@ApiBearerAuth('bearerAuth')
-@UserTypes(UserType.EMPLOYEE)
-@Controller('employee')
-export class HrEmployeeController {
-  constructor(private readonly employeeService: EmployeeService) {}
-
-  @Get('me')
-  @ApiOperation({ summary: 'Get own employee profile' })
-  getMyProfile(@CurrentUser('sub') userId: string) {
-    return this.employeeService.getMyProfile(userId);
-  }
-
-  @Patch('me')
-  @HttpCode(HttpStatus.OK)
+  @Post('leave/policy')
   @ApiOperation({
-    summary: 'Update own employee profile',
+    summary: 'Set leave policy for a client',
     description:
-      'Employee updates their own contact details, address, emergency contact and bank details.',
+      'Creates or updates leave allowances per type for a specific client.',
   })
-  updateMyProfile(@CurrentUser('sub') userId: string, @Body() dto: any) {
-    return this.employeeService.updateMyProfile(userId, dto);
-  }
-}
-
-@ApiTags('HR — Client Self-Service')
-@ApiBearerAuth('bearerAuth')
-@UserTypes(UserType.CLIENT)
-@Controller('client/hr')
-export class HrClientController {
-  constructor(private readonly employeeService: EmployeeService) {}
-
-  @Get('employees')
-  @ApiOperation({
-    summary: 'Get employees for this client [client portal]',
-    description:
-      'Client fetches their own employees using their clientProfileId from GET /auth/me.',
-  })
-  getMyEmployees(
-    @Query('clientProfileId') clientProfileId: string,
-    @Query() pagination: PaginationDto,
+  upsertLeavePolicy(
+    @Body() dto: UpsertLeavePolicyDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
   ) {
-    if (!clientProfileId) {
-      throw new BadRequestException('clientProfileId is required');
-    }
-    return this.employeeService.getEmployeesForClient(
-      clientProfileId,
+    return this.leaveService.upsertPolicy(t || u, dto);
+  }
+
+  @Get('leave/policy')
+  @ApiOperation({ summary: 'Get all leave policies for this tenant' })
+  getAllLeavePolicies(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.leaveService.getAllPolicies(t || u);
+  }
+
+  @Get('leave/policy/:clientId')
+  @ApiOperation({ summary: 'Get leave policy for a specific client' })
+  getLeavePolicy(
+    @Param('clientId') clientId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.leaveService.getPolicy(t || u, clientId);
+  }
+
+  // ── Leave Requests ────────────────────────────────────────
+
+  @Get('leave/requests')
+  @ApiOperation({ summary: 'List all leave requests (filterable)' })
+  @ApiQuery({ name: 'clientId', required: false })
+  @ApiQuery({ name: 'employeeId', required: false })
+  @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'type', required: false })
+  getTenantLeaveRequests(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Query() pagination: PaginationDto,
+    @Query() filters: LeaveFilterDto,
+  ) {
+    return this.leaveService.getTenantLeaveRequests(
+      t || u,
       pagination,
+      filters,
     );
+  }
+
+  @Get('leave/stats')
+  @ApiOperation({ summary: 'Leave stats — pending count, by type, by status' })
+  getLeaveStats(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Query('clientId') clientId?: string,
+  ) {
+    return this.leaveService.getLeaveStats(t || u, clientId);
+  }
+
+  @Patch('leave/requests/:id/review')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Approve or reject a leave request [tenant only]' })
+  reviewLeaveRequest(
+    @Param('id') id: string,
+    @Body() dto: ReviewLeaveRequestDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.leaveService.reviewLeaveRequest(id, t || u, u, dto);
   }
 }

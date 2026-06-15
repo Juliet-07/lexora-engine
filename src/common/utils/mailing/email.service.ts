@@ -74,6 +74,12 @@ import {
   EmployeeWelcomeEmailData,
   employeeWelcomeTemplate,
 } from './templates/employee-welcome.template';
+import {
+  LeaveRequestNotificationData,
+  leaveRequestNotificationTemplate,
+  LeaveReviewNotificationData,
+  leaveReviewNotificationTemplate,
+} from './templates/leave-emails.template';
 
 @Injectable()
 export class EmailService {
@@ -308,6 +314,30 @@ export class EmailService {
 
   async sendEmployeeWelcome(data: EmployeeWelcomeEmailData): Promise<void> {
     const { subject, html } = employeeWelcomeTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendLeaveRequestNotification(
+    data: LeaveRequestNotificationData,
+  ): Promise<void> {
+    const { subject, html } = leaveRequestNotificationTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendLeaveReviewNotification(
+    data: LeaveReviewNotificationData,
+  ): Promise<void> {
+    const { subject, html } = leaveReviewNotificationTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

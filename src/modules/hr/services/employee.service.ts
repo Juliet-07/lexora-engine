@@ -18,7 +18,7 @@ import {
   UpdateEmployeeDto,
   EmployeeFilterDto,
   TerminateEmployeeDto,
-} from '../hr.dto';
+} from '../dtos';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
 import {
   ClientProfileRecord,

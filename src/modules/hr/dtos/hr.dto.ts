@@ -6,11 +6,9 @@ import {
   IsEnum,
   IsNumber,
   IsDateString,
-  IsBoolean,
   Min,
-  IsArray,
 } from 'class-validator';
-import { EmploymentType, EmploymentStatus, Gender } from './schemas';
+import { EmploymentType, EmploymentStatus, Gender } from '../schemas';
 
 // ─────────────────────────────────────────────────────────────
 // EMPLOYEE DTOs

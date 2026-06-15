@@ -42,7 +42,6 @@ import {
 import { PaginationDto } from '../../../common/pagination.dto';
 import {
   QuickAddClientDto,
-  UpdateClientProfileDto,
   ClientFilterDto,
   AssignClientDto,
   UpdateClientStatusDto,
@@ -50,6 +49,7 @@ import {
 } from '../dto/client.dto';
 import { TenantClientsService } from '../services/tenant-client.service';
 import { Response } from 'express';
+import { TeamMemberService } from '../services/team-member.service';
 
 @ApiTags('Tenant')
 @ApiBearerAuth('bearerAuth')
@@ -59,6 +59,7 @@ export class TenantController {
   constructor(
     private readonly service: TenantService,
     private readonly tenantClientService: TenantClientsService,
+    private readonly teamMemberService: TeamMemberService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -70,7 +71,6 @@ export class TenantController {
     summary: 'Tenant dashboard — team stats, subscription, recent activity',
   })
   getDashboard(@CurrentUser('sub') tenantOwnerId: string) {
-    // For team members, use their tenantId. For the owner, use their own id.
     return this.service.getDashboard(tenantOwnerId);
   }
 
@@ -127,6 +127,30 @@ export class TenantController {
     @Query() filters: ClientFilterDto,
   ) {
     return this.tenantClientService.getClients(t || u, pagination, filters);
+  }
+
+  // ── Get Client Report ────────────────────────────────────────────────
+  @Get('my-clients/:id/report')
+  @ApiOperation({ summary: 'Download full KYC report for a client as PDF' })
+  async downloadClientReport(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const { filePath, fileName } =
+      await this.tenantClientService.generateClientReport(id, t || u);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+
+    const stream = require('fs').createReadStream(filePath);
+    stream.pipe(res);
+
+    // Clean up file after streaming
+    stream.on('end', () => {
+      require('fs').unlink(filePath, () => {});
+    });
   }
 
   // ── Get one ───────────────────────────────────────────────
@@ -310,29 +334,6 @@ export class TenantController {
     return this.tenantClientService.deleteClient(id, t || u);
   }
 
-  // ── Report ────────────────────────────────────────────────
-  @Get('my-clients/:id/report')
-  @ApiOperation({ summary: 'Download full KYC report for a client as PDF' })
-  async downloadClientReport(
-    @Param('id') id: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-    @Res() res: Response,
-  ) {
-    const { filePath, fileName } =
-      await this.tenantClientService.generateClientReport(id, t || u);
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-
-    const stream = require('fs').createReadStream(filePath);
-    stream.pipe(res);
-
-    // Clean up file after streaming
-    stream.on('end', () => {
-      require('fs').unlink(filePath, () => {});
-    });
-  }
   // ═══════════════════════════════════════════════════════════
   // MODULES
   // ═══════════════════════════════════════════════════════════
@@ -347,8 +348,6 @@ export class TenantController {
     @CurrentUser('sub') userId: string,
     @CurrentUser('tenantId') tenantId: string,
   ) {
-    // Owner: their own id IS their tenantId
-    // Team member: their tenantId points to the owner
     const resolvedTenantId = tenantId || userId;
     return this.service.getMyModules(resolvedTenantId);
   }
@@ -376,6 +375,7 @@ export class TenantController {
   ) {
     return this.service.upgradePlan(t || u, dto.plan);
   }
+
   // ═══════════════════════════════════════════════════════════
   // TEAM MANAGEMENT
   // ═══════════════════════════════════════════════════════════
@@ -408,6 +408,89 @@ export class TenantController {
   ) {
     const resolvedTenantId = tenantId || userId;
     return this.service.getTeamMembers(resolvedTenantId, pagination, filters);
+  }
+
+  @Get('team/policy')
+  @ApiOperation({ summary: 'Get team leave policy and working hours' })
+  getTeamPolicy(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getPolicy(t || u);
+  }
+
+  @Patch('team/policy/leave')
+  @HttpCode(HttpStatus.OK)
+  @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
+  @ApiOperation({ summary: 'Save team leave policy [owner, admin]' })
+  saveLeavePolicy(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Body()
+    dto: {
+      leavePolicy: {
+        type: string;
+        days: number;
+        carryOver: boolean;
+        requiresApproval: boolean;
+      }[];
+    },
+  ) {
+    return this.service.saveLeavePolicy(t || u, dto.leavePolicy);
+  }
+
+  @Patch('team/policy/working-hours')
+  @HttpCode(HttpStatus.OK)
+  @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
+  @ApiOperation({ summary: 'Save working hours policy [owner, admin]' })
+  saveWorkingHours(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Body()
+    dto: {
+      startTime: string;
+      endTime: string;
+      workdays: string;
+      requireClockIn: boolean;
+    },
+  ) {
+    return this.service.saveWorkingHours(t || u, dto);
+  }
+
+  @Get('team/leave')
+  @Roles(
+    TenantRole.TENANT_OWNER,
+    TenantRole.TENANT_ADMIN,
+    TenantRole.TENANT_MANAGER,
+  )
+  @ApiOperation({ summary: 'List all team leave requests [admin]' })
+  getTeamLeaveRequests(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Query('status') status?: string,
+    @Query('memberId') memberId?: string,
+  ) {
+    return this.teamMemberService.getTenantTeamLeaveRequests(t || u, {
+      status,
+      memberId,
+    });
+  }
+
+  @Patch('team/leave/:id/review')
+  @HttpCode(HttpStatus.OK)
+  @Roles(
+    TenantRole.TENANT_OWNER,
+    TenantRole.TENANT_ADMIN,
+    TenantRole.TENANT_MANAGER,
+  )
+  @ApiOperation({ summary: 'Approve or reject a team leave request [admin]' })
+  reviewTeamLeaveRequest(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Body() dto: { status: 'approved' | 'rejected'; reviewNote?: string },
+  ) {
+    return this.teamMemberService.reviewTeamLeaveRequest(id, t || u, u, dto);
   }
 
   @Get('team/:id')

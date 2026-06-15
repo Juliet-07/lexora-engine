@@ -32,6 +32,12 @@ import {
   PlatformModuleDocument,
 } from 'src/modules/super_admin/schemas';
 import { Employee, EmployeeDocument } from 'src/modules/hr/schemas';
+import {
+  TenantTeamPolicy,
+  TenantTeamPolicyDocument,
+  DEFAULT_LEAVE_POLICY,
+  DEFAULT_WORKING_HOURS,
+} from '../schemas';
 
 // Role hierarchy — members can only assign roles below their own level
 const ROLE_HIERARCHY: Record<string, number> = {
@@ -55,6 +61,8 @@ export class TenantService {
     private readonly moduleModel: Model<PlatformModuleDocument>,
     @InjectModel(Employee.name)
     private readonly employeeModel: Model<EmployeeDocument>,
+    @InjectModel(TenantTeamPolicy.name)
+    private readonly policyModel: Model<TenantTeamPolicyDocument>,
     private readonly mailService: EmailService,
   ) {}
 
@@ -544,6 +552,89 @@ export class TenantService {
     });
   }
 
+  // ── Leave policy settings ───────────
+
+  // ── Get policy (creates default if none exists) ───────────
+  async getPolicy(tenantId: string): Promise<TenantTeamPolicyDocument> {
+    const existing = await this.policyModel
+      .findOne({ tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+
+    if (existing) return existing as TenantTeamPolicyDocument;
+
+    // First time — create with defaults
+    const created = await this.policyModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      leavePolicy: DEFAULT_LEAVE_POLICY,
+      workingHours: DEFAULT_WORKING_HOURS,
+    });
+    return created.toObject() as TenantTeamPolicyDocument;
+  }
+
+  // ── Save leave policy ─────────────────────────────────────
+  async saveLeavePolicy(
+    tenantId: string,
+    leavePolicy: {
+      type: string;
+      days: number;
+      carryOver: boolean;
+      requiresApproval: boolean;
+    }[],
+  ): Promise<TenantTeamPolicyDocument> {
+    const policy = await this.policyModel.findOneAndUpdate(
+      { tenantId: new Types.ObjectId(tenantId) },
+      {
+        $set: {
+          tenantId: new Types.ObjectId(tenantId),
+          leavePolicy,
+        },
+      },
+      { upsert: true, new: true },
+    );
+    return policy;
+  }
+
+  // ── Save working hours ────────────────────────────────────
+  async saveWorkingHours(
+    tenantId: string,
+    workingHours: {
+      startTime: string;
+      endTime: string;
+      workdays: string;
+      requireClockIn: boolean;
+    },
+  ): Promise<TenantTeamPolicyDocument> {
+    const policy = await this.policyModel.findOneAndUpdate(
+      { tenantId: new Types.ObjectId(tenantId) },
+      {
+        $set: {
+          tenantId: new Types.ObjectId(tenantId),
+          workingHours,
+        },
+      },
+      { upsert: true, new: true },
+    );
+    return policy;
+  }
+
+  // ── Get leave balance for a team member ───────────────────
+  // Called by TeamMemberService.getMyLeaveBalance()
+  // Returns the policy entitlements for this tenant
+  async getLeavePolicyForTenant(tenantId: string) {
+    const policy = await this.getPolicy(tenantId);
+    const entries =
+      policy.leavePolicy?.length > 0
+        ? policy.leavePolicy
+        : DEFAULT_LEAVE_POLICY;
+
+    return entries.map((e) => ({
+      type: e.type,
+      label: this.leaveTypeLabel(e.type),
+      entitled: e.days,
+      carryOver: e.carryOver,
+      requiresApproval: e.requiresApproval,
+    }));
+  }
   // ═══════════════════════════════════════════════════════════
   // PRIVATE HELPERS
   // ═══════════════════════════════════════════════════════════
@@ -560,6 +651,19 @@ export class TenantService {
           `You can only assign roles below your own access level.`,
       );
     }
+  }
+
+  private leaveTypeLabel(type: string): string {
+    const map: Record<string, string> = {
+      annual: 'Annual Leave',
+      sick: 'Sick Leave',
+      maternity: 'Maternity Leave',
+      paternity: 'Paternity Leave',
+      compassionate: 'Compassionate Leave',
+      study: 'Study Leave',
+      unpaid: 'Unpaid Leave',
+    };
+    return map[type] ?? type;
   }
 
   private generateTempPassword(): string {
