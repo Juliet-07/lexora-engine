@@ -21,13 +21,14 @@ import {
 } from '../dtos';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
 import {
-  ClientProfileRecord,
-  ClientProfileDocument,
-} from '../../tenant/schemas/client-profile.schema';
+  HrTeam,
+  HrTeamDocument,
+  HrLocation,
+  HrLocationDocument,
+} from '../schemas';
 import {
   UserType,
   AccountStatus,
-  ClientRole,
 } from '../../../common/interfaces/user-role.enum';
 import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
@@ -39,14 +40,188 @@ export class EmployeeService {
     private readonly employeeModel: Model<EmployeeDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
-    @InjectModel(ClientProfileRecord.name)
-    private readonly clientProfileModel: Model<ClientProfileDocument>,
+    @InjectModel(HrTeam.name)
+    private readonly teamModel: Model<HrTeamDocument>,
+    @InjectModel(HrLocation.name)
+    private readonly locationModel: Model<HrLocationDocument>,
     private readonly mailService: EmailService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
+  // TEAM (DEPARTMENT) CRUD
+  // ═══════════════════════════════════════════════════════════
+
+  async createTeam(
+    tenantId: string,
+    dto: { name: string; description?: string; lead?: string },
+  ): Promise<HrTeamDocument> {
+    const existing = await this.teamModel.findOne({
+      tenantId: new Types.ObjectId(tenantId),
+      name: { $regex: `^${dto.name}$`, $options: 'i' },
+    });
+    if (existing)
+      throw new ConflictException(`Team "${dto.name}" already exists`);
+
+    return this.teamModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      name: dto.name,
+      description: dto.description ?? null,
+      lead: dto.lead ?? null,
+    });
+  }
+
+  async getTeams(tenantId: string): Promise<HrTeamDocument[]> {
+    const tId = new Types.ObjectId(tenantId);
+    const teams = (await this.teamModel
+      .find({ tenantId: tId, isActive: true })
+      .sort({ name: 1 })
+      .lean()) as any[];
+
+    // Add member count
+    const counts = await this.employeeModel.aggregate([
+      { $match: { tenantId: tId, employmentStatus: { $ne: 'terminated' } } },
+      { $group: { _id: '$teamId', count: { $sum: 1 } } },
+    ]);
+    const countMap = counts.reduce(
+      (m, c) => {
+        m[c._id?.toString()] = c.count;
+        return m;
+      },
+      {} as Record<string, number>,
+    );
+
+    return teams.map((t) => ({
+      ...t,
+      memberCount: countMap[t._id.toString()] ?? 0,
+    }));
+  }
+
+  async updateTeam(
+    tenantId: string,
+    teamId: string,
+    dto: { name?: string; description?: string; lead?: string },
+  ): Promise<HrTeamDocument> {
+    const team = await this.teamModel.findOneAndUpdate(
+      { _id: teamId, tenantId: new Types.ObjectId(tenantId) },
+      { $set: dto },
+      { new: true },
+    );
+    if (!team) throw new NotFoundException('Team not found');
+    return team;
+  }
+
+  async deleteTeam(tenantId: string, teamId: string): Promise<void> {
+    const count = await this.employeeModel.countDocuments({
+      tenantId: new Types.ObjectId(tenantId),
+      teamId: new Types.ObjectId(teamId),
+      employmentStatus: { $nin: ['terminated', 'resigned'] },
+    });
+    if (count > 0) {
+      throw new BadRequestException(
+        `Cannot delete team — ${count} active employee(s) are assigned to it. Reassign them first.`,
+      );
+    }
+    await this.teamModel.findOneAndDelete({
+      _id: teamId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // LOCATION (BRANCH) CRUD
+  // ═══════════════════════════════════════════════════════════
+
+  async createLocation(
+    tenantId: string,
+    dto: {
+      name: string;
+      country: string;
+      city?: string;
+      address?: string;
+      timezone?: string;
+    },
+  ): Promise<HrLocationDocument> {
+    const existing = await this.locationModel.findOne({
+      tenantId: new Types.ObjectId(tenantId),
+      name: { $regex: `^${dto.name}$`, $options: 'i' },
+    });
+    if (existing)
+      throw new ConflictException(`Location "${dto.name}" already exists`);
+
+    return this.locationModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      ...dto,
+      city: dto.city ?? null,
+      address: dto.address ?? null,
+      timezone: dto.timezone ?? null,
+    });
+  }
+
+  async getLocations(tenantId: string): Promise<HrLocationDocument[]> {
+    const tId = new Types.ObjectId(tenantId);
+    const locations = (await this.locationModel
+      .find({ tenantId: tId, isActive: true })
+      .sort({ name: 1 })
+      .lean()) as any[];
+
+    // Add member count
+    const counts = await this.employeeModel.aggregate([
+      { $match: { tenantId: tId, employmentStatus: { $ne: 'terminated' } } },
+      { $group: { _id: '$locationId', count: { $sum: 1 } } },
+    ]);
+    const countMap = counts.reduce(
+      (m, c) => {
+        m[c._id?.toString()] = c.count;
+        return m;
+      },
+      {} as Record<string, number>,
+    );
+
+    return locations.map((l) => ({
+      ...l,
+      memberCount: countMap[l._id.toString()] ?? 0,
+    }));
+  }
+
+  async updateLocation(
+    tenantId: string,
+    locationId: string,
+    dto: {
+      name?: string;
+      country?: string;
+      city?: string;
+      address?: string;
+      timezone?: string;
+    },
+  ): Promise<HrLocationDocument> {
+    const loc = await this.locationModel.findOneAndUpdate(
+      { _id: locationId, tenantId: new Types.ObjectId(tenantId) },
+      { $set: dto },
+      { new: true },
+    );
+    if (!loc) throw new NotFoundException('Location not found');
+    return loc;
+  }
+
+  async deleteLocation(tenantId: string, locationId: string): Promise<void> {
+    const count = await this.employeeModel.countDocuments({
+      tenantId: new Types.ObjectId(tenantId),
+      locationId: new Types.ObjectId(locationId),
+      employmentStatus: { $nin: ['terminated', 'resigned'] },
+    });
+    if (count > 0) {
+      throw new BadRequestException(
+        `Cannot delete location — ${count} active employee(s) are assigned to it. Reassign them first.`,
+      );
+    }
+    await this.locationModel.findOneAndDelete({
+      _id: locationId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // CREATE EMPLOYEE
-  // Creates employee record + portal login credentials
   // ═══════════════════════════════════════════════════════════
 
   async createEmployee(
@@ -54,15 +229,24 @@ export class EmployeeService {
     tenantId: string,
     createdBy: string,
   ): Promise<EmployeeDocument> {
-    // ── Validate client exists and belongs to this tenant ────
-    const clientProfile = await this.clientProfileModel.findOne({
-      _id: new Types.ObjectId(dto.clientId),
-      tenantId: new Types.ObjectId(tenantId),
-    });
-    if (!clientProfile) {
-      throw new NotFoundException(
-        'Client not found or does not belong to this tenant',
-      );
+    const tId = new Types.ObjectId(tenantId);
+
+    // ── Validate team exists ─────────────────────────────────
+    if (dto.teamId) {
+      const team = await this.teamModel.findOne({
+        _id: new Types.ObjectId(dto.teamId),
+        tenantId: tId,
+      });
+      if (!team) throw new NotFoundException('Team not found');
+    }
+
+    // ── Validate location exists ─────────────────────────────
+    if (dto.locationId) {
+      const loc = await this.locationModel.findOne({
+        _id: new Types.ObjectId(dto.locationId),
+        tenantId: tId,
+      });
+      if (!loc) throw new NotFoundException('Location not found');
     }
 
     // ── Check email not already used ─────────────────────────
@@ -76,13 +260,11 @@ export class EmployeeService {
     }
 
     // ── Generate employee number ─────────────────────────────
-    const count = await this.employeeModel.countDocuments({
-      tenantId: new Types.ObjectId(tenantId),
-      clientId: new Types.ObjectId(dto.clientId),
-    });
+    const count = await this.employeeModel.countDocuments({ tenantId: tId });
     const employeeNumber = `EMP-${String(count + 1).padStart(4, '0')}`;
 
     // ── Create portal User account ───────────────────────────
+    // Employees log into the TENANT app — UserType.EMPLOYEE
     const tempPassword = this.generateTempPassword();
     const hashedPassword = await bcrypt.hash(tempPassword, 12);
 
@@ -92,18 +274,18 @@ export class EmployeeService {
       lastName: dto.lastName,
       email: dto.email.toLowerCase(),
       password: hashedPassword,
-      phone: dto.phone,
-      roles: [ClientRole.CLIENT_EMPLOYEE],
+      phone: dto.phone ?? null,
+      roles: [], // employees have no platform roles
       status: AccountStatus.ACTIVE,
-      tenantId: new Types.ObjectId(tenantId),
-      clientId: new Types.ObjectId(dto.clientId),
+      tenantId: tId,
       mustChangePassword: true,
     });
 
     // ── Create employee record ────────────────────────────────
     const employee = await this.employeeModel.create({
-      tenantId: new Types.ObjectId(tenantId),
-      clientId: new Types.ObjectId(dto.clientId),
+      tenantId: tId,
+      teamId: dto.teamId ? new Types.ObjectId(dto.teamId) : null,
+      locationId: dto.locationId ? new Types.ObjectId(dto.locationId) : null,
       userId: user._id,
       firstName: dto.firstName,
       lastName: dto.lastName,
@@ -118,10 +300,11 @@ export class EmployeeService {
       emergencyContactPhone: dto.emergencyContactPhone ?? null,
       employeeNumber,
       jobTitle: dto.jobTitle,
-      department: dto.department ?? null,
       reportsTo: dto.reportsTo ?? null,
       employmentType: dto.employmentType ?? 'full_time',
-      employmentStatus: EmploymentStatus.ACTIVE,
+      employmentStatus: dto.probationEndDate
+        ? EmploymentStatus.PROBATION
+        : EmploymentStatus.ACTIVE,
       startDate: new Date(dto.startDate),
       probationEndDate: dto.probationEndDate
         ? new Date(dto.probationEndDate)
@@ -137,16 +320,17 @@ export class EmployeeService {
       metadata: { createdBy },
     });
 
-    // ── Get client business name for welcome email ────────────
-    const clientUser = await this.userModel
-      .findOne({ _id: clientProfile.userId })
-      .select('tenantProfile')
+    // ── Get tenant business name for welcome email ────────────
+    const tenant = await this.userModel
+      .findById(tId)
+      .select('tenantProfile firstName')
       .lean();
-
     const businessName =
-      (clientUser as any)?.tenantProfile?.businessName || 'Your Employer';
+      (tenant as any)?.tenantProfile?.businessName ||
+      (tenant as any)?.firstName ||
+      'Your Organization';
 
-    // ── Send welcome email with credentials ───────────────────
+    // ── Send welcome email — login URL is the TENANT app ─────
     await this.mailService.sendEmployeeWelcome({
       to: dto.email,
       firstName: dto.firstName,
@@ -154,15 +338,14 @@ export class EmployeeService {
       employeeNumber,
       jobTitle: dto.jobTitle,
       tempPassword,
-      loginUrl: `${process.env.CLIENT_APP_URL}/login`,
+      loginUrl: `${process.env.TENANT_APP_URL}/login`,
     });
 
     return employee;
   }
 
   // ═══════════════════════════════════════════════════════════
-  // GET EMPLOYEES (tenant — list all employees across clients
-  //                or filtered by client)
+  // GET EMPLOYEES
   // ═══════════════════════════════════════════════════════════
 
   async getEmployees(
@@ -171,21 +354,14 @@ export class EmployeeService {
     filters: EmployeeFilterDto,
   ) {
     const { skip, limit, page } = pagination;
-
     const query: any = { tenantId: new Types.ObjectId(tenantId) };
 
-    if (filters.clientId) {
-      query.clientId = new Types.ObjectId(filters.clientId);
-    }
-    if (filters.department) {
-      query.department = { $regex: filters.department, $options: 'i' };
-    }
-    if (filters.employmentStatus) {
+    if (filters.teamId) query.teamId = new Types.ObjectId(filters.teamId);
+    if (filters.locationId)
+      query.locationId = new Types.ObjectId(filters.locationId);
+    if (filters.employmentStatus)
       query.employmentStatus = filters.employmentStatus;
-    }
-    if (filters.employmentType) {
-      query.employmentType = filters.employmentType;
-    }
+    if (filters.employmentType) query.employmentType = filters.employmentType;
     if (filters.search) {
       query.$or = [
         { firstName: { $regex: filters.search, $options: 'i' } },
@@ -193,154 +369,8 @@ export class EmployeeService {
         { email: { $regex: filters.search, $options: 'i' } },
         { employeeNumber: { $regex: filters.search, $options: 'i' } },
         { jobTitle: { $regex: filters.search, $options: 'i' } },
-        { department: { $regex: filters.search, $options: 'i' } },
       ];
     }
-
-    const [items, total] = await Promise.all([
-      this.employeeModel
-        .find(query)
-        .skip(skip)
-        .limit(limit)
-        .sort({ createdAt: -1 })
-        .populate('clientId', 'classifications')
-        .lean(),
-      this.employeeModel.countDocuments(query),
-    ]);
-
-    return paginate(items, total, page, limit);
-  }
-
-  async getEmployeesGrouped(tenantId: string, filters: EmployeeFilterDto) {
-    const tId = new Types.ObjectId(tenantId);
-
-    const query: any = { tenantId: tId };
-
-    if (filters.clientId) {
-      query.clientId = new Types.ObjectId(filters.clientId);
-    }
-    if (filters.department) {
-      query.department = { $regex: filters.department, $options: 'i' };
-    }
-    if (filters.employmentStatus) {
-      query.employmentStatus = filters.employmentStatus;
-    }
-    if (filters.employmentType) {
-      query.employmentType = filters.employmentType;
-    }
-    if (filters.search) {
-      query.$or = [
-        { firstName: { $regex: filters.search, $options: 'i' } },
-        { lastName: { $regex: filters.search, $options: 'i' } },
-        { email: { $regex: filters.search, $options: 'i' } },
-        { employeeNumber: { $regex: filters.search, $options: 'i' } },
-        { jobTitle: { $regex: filters.search, $options: 'i' } },
-        { department: { $regex: filters.search, $options: 'i' } },
-      ];
-    }
-
-    // ── Fetch matching employees ──────────────────────────────
-    const employees = await this.employeeModel
-      .find(query)
-      .sort({ clientId: 1, firstName: 1 })
-      .lean();
-
-    // ── Fetch all client profiles for this tenant ─────────────
-    // We need client names to group by
-    const clientIds = [...new Set(employees.map((e) => e.clientId.toString()))];
-
-    const clientProfiles = await this.clientProfileModel
-      .find({ _id: { $in: clientIds.map((id) => new Types.ObjectId(id)) } })
-      .lean();
-
-    // Get client user records for business names
-    const clientUserIds = clientProfiles.map((cp) => cp.userId);
-    const clientUsers = await this.userModel
-      .find({ _id: { $in: clientUserIds } })
-      .select('_id tenantProfile firstName lastName')
-      .lean();
-
-    const clientUserMap = clientUsers.reduce(
-      (m, u) => {
-        m[u._id.toString()] = u;
-        return m;
-      },
-      {} as Record<string, any>,
-    );
-
-    // Build client info map: clientProfileId → { name, id }
-    const clientInfoMap = clientProfiles.reduce(
-      (m, cp) => {
-        const u = clientUserMap[cp.userId?.toString()];
-        m[cp._id.toString()] = {
-          _id: cp._id.toString(),
-          businessName:
-            (u as any)?.tenantProfile?.businessName ||
-            `${(u as any)?.firstName ?? ''} ${(u as any)?.lastName ?? ''}`.trim() ||
-            'Unknown Client',
-          classifications: cp.classifications,
-        };
-        return m;
-      },
-      {} as Record<string, any>,
-    );
-
-    // ── Group employees by client ─────────────────────────────
-    const groupMap: Record<string, { client: any; employees: any[] }> = {};
-
-    for (const emp of employees) {
-      const cid = emp.clientId.toString();
-      const cInfo = clientInfoMap[cid] ?? {
-        _id: cid,
-        businessName: 'Unknown Client',
-      };
-
-      if (!groupMap[cid]) {
-        groupMap[cid] = { client: cInfo, employees: [] };
-      }
-      groupMap[cid].employees.push(emp);
-    }
-
-    const groups = Object.values(groupMap).sort((a, b) =>
-      a.client.businessName.localeCompare(b.client.businessName),
-    );
-
-    // ── Stats ─────────────────────────────────────────────────
-    const allEmployees = await this.employeeModel
-      .find({ tenantId: tId })
-      .lean();
-
-    const clientsServed = new Set(
-      allEmployees.map((e) => e.clientId.toString()),
-    ).size;
-    const active = allEmployees.filter(
-      (e) => e.employmentStatus === 'active',
-    ).length;
-    const onLeave = allEmployees.filter(
-      (e) => e.employmentStatus === 'on_leave',
-    ).length;
-
-    return {
-      stats: {
-        totalHeadcount: allEmployees.length,
-        clientsServed,
-        active,
-        onLeave,
-      },
-      groups,
-      total: employees.length,
-    };
-  }
-
-  async getEmployeesForClient(
-    clientProfileId: string,
-    pagination: PaginationDto,
-  ) {
-    const { skip, limit, page } = pagination;
-
-    const query = {
-      clientId: new Types.ObjectId(clientProfileId),
-    };
 
     const [items, total] = await Promise.all([
       this.employeeModel
@@ -348,26 +378,23 @@ export class EmployeeService {
         .skip(skip)
         .limit(limit)
         .sort({ firstName: 1 })
+        .populate('teamId', 'name description lead')
+        .populate('locationId', 'name country city')
         .lean(),
       this.employeeModel.countDocuments(query),
     ]);
 
     return paginate(items, total, page, limit);
   }
-  // ═══════════════════════════════════════════════════════════
-  // GET EMPLOYEE BY ID
-  // ═══════════════════════════════════════════════════════════
 
   async getEmployeeById(
     employeeId: string,
     tenantId: string,
   ): Promise<EmployeeDocument> {
     const employee = await this.employeeModel
-      .findOne({
-        _id: employeeId,
-        tenantId: new Types.ObjectId(tenantId),
-      })
-      .populate('clientId', 'classifications')
+      .findOne({ _id: employeeId, tenantId: new Types.ObjectId(tenantId) })
+      .populate('teamId', 'name description lead')
+      .populate('locationId', 'name country city timezone')
       .populate('userId', 'email status')
       .lean();
 
@@ -375,8 +402,70 @@ export class EmployeeService {
     return employee as EmployeeDocument;
   }
 
+  async getEmployeeStats(tenantId: string) {
+    const tId = new Types.ObjectId(tenantId);
+
+    const [
+      total,
+      byStatus,
+      byTeam,
+      byLocation,
+      recentJoins,
+      teamCount,
+      locationCount,
+    ] = await Promise.all([
+      this.employeeModel.countDocuments({ tenantId: tId }),
+      this.employeeModel.aggregate([
+        { $match: { tenantId: tId } },
+        { $group: { _id: '$employmentStatus', count: { $sum: 1 } } },
+      ]),
+      this.employeeModel.aggregate([
+        {
+          $match: { tenantId: tId, employmentStatus: EmploymentStatus.ACTIVE },
+        },
+        { $group: { _id: '$teamId', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      this.employeeModel.aggregate([
+        {
+          $match: { tenantId: tId, employmentStatus: EmploymentStatus.ACTIVE },
+        },
+        { $group: { _id: '$locationId', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      this.employeeModel
+        .find({ tenantId: tId })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .populate('teamId', 'name')
+        .populate('locationId', 'name')
+        .select('firstName lastName jobTitle teamId locationId startDate')
+        .lean(),
+      this.teamModel.countDocuments({ tenantId: tId, isActive: true }),
+      this.locationModel.countDocuments({ tenantId: tId, isActive: true }),
+    ]);
+
+    const statusMap = byStatus.reduce(
+      (m, s) => ({ ...m, [s._id]: s.count }),
+      {} as Record<string, number>,
+    );
+
+    return {
+      total,
+      active: statusMap[EmploymentStatus.ACTIVE] ?? 0,
+      onLeave: statusMap[EmploymentStatus.ON_LEAVE] ?? 0,
+      probation: statusMap[EmploymentStatus.PROBATION] ?? 0,
+      terminated: statusMap[EmploymentStatus.TERMINATED] ?? 0,
+      teamCount,
+      locationCount,
+      byTeam,
+      byLocation,
+      recentJoins,
+    };
+  }
+
   // ═══════════════════════════════════════════════════════════
-  // UPDATE EMPLOYEE
+  // UPDATE / TERMINATE
   // ═══════════════════════════════════════════════════════════
 
   async updateEmployee(
@@ -385,16 +474,13 @@ export class EmployeeService {
     dto: UpdateEmployeeDto,
   ): Promise<EmployeeDocument> {
     const update: any = { ...dto };
-
-    // Convert date strings to Date objects
     if (dto.startDate) update.startDate = new Date(dto.startDate);
     if (dto.endDate) update.endDate = new Date(dto.endDate);
     if (dto.dateOfBirth) update.dateOfBirth = new Date(dto.dateOfBirth);
     if (dto.probationEndDate)
       update.probationEndDate = new Date(dto.probationEndDate);
-
-    // clientId cannot be changed after creation
-    delete update.clientId;
+    if (dto.teamId) update.teamId = new Types.ObjectId(dto.teamId);
+    if (dto.locationId) update.locationId = new Types.ObjectId(dto.locationId);
 
     const employee = await this.employeeModel
       .findOneAndUpdate(
@@ -406,21 +492,19 @@ export class EmployeeService {
 
     if (!employee) throw new NotFoundException('Employee not found');
 
-    // Sync name/email changes to linked User account
     if (dto.firstName || dto.lastName || dto.phone) {
       const userUpdate: any = {};
       if (dto.firstName) userUpdate.firstName = dto.firstName;
       if (dto.lastName) userUpdate.lastName = dto.lastName;
       if (dto.phone) userUpdate.phone = dto.phone;
-      await this.userModel.findByIdAndUpdate(employee.userId, userUpdate);
+      await this.userModel.findByIdAndUpdate(
+        (employee as any).userId,
+        userUpdate,
+      );
     }
 
     return employee as EmployeeDocument;
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // TERMINATE EMPLOYEE
-  // ═══════════════════════════════════════════════════════════
 
   async terminateEmployee(
     employeeId: string,
@@ -431,7 +515,6 @@ export class EmployeeService {
       _id: employeeId,
       tenantId: new Types.ObjectId(tenantId),
     });
-
     if (!employee) throw new NotFoundException('Employee not found');
 
     if (
@@ -458,7 +541,6 @@ export class EmployeeService {
       )
       .lean();
 
-    // Deactivate portal account
     if (employee.userId) {
       await this.userModel.findByIdAndUpdate(employee.userId, {
         status: AccountStatus.INACTIVE,
@@ -469,111 +551,14 @@ export class EmployeeService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // GET STATS (tenant-level — across all clients)
-  // ═══════════════════════════════════════════════════════════
-
-  async getEmployeeStats(tenantId: string) {
-    const tId = new Types.ObjectId(tenantId);
-
-    const [
-      total,
-      byStatus,
-      byDepartment,
-      byEmploymentType,
-      byClient,
-      recentJoins,
-    ] = await Promise.all([
-      this.employeeModel.countDocuments({ tenantId: tId }),
-
-      this.employeeModel.aggregate([
-        { $match: { tenantId: tId } },
-        { $group: { _id: '$employmentStatus', count: { $sum: 1 } } },
-      ]),
-
-      this.employeeModel.aggregate([
-        {
-          $match: { tenantId: tId, employmentStatus: EmploymentStatus.ACTIVE },
-        },
-        { $group: { _id: '$department', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-        { $limit: 10 },
-      ]),
-
-      this.employeeModel.aggregate([
-        { $match: { tenantId: tId } },
-        { $group: { _id: '$employmentType', count: { $sum: 1 } } },
-      ]),
-
-      this.employeeModel.aggregate([
-        {
-          $match: { tenantId: tId, employmentStatus: EmploymentStatus.ACTIVE },
-        },
-        { $group: { _id: '$clientId', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-      ]),
-
-      this.employeeModel
-        .find({ tenantId: tId })
-        .sort({ createdAt: -1 })
-        .limit(5)
-        .select('firstName lastName jobTitle department clientId startDate')
-        .lean(),
-    ]);
-
-    const statusMap = byStatus.reduce(
-      (m, s) => ({ ...m, [s._id]: s.count }),
-      {} as Record<string, number>,
-    );
-
-    return {
-      total,
-      active: statusMap[EmploymentStatus.ACTIVE] ?? 0,
-      onLeave: statusMap[EmploymentStatus.ON_LEAVE] ?? 0,
-      terminated: statusMap[EmploymentStatus.TERMINATED] ?? 0,
-      byDepartment,
-      byEmploymentType,
-      byClient,
-      recentJoins,
-    };
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // GET EMPLOYEES BY CLIENT (for client-specific HR view)
-  // ═══════════════════════════════════════════════════════════
-
-  async getEmployeesByClient(
-    clientId: string,
-    tenantId: string,
-    pagination: PaginationDto,
-  ) {
-    const { skip, limit, page } = pagination;
-
-    const query = {
-      tenantId: new Types.ObjectId(tenantId),
-      clientId: new Types.ObjectId(clientId),
-    };
-
-    const [items, total] = await Promise.all([
-      this.employeeModel
-        .find(query)
-        .skip(skip)
-        .limit(limit)
-        .sort({ firstName: 1 })
-        .lean(),
-      this.employeeModel.countDocuments(query),
-    ]);
-
-    return paginate(items, total, page, limit);
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // EMPLOYEE SELF — get own profile (called from employee portal)
+  // EMPLOYEE SELF-SERVICE
   // ═══════════════════════════════════════════════════════════
 
   async getMyProfile(userId: string): Promise<EmployeeDocument> {
     const employee = await this.employeeModel
       .findOne({ userId: new Types.ObjectId(userId) })
-      .populate('clientId', 'classifications')
+      .populate('teamId', 'name description lead')
+      .populate('locationId', 'name country city')
       .lean();
 
     if (!employee) throw new NotFoundException('Employee profile not found');
@@ -603,7 +588,6 @@ export class EmployeeService {
     });
     if (!employee) throw new NotFoundException('Employee profile not found');
 
-    // Build update — only set fields that were provided
     const update: any = {};
     if (dto.phone !== undefined) update.phone = dto.phone;
     if (dto.address !== undefined) update.address = dto.address;
@@ -613,10 +597,6 @@ export class EmployeeService {
       update.emergencyContactPhone = dto.emergencyContactPhone;
     if (dto.nationality !== undefined) update.nationality = dto.nationality;
     if (dto.nationalId !== undefined) update.nationalId = dto.nationalId;
-
-    // Bank details — stored on employee record
-    // In a full payroll system these would go through an approval workflow.
-    // For now they update directly.
     if (dto.bankName !== undefined) update.bankName = dto.bankName;
     if (dto.bankAccountNumber !== undefined)
       update.bankAccountNumber = dto.bankAccountNumber;
@@ -625,7 +605,6 @@ export class EmployeeService {
       .findByIdAndUpdate(employee._id, { $set: update }, { new: true })
       .lean();
 
-    // Sync phone to linked User account
     if (dto.phone) {
       await this.userModel.findByIdAndUpdate(userId, { phone: dto.phone });
     }
@@ -634,18 +613,7 @@ export class EmployeeService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // GET DISTINCT DEPARTMENTS (for filter dropdown)
-  // ═══════════════════════════════════════════════════════════
-
-  async getDepartments(tenantId: string): Promise<string[]> {
-    const departments = await this.employeeModel.distinct('department', {
-      tenantId: new Types.ObjectId(tenantId),
-      department: { $ne: null },
-    });
-    return departments.filter(Boolean).sort();
-  }
-  // ═══════════════════════════════════════════════════════════
-  // PRIVATE HELPERS
+  // PRIVATE
   // ═══════════════════════════════════════════════════════════
 
   private generateTempPassword(): string {

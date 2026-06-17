@@ -8,28 +8,12 @@ import {
   Param,
   Query,
   Res,
-  UseGuards,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiBearerAuth,
-  ApiOperation,
-  ApiQuery,
-} from '@nestjs/swagger';
-
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { TenantService } from '../services/tenant.service';
-import {
-  UpdateTenantProfileDto,
-  InviteTeamMemberDto,
-  UpdateTeamMemberDto,
-  UpdateTeamMemberStatusDto,
-  TeamMemberFilterDto,
-  UpgradePlanDto,
-} from '../dto/tenant.dto';
-import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../../common/guards/roles.guard';
+import { UpdateTenantProfileDto, UpgradePlanDto } from '../dto/tenant.dto';
 import {
   UserTypes,
   Roles,
@@ -49,7 +33,6 @@ import {
 } from '../dto/client.dto';
 import { TenantClientsService } from '../services/tenant-client.service';
 import { Response } from 'express';
-import { TeamMemberService } from '../services/team-member.service';
 
 @ApiTags('Tenant')
 @ApiBearerAuth('bearerAuth')
@@ -59,7 +42,6 @@ export class TenantController {
   constructor(
     private readonly service: TenantService,
     private readonly tenantClientService: TenantClientsService,
-    private readonly teamMemberService: TeamMemberService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -374,176 +356,5 @@ export class TenantController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.upgradePlan(t || u, dto.plan);
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // TEAM MANAGEMENT
-  // ═══════════════════════════════════════════════════════════
-
-  @Post('team')
-  @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
-  @ApiOperation({
-    summary: 'Invite a new team member [owner, admin]',
-    description:
-      'Creates a team member account under this tenant and emails them credentials. ' +
-      'Role hierarchy enforced — you can only assign roles below your own level.',
-  })
-  inviteTeamMember(
-    @Body() dto: InviteTeamMemberDto,
-    @CurrentUser('sub') userId: string,
-    @CurrentUser('tenantId') tenantId: string,
-    @CurrentUser('roles') roles: string[],
-  ) {
-    const resolvedTenantId = tenantId || userId;
-    return this.service.inviteTeamMember(dto, resolvedTenantId, userId, roles);
-  }
-
-  @Get('team')
-  @ApiOperation({ summary: 'List all team members' })
-  getTeamMembers(
-    @CurrentUser('sub') userId: string,
-    @CurrentUser('tenantId') tenantId: string,
-    @Query() pagination: PaginationDto,
-    @Query() filters: TeamMemberFilterDto,
-  ) {
-    const resolvedTenantId = tenantId || userId;
-    return this.service.getTeamMembers(resolvedTenantId, pagination, filters);
-  }
-
-  @Get('team/policy')
-  @ApiOperation({ summary: 'Get team leave policy and working hours' })
-  getTeamPolicy(
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.getPolicy(t || u);
-  }
-
-  @Patch('team/policy/leave')
-  @HttpCode(HttpStatus.OK)
-  @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
-  @ApiOperation({ summary: 'Save team leave policy [owner, admin]' })
-  saveLeavePolicy(
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-    @Body()
-    dto: {
-      leavePolicy: {
-        type: string;
-        days: number;
-        carryOver: boolean;
-        requiresApproval: boolean;
-      }[];
-    },
-  ) {
-    return this.service.saveLeavePolicy(t || u, dto.leavePolicy);
-  }
-
-  @Patch('team/policy/working-hours')
-  @HttpCode(HttpStatus.OK)
-  @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
-  @ApiOperation({ summary: 'Save working hours policy [owner, admin]' })
-  saveWorkingHours(
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-    @Body()
-    dto: {
-      startTime: string;
-      endTime: string;
-      workdays: string;
-      requireClockIn: boolean;
-    },
-  ) {
-    return this.service.saveWorkingHours(t || u, dto);
-  }
-
-  @Get('team/leave')
-  @Roles(
-    TenantRole.TENANT_OWNER,
-    TenantRole.TENANT_ADMIN,
-    TenantRole.TENANT_MANAGER,
-  )
-  @ApiOperation({ summary: 'List all team leave requests [admin]' })
-  getTeamLeaveRequests(
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-    @Query('status') status?: string,
-    @Query('memberId') memberId?: string,
-  ) {
-    return this.teamMemberService.getTenantTeamLeaveRequests(t || u, {
-      status,
-      memberId,
-    });
-  }
-
-  @Patch('team/leave/:id/review')
-  @HttpCode(HttpStatus.OK)
-  @Roles(
-    TenantRole.TENANT_OWNER,
-    TenantRole.TENANT_ADMIN,
-    TenantRole.TENANT_MANAGER,
-  )
-  @ApiOperation({ summary: 'Approve or reject a team leave request [admin]' })
-  reviewTeamLeaveRequest(
-    @Param('id') id: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-    @Body() dto: { status: 'approved' | 'rejected'; reviewNote?: string },
-  ) {
-    return this.teamMemberService.reviewTeamLeaveRequest(id, t || u, u, dto);
-  }
-
-  @Get('team/:id')
-  @ApiOperation({ summary: 'Get team member by ID' })
-  getTeamMember(
-    @Param('id') id: string,
-    @CurrentUser('sub') userId: string,
-    @CurrentUser('tenantId') tenantId: string,
-  ) {
-    const resolvedTenantId = tenantId || userId;
-    return this.service.getTeamMemberById(id, resolvedTenantId);
-  }
-
-  @Patch('team/:id')
-  @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
-  @ApiOperation({
-    summary: 'Update team member details or role [owner, admin]',
-  })
-  updateTeamMember(
-    @Param('id') id: string,
-    @Body() dto: UpdateTeamMemberDto,
-    @CurrentUser('sub') userId: string,
-    @CurrentUser('tenantId') tenantId: string,
-    @CurrentUser('roles') roles: string[],
-  ) {
-    const resolvedTenantId = tenantId || userId;
-    return this.service.updateTeamMember(id, dto, resolvedTenantId, roles);
-  }
-
-  @Patch('team/:id/status')
-  @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
-  @ApiOperation({
-    summary: 'Activate, suspend or deactivate a team member [owner, admin]',
-  })
-  updateTeamMemberStatus(
-    @Param('id') id: string,
-    @Body() dto: UpdateTeamMemberStatusDto,
-    @CurrentUser('sub') userId: string,
-    @CurrentUser('tenantId') tenantId: string,
-  ) {
-    const resolvedTenantId = tenantId || userId;
-    return this.service.updateTeamMemberStatus(id, dto, resolvedTenantId);
-  }
-
-  @Delete('team/:id')
-  @Roles(TenantRole.TENANT_OWNER, TenantRole.TENANT_ADMIN)
-  @ApiOperation({ summary: 'Deactivate (remove) a team member [owner, admin]' })
-  removeTeamMember(
-    @Param('id') id: string,
-    @CurrentUser('sub') userId: string,
-    @CurrentUser('tenantId') tenantId: string,
-  ) {
-    const resolvedTenantId = tenantId || userId;
-    return this.service.removeTeamMember(id, resolvedTenantId);
   }
 }

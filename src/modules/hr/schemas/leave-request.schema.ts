@@ -17,14 +17,6 @@ export class LeaveRequest {
   @Prop({ type: Types.ObjectId, ref: 'Employee', required: true, index: true })
   employeeId: Types.ObjectId;
 
-  @Prop({
-    type: Types.ObjectId,
-    ref: 'ClientProfileRecord',
-    required: true,
-    index: true,
-  })
-  clientId: Types.ObjectId;
-
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   tenantId: Types.ObjectId;
 

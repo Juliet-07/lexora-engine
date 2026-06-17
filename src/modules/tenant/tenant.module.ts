@@ -31,16 +31,6 @@ import {
 import { EngagementReminderService } from './services/engagement-letter-reminder.service';
 import { PlatformModule, PlatformModuleSchema } from '../super_admin/schemas';
 import { Employee, EmployeeSchema } from '../hr/schemas';
-import {
-  TeamMemberAttendance,
-  TeamMemberAttendanceSchema,
-  TeamMemberLeave,
-  TeamMemberLeaveSchema,
-  TenantTeamPolicy,
-  TenantTeamPolicySchema,
-} from './schemas';
-import { TeamMemberController } from './controllers';
-import { TeamMemberService } from './services/team-member.service';
 
 @Module({
   imports: [
@@ -61,29 +51,16 @@ import { TeamMemberService } from './services/team-member.service';
       },
       { name: PlatformModule.name, schema: PlatformModuleSchema },
       { name: Employee.name, schema: EmployeeSchema },
-      { name: TeamMemberLeave.name, schema: TeamMemberLeaveSchema },
-      { name: TeamMemberAttendance.name, schema: TeamMemberAttendanceSchema },
-      { name: TenantTeamPolicy.name, schema: TenantTeamPolicySchema },
     ]),
   ],
-  controllers: [
-    TenantController,
-    EngagementLetterController,
-    TeamMemberController,
-  ],
+  controllers: [TenantController, EngagementLetterController],
   providers: [
     TenantService,
     TenantClientsService,
     VerificationService,
     EngagementLetterService,
     EngagementReminderService,
-    TeamMemberService,
   ],
-  exports: [
-    TenantService,
-    TenantClientsService,
-    EngagementLetterService,
-    TeamMemberService,
-  ],
+  exports: [TenantService, TenantClientsService, EngagementLetterService],
 })
 export class TenantModule {}

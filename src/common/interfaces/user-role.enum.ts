@@ -46,9 +46,9 @@ export enum ClientRole {
   CLIENT_VIEWER = 'client_viewer', // read-only access
 
   // HR / corporate roles
-  CLIENT_EMPLOYEE = 'client_employee', // employee of the corporate client
-  CLIENT_BOARD = 'client_board', // board member
-  CLIENT_CLIENT = 'client_client', // the client's own customer (CRM)
+  // CLIENT_EMPLOYEE = 'client_employee', // employee of the corporate client
+  // CLIENT_BOARD = 'client_board', // board member
+  // CLIENT_CLIENT = 'client_client', // the client's own customer (CRM)
 }
 
 // ── Tenant/Account status ─────────────────────────────────────

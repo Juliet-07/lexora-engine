@@ -36,11 +36,15 @@ export class CreateEmployeeDto {
   @IsDateString()
   startDate: string;
 
-  @ApiProperty({
-    description: 'Client ID (corporate client this employee works for)',
-  })
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsString()
-  clientId: string;
+  teamId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  locationId?: string;
 
   // ── Optional personal ─────────────────────────────────────
   @ApiPropertyOptional({ example: '+250700000000' })
@@ -178,12 +182,17 @@ export class EmployeeFilterDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  clientId?: string;
+  teamId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   department?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  locationId?: string;
 
   @ApiPropertyOptional({ enum: EmploymentStatus })
   @IsOptional()

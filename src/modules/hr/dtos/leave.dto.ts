@@ -48,11 +48,6 @@ export class LeaveFilterDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  clientId?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
   employeeId?: string;
 
   @ApiPropertyOptional({
@@ -93,9 +88,10 @@ export class LeavePolicyEntryDto {
 }
 
 export class UpsertLeavePolicyDto {
-  @ApiProperty({ description: 'Client profile record ID' })
+  @ApiProperty({ description: 'Location ID - null for default tenant policy' })
+  @IsOptional()
   @IsString()
-  clientId: string;
+  locationId: string | null;
 
   @ApiProperty({ type: [LeavePolicyEntryDto] })
   @IsArray()

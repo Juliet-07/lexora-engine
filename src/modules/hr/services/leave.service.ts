@@ -16,17 +16,29 @@ import {
   LeavePolicy,
   LeavePolicyDocument,
   LeaveType,
+  DEFAULT_POLICY,
 } from '../schemas/leave-policy.schema';
 import { Employee, EmployeeDocument } from '../schemas/employee.schema';
+import { HrLocation, HrLocationDocument } from '../schemas';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
 import {
   CreateLeaveRequestDto,
   ReviewLeaveRequestDto,
   LeaveFilterDto,
-  UpsertLeavePolicyDto,
 } from '../dtos/leave.dto';
 import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
+
+// ── DTO ────────────────────────────────────────────────────────
+export interface UpsertLocationLeavePolicyDto {
+  locationId: string | null; // null = default policy
+  policies: {
+    type: string;
+    daysAllowed: number;
+    carryOver?: boolean;
+    maxCarryOverDays?: number;
+  }[];
+}
 
 @Injectable()
 export class LeaveService {
@@ -37,52 +49,115 @@ export class LeaveService {
     private readonly policyModel: Model<LeavePolicyDocument>,
     @InjectModel(Employee.name)
     private readonly employeeModel: Model<EmployeeDocument>,
+    @InjectModel(HrLocation.name)
+    private readonly locationModel: Model<HrLocationDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly mailService: EmailService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
-  // LEAVE POLICY — tenant sets per client
+  // LEAVE POLICY — per location
   // ═══════════════════════════════════════════════════════════
 
   async upsertPolicy(
     tenantId: string,
-    dto: UpsertLeavePolicyDto,
+    dto: UpsertLocationLeavePolicyDto,
   ): Promise<LeavePolicyDocument> {
-    const policy = await this.policyModel.findOneAndUpdate(
-      {
-        tenantId: new Types.ObjectId(tenantId),
-        clientId: new Types.ObjectId(dto.clientId),
-      },
+    const tId = new Types.ObjectId(tenantId);
+    const locId = dto.locationId ? new Types.ObjectId(dto.locationId) : null;
+
+    // Validate location belongs to tenant
+    if (locId) {
+      const loc = await this.locationModel.findOne({
+        _id: locId,
+        tenantId: tId,
+      });
+      if (!loc) throw new NotFoundException('Location not found');
+    }
+
+    return this.policyModel.findOneAndUpdate(
+      { tenantId: tId, locationId: locId },
       {
         $set: {
-          tenantId: new Types.ObjectId(tenantId),
-          clientId: new Types.ObjectId(dto.clientId),
+          tenantId: tId,
+          locationId: locId,
           policies: dto.policies,
           effectiveFrom: new Date(),
         },
       },
       { upsert: true, new: true },
     );
-    return policy;
   }
 
   async getPolicy(
     tenantId: string,
-    clientId: string,
+    locationId: string | null,
   ): Promise<LeavePolicyDocument | null> {
+    const locId = locationId ? new Types.ObjectId(locationId) : null;
     return this.policyModel
-      .findOne({
-        tenantId: new Types.ObjectId(tenantId),
-        clientId: new Types.ObjectId(clientId),
-      })
+      .findOne({ tenantId: new Types.ObjectId(tenantId), locationId: locId })
+      .populate('locationId', 'name country city')
       .lean() as any;
   }
 
-  async getAllPolicies(tenantId: string): Promise<LeavePolicyDocument[]> {
-    return this.policyModel
+  async getAllPolicies(tenantId: string): Promise<any[]> {
+    const policies = await this.policyModel
       .find({ tenantId: new Types.ObjectId(tenantId) })
+      .populate('locationId', 'name country city')
+      .sort({ createdAt: 1 })
+      .lean();
+
+    // Attach location member counts
+    const locationIds = policies
+      .map((p: any) => p.locationId?._id)
+      .filter(Boolean);
+
+    const counts = await this.employeeModel.aggregate([
+      {
+        $match: {
+          tenantId: new Types.ObjectId(tenantId),
+          locationId: { $in: locationIds },
+          employmentStatus: { $nin: ['terminated', 'resigned'] },
+        },
+      },
+      { $group: { _id: '$locationId', count: { $sum: 1 } } },
+    ]);
+
+    const countMap = counts.reduce(
+      (m, c) => {
+        m[c._id.toString()] = c.count;
+        return m;
+      },
+      {} as Record<string, number>,
+    );
+
+    return policies.map((p: any) => ({
+      ...p,
+      memberCount: p.locationId
+        ? (countMap[p.locationId._id?.toString()] ?? 0)
+        : 0,
+    }));
+  }
+
+  // Get all locations that don't yet have a policy (for the "add policy" UI)
+  async getLocationsWithoutPolicy(
+    tenantId: string,
+  ): Promise<HrLocationDocument[]> {
+    const tId = new Types.ObjectId(tenantId);
+    const existing = await this.policyModel
+      .find({ tenantId: tId, locationId: { $ne: null } })
+      .select('locationId')
+      .lean();
+
+    const coveredIds = existing.map((p: any) => p.locationId.toString());
+
+    return this.locationModel
+      .find({
+        tenantId: tId,
+        isActive: true,
+        _id: { $nin: coveredIds.map((id) => new Types.ObjectId(id)) },
+      })
       .lean() as any;
   }
 
@@ -91,10 +166,9 @@ export class LeaveService {
   // ═══════════════════════════════════════════════════════════
 
   async createLeaveRequest(
-    userId: string, // employee's User._id
+    userId: string,
     dto: CreateLeaveRequestDto,
   ): Promise<LeaveRequestDocument> {
-    // Get employee record from userId
     const employee = await this.employeeModel.findOne({
       userId: new Types.ObjectId(userId),
     });
@@ -111,12 +185,10 @@ export class LeaveService {
 
     const start = new Date(dto.startDate);
     const end = new Date(dto.endDate);
-
     if (end < start) {
       throw new BadRequestException('End date must be after start date');
     }
 
-    // Calculate working days (Mon–Fri, excludes weekends)
     const days = this.calcWorkingDays(start, end);
     if (days < 1) {
       throw new BadRequestException('Leave must be at least 1 working day');
@@ -134,20 +206,22 @@ export class LeaveService {
       );
     }
 
-    // Check leave balance (only for balance-tracked types)
+    // Check balance against location policy
+    const policy = await this.getPolicyForEmployee(employee);
+    const balance = this.getBalanceFromPolicy(
+      policy,
+      employee,
+      dto.type as LeaveType,
+    );
     const balancedTypes = [LeaveType.ANNUAL, LeaveType.SICK];
-    if (balancedTypes.includes(dto.type as LeaveType)) {
-      const balance = this.getEmployeeBalance(employee, dto.type as LeaveType);
-      if (days > balance) {
-        throw new BadRequestException(
-          `Insufficient leave balance. You have ${balance} day(s) remaining for ${dto.type} leave.`,
-        );
-      }
+    if (balancedTypes.includes(dto.type as LeaveType) && days > balance) {
+      throw new BadRequestException(
+        `Insufficient leave balance. You have ${balance} day(s) remaining for ${dto.type} leave.`,
+      );
     }
 
     const request = await this.leaveModel.create({
       employeeId: employee._id,
-      clientId: employee.clientId,
       tenantId: employee.tenantId,
       type: dto.type,
       startDate: start,
@@ -157,17 +231,14 @@ export class LeaveService {
       status: LeaveStatus.PENDING,
     });
 
-    // Notify tenant
     await this.notifyTenantOfRequest(request, employee);
-
     return request;
   }
 
   // ═══════════════════════════════════════════════════════════
-  // GET LEAVE REQUESTS — various scopes
+  // GET LEAVE REQUESTS
   // ═══════════════════════════════════════════════════════════
 
-  // Tenant — all requests across all clients (or filtered)
   async getTenantLeaveRequests(
     tenantId: string,
     pagination: PaginationDto,
@@ -176,7 +247,6 @@ export class LeaveService {
     const { skip, limit, page } = pagination;
     const query: any = { tenantId: new Types.ObjectId(tenantId) };
 
-    if (filters.clientId) query.clientId = new Types.ObjectId(filters.clientId);
     if (filters.employeeId)
       query.employeeId = new Types.ObjectId(filters.employeeId);
     if (filters.status) query.status = filters.status;
@@ -188,8 +258,7 @@ export class LeaveService {
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })
-        .populate('employeeId', 'firstName lastName email jobTitle department')
-        .populate('reviewedBy', 'firstName lastName')
+        .populate('employeeId', 'firstName lastName email jobTitle locationId')
         .lean(),
       this.leaveModel.countDocuments(query),
     ]);
@@ -197,7 +266,6 @@ export class LeaveService {
     return paginate(items, total, page, limit);
   }
 
-  // Employee — own leave history
   async getMyLeaveRequests(userId: string) {
     const employee = await this.employeeModel.findOne({
       userId: new Types.ObjectId(userId),
@@ -210,65 +278,25 @@ export class LeaveService {
       .lean();
   }
 
-  // Employee — own leave balances + policy
+  // Employee — own leave balances from location policy
   async getMyLeaveBalance(userId: string) {
     const employee = await this.employeeModel
-      .findOne({
-        userId: new Types.ObjectId(userId),
-      })
+      .findOne({ userId: new Types.ObjectId(userId) })
       .lean();
     if (!employee) throw new NotFoundException('Employee profile not found');
 
-    // Get policy for this client
-    const policy = await this.policyModel
-      .findOne({
-        tenantId: employee.tenantId,
-        clientId: employee.clientId,
-      })
-      .lean();
-
-    // Build balance summary
+    const policy = await this.getPolicyForEmployee(employee);
     const balances = this.buildBalanceSummary(employee, policy);
+
     return {
       balances,
-      employee: {
-        annualLeaveBalance: employee.annualLeaveBalance,
-        annualLeaveUsed: employee.annualLeaveUsed,
-        sickLeaveBalance: employee.sickLeaveBalance,
-        sickLeaveUsed: employee.sickLeaveUsed,
-      },
+      locationId: employee.locationId?.toString() ?? null,
+      policyId: (policy as any)?._id?.toString() ?? null,
     };
-  }
-
-  // Client — all their employees' leave requests
-  async getClientLeaveRequests(
-    clientProfileId: string,
-    pagination: PaginationDto,
-    filters: LeaveFilterDto,
-  ) {
-    const { skip, limit, page } = pagination;
-    const query: any = {
-      clientId: new Types.ObjectId(clientProfileId),
-    };
-    if (filters.status) query.status = filters.status;
-    if (filters.type) query.type = filters.type;
-
-    const [items, total] = await Promise.all([
-      this.leaveModel
-        .find(query)
-        .skip(skip)
-        .limit(limit)
-        .sort({ createdAt: -1 })
-        .populate('employeeId', 'firstName lastName email jobTitle department')
-        .lean(),
-      this.leaveModel.countDocuments(query),
-    ]);
-
-    return paginate(items, total, page, limit);
   }
 
   // ═══════════════════════════════════════════════════════════
-  // REVIEW — tenant approves or rejects
+  // REVIEW
   // ═══════════════════════════════════════════════════════════
 
   async reviewLeaveRequest(
@@ -301,7 +329,6 @@ export class LeaveService {
       },
     });
 
-    // If approved — deduct from employee leave balance
     if (newStatus === LeaveStatus.APPROVED) {
       await this.deductLeaveBalance(
         request.employeeId.toString(),
@@ -310,15 +337,13 @@ export class LeaveService {
       );
     }
 
-    // Notify employee
     await this.notifyEmployeeOfReview(request, newStatus, dto.reviewNote);
 
-    const updated = await this.leaveModel.findById(requestId).lean();
-    return updated as LeaveRequestDocument;
+    return this.leaveModel.findById(requestId).lean() as any;
   }
 
   // ═══════════════════════════════════════════════════════════
-  // CANCEL — employee cancels pending request
+  // CANCEL
   // ═══════════════════════════════════════════════════════════
 
   async cancelLeaveRequest(
@@ -335,32 +360,28 @@ export class LeaveService {
       employeeId: employee._id,
       status: LeaveStatus.PENDING,
     });
-
     if (!request) {
       throw new NotFoundException(
         'Leave request not found or cannot be cancelled',
       );
     }
 
-    const updated = await this.leaveModel
+    return this.leaveModel
       .findByIdAndUpdate(
         requestId,
         { status: LeaveStatus.CANCELLED },
         { new: true },
       )
-      .lean();
-
-    return updated as LeaveRequestDocument;
+      .lean() as any;
   }
 
   // ═══════════════════════════════════════════════════════════
-  // STATS — for tenant leave dashboard
+  // STATS
   // ═══════════════════════════════════════════════════════════
 
-  async getLeaveStats(tenantId: string, clientId?: string) {
+  async getLeaveStats(tenantId: string) {
     const tId = new Types.ObjectId(tenantId);
-    const match: any = { tenantId: tId };
-    if (clientId) match.clientId = new Types.ObjectId(clientId);
+    const match = { tenantId: tId };
 
     const [byStatus, byType, pending, recentApproved] = await Promise.all([
       this.leaveModel.aggregate([
@@ -387,6 +408,128 @@ export class LeaveService {
   // PRIVATE HELPERS
   // ═══════════════════════════════════════════════════════════
 
+  // Resolve policy for an employee — tries their location, then default (null), then hardcoded
+  private async getPolicyForEmployee(
+    employee: any,
+  ): Promise<LeavePolicyDocument | null> {
+    const tId = employee.tenantId;
+
+    // 1. Try location-specific policy
+    if (employee.locationId) {
+      const locPolicy = await this.policyModel
+        .findOne({ tenantId: tId, locationId: employee.locationId })
+        .lean();
+      if (locPolicy) return locPolicy as any;
+    }
+
+    // 2. Fall back to tenant default policy (locationId: null)
+    const defaultPolicy = await this.policyModel
+      .findOne({ tenantId: tId, locationId: null })
+      .lean();
+    return defaultPolicy as any;
+  }
+
+  private getBalanceFromPolicy(
+    policy: any,
+    employee: any,
+    type: LeaveType,
+  ): number {
+    // Get entitlement from policy or defaults
+    const entitled =
+      policy?.policies?.find((p: any) => p.type === type)?.daysAllowed ??
+      DEFAULT_POLICY[type] ??
+      999;
+
+    // Used days from employee record (only annual/sick are tracked)
+    if (type === LeaveType.ANNUAL) {
+      return entitled - (employee.annualLeaveUsed ?? 0);
+    }
+    if (type === LeaveType.SICK) {
+      return entitled - (employee.sickLeaveUsed ?? 0);
+    }
+    return entitled;
+  }
+
+  private buildBalanceSummary(employee: any, policy: any) {
+    const policyMap: Record<
+      string,
+      { daysAllowed: number; carryOver: boolean }
+    > = {};
+    if (policy?.policies) {
+      for (const p of policy.policies) {
+        policyMap[p.type] = {
+          daysAllowed: p.daysAllowed,
+          carryOver: p.carryOver ?? false,
+        };
+      }
+    }
+
+    const get = (type: LeaveType) =>
+      policyMap[type]?.daysAllowed ?? DEFAULT_POLICY[type] ?? 0;
+
+    const annualAllowed = get(LeaveType.ANNUAL);
+    const sickAllowed = get(LeaveType.SICK);
+
+    return [
+      {
+        type: LeaveType.ANNUAL,
+        label: 'Annual Leave',
+        daysAllowed: annualAllowed,
+        daysUsed: employee.annualLeaveUsed ?? 0,
+        daysLeft: annualAllowed - (employee.annualLeaveUsed ?? 0),
+        carryOver: policyMap[LeaveType.ANNUAL]?.carryOver ?? false,
+      },
+      {
+        type: LeaveType.SICK,
+        label: 'Sick Leave',
+        daysAllowed: sickAllowed,
+        daysUsed: employee.sickLeaveUsed ?? 0,
+        daysLeft: sickAllowed - (employee.sickLeaveUsed ?? 0),
+        carryOver: false,
+      },
+      {
+        type: LeaveType.MATERNITY,
+        label: 'Maternity Leave',
+        daysAllowed: get(LeaveType.MATERNITY),
+        daysUsed: 0,
+        daysLeft: get(LeaveType.MATERNITY),
+        carryOver: false,
+      },
+      {
+        type: LeaveType.PATERNITY,
+        label: 'Paternity Leave',
+        daysAllowed: get(LeaveType.PATERNITY),
+        daysUsed: 0,
+        daysLeft: get(LeaveType.PATERNITY),
+        carryOver: false,
+      },
+      {
+        type: LeaveType.COMPASSIONATE,
+        label: 'Compassionate Leave',
+        daysAllowed: get(LeaveType.COMPASSIONATE),
+        daysUsed: 0,
+        daysLeft: get(LeaveType.COMPASSIONATE),
+        carryOver: false,
+      },
+      {
+        type: LeaveType.STUDY,
+        label: 'Study Leave',
+        daysAllowed: get(LeaveType.STUDY),
+        daysUsed: 0,
+        daysLeft: get(LeaveType.STUDY),
+        carryOver: false,
+      },
+      {
+        type: LeaveType.UNPAID,
+        label: 'Unpaid Leave',
+        daysAllowed: get(LeaveType.UNPAID),
+        daysUsed: 0,
+        daysLeft: get(LeaveType.UNPAID),
+        carryOver: false,
+      },
+    ];
+  }
+
   private calcWorkingDays(start: Date, end: Date): number {
     let count = 0;
     const current = new Date(start);
@@ -396,78 +539,6 @@ export class LeaveService {
       current.setDate(current.getDate() + 1);
     }
     return count;
-  }
-
-  private getEmployeeBalance(employee: any, type: LeaveType): number {
-    if (type === LeaveType.ANNUAL) {
-      return (
-        (employee.annualLeaveBalance ?? 21) - (employee.annualLeaveUsed ?? 0)
-      );
-    }
-    if (type === LeaveType.SICK) {
-      return (employee.sickLeaveBalance ?? 10) - (employee.sickLeaveUsed ?? 0);
-    }
-    return 999; // unlimited for other types
-  }
-
-  private buildBalanceSummary(employee: any, policy: any) {
-    const policyMap: Record<string, number> = {};
-    if (policy?.policies) {
-      for (const p of policy.policies) {
-        policyMap[p.type] = p.daysAllowed;
-      }
-    }
-
-    return [
-      {
-        type: LeaveType.ANNUAL,
-        label: 'Annual Leave',
-        daysAllowed:
-          policyMap[LeaveType.ANNUAL] ?? employee.annualLeaveBalance ?? 21,
-        daysUsed: employee.annualLeaveUsed ?? 0,
-        daysLeft:
-          (policyMap[LeaveType.ANNUAL] ?? employee.annualLeaveBalance ?? 21) -
-          (employee.annualLeaveUsed ?? 0),
-      },
-      {
-        type: LeaveType.SICK,
-        label: 'Sick Leave',
-        daysAllowed:
-          policyMap[LeaveType.SICK] ?? employee.sickLeaveBalance ?? 10,
-        daysUsed: employee.sickLeaveUsed ?? 0,
-        daysLeft:
-          (policyMap[LeaveType.SICK] ?? employee.sickLeaveBalance ?? 10) -
-          (employee.sickLeaveUsed ?? 0),
-      },
-      {
-        type: LeaveType.MATERNITY,
-        label: 'Maternity Leave',
-        daysAllowed: policyMap[LeaveType.MATERNITY] ?? 90,
-        daysUsed: 0,
-        daysLeft: policyMap[LeaveType.MATERNITY] ?? 90,
-      },
-      {
-        type: LeaveType.PATERNITY,
-        label: 'Paternity Leave',
-        daysAllowed: policyMap[LeaveType.PATERNITY] ?? 5,
-        daysUsed: 0,
-        daysLeft: policyMap[LeaveType.PATERNITY] ?? 5,
-      },
-      {
-        type: LeaveType.COMPASSIONATE,
-        label: 'Compassionate Leave',
-        daysAllowed: policyMap[LeaveType.COMPASSIONATE] ?? 3,
-        daysUsed: 0,
-        daysLeft: policyMap[LeaveType.COMPASSIONATE] ?? 3,
-      },
-      {
-        type: LeaveType.STUDY,
-        label: 'Study Leave',
-        daysAllowed: policyMap[LeaveType.STUDY] ?? 5,
-        daysUsed: 0,
-        daysLeft: policyMap[LeaveType.STUDY] ?? 5,
-      },
-    ];
   }
 
   private async deductLeaveBalance(
@@ -482,8 +553,7 @@ export class LeaveService {
           ? 'sickLeaveUsed'
           : null;
 
-    if (!field) return; // non-tracked types don't deduct
-
+    if (!field) return;
     await this.employeeModel.findByIdAndUpdate(employeeId, {
       $inc: { [field]: days },
     });
@@ -496,7 +566,7 @@ export class LeaveService {
     try {
       const tenant = await this.userModel
         .findById(request.tenantId)
-        .select('email firstName tenantProfile')
+        .select('email firstName')
         .lean();
       if (!tenant) return;
 
@@ -512,7 +582,6 @@ export class LeaveService {
         dashboardUrl: `${process.env.TENANT_APP_URL}/hr/leave`,
       });
     } catch (err) {
-      // Non-blocking — log but don't fail
       console.error('Failed to notify tenant of leave request:', err.message);
     }
   }
@@ -538,10 +607,36 @@ export class LeaveService {
         endDate: request.endDate,
         days: request.days,
         note: note ?? null,
-        portalUrl: `${process.env.CLIENT_APP_URL}/employee/leave`,
+        portalUrl: `${process.env.TENANT_APP_URL}/employee/leave`,
       });
     } catch (err) {
       console.error('Failed to notify employee of leave review:', err.message);
     }
+  }
+
+  async getEmployeeLeaveBalance(employeeId: string, tenantId: string) {
+    const employee = await this.employeeModel
+      .findOne({ _id: employeeId, tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+    if (!employee) throw new NotFoundException('Employee not found');
+
+    const policy = await this.getPolicyForEmployee(employee);
+    const balances = this.buildBalanceSummary(employee, policy);
+
+    return {
+      balances,
+      locationId: employee.locationId?.toString() ?? null,
+    };
+  }
+
+  async getEmployeeLeaveHistory(employeeId: string, tenantId: string) {
+    return this.leaveModel
+      .find({
+        employeeId: new Types.ObjectId(employeeId),
+        tenantId: new Types.ObjectId(tenantId),
+      })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .lean();
   }
 }

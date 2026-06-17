@@ -2,28 +2,16 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
-  ConflictException,
   BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import type { QueryFilter } from 'mongoose';
-import * as bcrypt from 'bcryptjs';
-
 import { User, UserDocument } from '../../auth/schemas/user.schema';
-import {
-  UpdateTenantProfileDto,
-  InviteTeamMemberDto,
-  UpdateTeamMemberDto,
-  UpdateTeamMemberStatusDto,
-  TeamMemberFilterDto,
-} from '../dto/tenant.dto';
+import { UpdateTenantProfileDto } from '../dto/tenant.dto';
 import {
   UserType,
-  TenantRole,
   AccountStatus,
 } from '../../../common/interfaces/user-role.enum';
-import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
 import {
   SubscriptionPlanConfig,
@@ -32,12 +20,6 @@ import {
   PlatformModuleDocument,
 } from 'src/modules/super_admin/schemas';
 import { Employee, EmployeeDocument } from 'src/modules/hr/schemas';
-import {
-  TenantTeamPolicy,
-  TenantTeamPolicyDocument,
-  DEFAULT_LEAVE_POLICY,
-  DEFAULT_WORKING_HOURS,
-} from '../schemas';
 
 // Role hierarchy — members can only assign roles below their own level
 const ROLE_HIERARCHY: Record<string, number> = {
@@ -61,63 +43,12 @@ export class TenantService {
     private readonly moduleModel: Model<PlatformModuleDocument>,
     @InjectModel(Employee.name)
     private readonly employeeModel: Model<EmployeeDocument>,
-    @InjectModel(TenantTeamPolicy.name)
-    private readonly policyModel: Model<TenantTeamPolicyDocument>,
     private readonly mailService: EmailService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
   // DASHBOARD
   // ═══════════════════════════════════════════════════════════
-
-  // async getDashboard(tenantId: string) {
-  //   const tId = new Types.ObjectId(tenantId);
-
-  //   const [teamByRole, subscription, recentMembers, totalTeam, activeTeam] =
-  //     await Promise.all([
-  //       this.userModel.aggregate([
-  //         { $match: { userType: UserType.TENANT, tenantId: tId } },
-  //         { $unwind: '$roles' },
-  //         { $group: { _id: '$roles', count: { $sum: 1 } } },
-  //       ]),
-  //       this.subscriptionModel
-  //         .findOne({ tenantId: tId })
-  //         .select('plan status activeModules trialEndsAt currentPeriodEnd')
-  //         .lean(),
-  //       this.userModel
-  //         .find({ userType: UserType.TENANT, tenantId: tId })
-  //         .select('firstName lastName email roles status createdAt')
-  //         .sort({ createdAt: -1 })
-  //         .limit(5)
-  //         .lean(),
-  //       this.userModel.countDocuments({
-  //         userType: UserType.TENANT,
-  //         tenantId: tId,
-  //       }),
-  //       this.userModel.countDocuments({
-  //         userType: UserType.TENANT,
-  //         tenantId: tId,
-  //         status: AccountStatus.ACTIVE,
-  //       }),
-  //     ]);
-
-  //   return {
-  //     team: {
-  //       total: totalTeam,
-  //       active: activeTeam,
-  //       byRole: teamByRole,
-  //       recentMembers,
-  //     },
-  //     subscription: {
-  //       plan: subscription?.plan || null,
-  //       status: subscription?.status || null,
-  //       activeModules: subscription?.activeModules || [],
-  //       trialEndsAt: subscription?.trialEndsAt || null,
-  //       currentPeriodEnd: subscription?.currentPeriodEnd || null,
-  //     },
-  //     generatedAt: new Date(),
-  //   };
-  // }
 
   async getDashboard(tenantId: string) {
     const tId = new Types.ObjectId(tenantId);
@@ -356,285 +287,7 @@ export class TenantService {
       message: `Successfully upgraded to the ${plan.plan || newPlan} plan.`,
     };
   }
-  // ═══════════════════════════════════════════════════════════
-  // TEAM MANAGEMENT
-  // ═══════════════════════════════════════════════════════════
 
-  async inviteTeamMember(
-    dto: InviteTeamMemberDto,
-    tenantId: string,
-    invitedBy: string,
-    inviterRoles: string[],
-  ): Promise<{ member: Record<string, any> }> {
-    this.enforceRoleHierarchy(inviterRoles, dto.role);
-
-    if (dto.role === TenantRole.TENANT_OWNER) {
-      const existingOwner = await this.userModel.findOne({
-        tenantId: new Types.ObjectId(tenantId),
-        roles: { $in: [TenantRole.TENANT_OWNER] },
-        userType: UserType.TENANT,
-      });
-      if (existingOwner) {
-        throw new ConflictException(
-          'A tenant owner already exists. Transfer ownership instead.',
-        );
-      }
-    }
-
-    const emailTaken = await this.userModel.findOne({
-      email: dto.email.toLowerCase(),
-    });
-    if (emailTaken)
-      throw new ConflictException('Email already registered on the platform');
-
-    const tempPassword = this.generateTempPassword();
-    const hashedPassword = await bcrypt.hash(tempPassword, 12);
-
-    const member = await this.userModel.create({
-      userType: UserType.TENANT,
-      firstName: dto.firstName,
-      lastName: dto.lastName,
-      email: dto.email.toLowerCase(),
-      password: hashedPassword,
-      phone: dto.phone,
-      roles: [dto.role],
-      status: AccountStatus.PENDING,
-      tenantId: new Types.ObjectId(tenantId),
-      createdBy: new Types.ObjectId(invitedBy),
-      mustChangePassword: true,
-    });
-
-    const tenant = await this.userModel
-      .findById(tenantId)
-      .select('tenantProfile.businessName firstName')
-      .lean();
-
-    const businessName =
-      (tenant as any)?.tenantProfile?.businessName ||
-      (tenant as any)?.firstName ||
-      'Your Organization';
-
-    await this.mailService.sendTeamMemberWelcome({
-      to: member.email,
-      firstName: member.firstName,
-      businessName,
-      role: dto.role,
-      tempPassword,
-      loginUrl: `${process.env.TENANT_APP_URL}`,
-    });
-
-    const obj = member.toObject();
-    delete obj.password;
-    return { member: obj };
-  }
-
-  async getTeamMembers(
-    tenantId: string,
-    pagination: PaginationDto,
-    filters: TeamMemberFilterDto,
-  ) {
-    const query: QueryFilter<UserDocument> = {
-      userType: UserType.TENANT,
-      tenantId: new Types.ObjectId(tenantId),
-    };
-
-    if (filters.role) query.roles = { $in: [filters.role] };
-    if (filters.status) query.status = filters.status;
-    if (filters.search) {
-      query.$or = [
-        { firstName: { $regex: filters.search, $options: 'i' } },
-        { lastName: { $regex: filters.search, $options: 'i' } },
-        { email: { $regex: filters.search, $options: 'i' } },
-      ];
-    }
-
-    const { skip, limit, page } = pagination;
-    const [items, total] = await Promise.all([
-      this.userModel
-        .find(query)
-        .skip(skip)
-        .limit(limit)
-        .select('-password -passwordResetToken')
-        .populate('createdBy', 'firstName lastName email')
-        .sort({ createdAt: -1 })
-        .lean(),
-      this.userModel.countDocuments(query),
-    ]);
-
-    return paginate(items, total, page, limit);
-  }
-
-  async getTeamMemberById(
-    memberId: string,
-    tenantId: string,
-  ): Promise<UserDocument> {
-    const member = await this.userModel
-      .findOne({
-        _id: memberId,
-        tenantId: new Types.ObjectId(tenantId),
-        userType: UserType.TENANT,
-      })
-      .select('-password -passwordResetToken')
-      .populate('createdBy', 'firstName lastName email')
-      .lean();
-
-    if (!member) throw new NotFoundException('Team member not found');
-    return member as UserDocument;
-  }
-
-  async updateTeamMember(
-    memberId: string,
-    dto: UpdateTeamMemberDto,
-    tenantId: string,
-    updaterRoles: string[],
-  ): Promise<UserDocument> {
-    if (dto.role) this.enforceRoleHierarchy(updaterRoles, dto.role);
-
-    const update: any = {};
-    if (dto.firstName) update.firstName = dto.firstName;
-    if (dto.lastName) update.lastName = dto.lastName;
-    if (dto.phone) update.phone = dto.phone;
-    if (dto.role) update.roles = [dto.role];
-
-    const member = await this.userModel
-      .findOneAndUpdate(
-        {
-          _id: memberId,
-          tenantId: new Types.ObjectId(tenantId),
-          userType: UserType.TENANT,
-        },
-        { $set: update },
-        { new: true },
-      )
-      .select('-password -passwordResetToken');
-
-    if (!member) throw new NotFoundException('Team member not found');
-    return member;
-  }
-
-  async updateTeamMemberStatus(
-    memberId: string,
-    dto: UpdateTeamMemberStatusDto,
-    tenantId: string,
-  ): Promise<UserDocument> {
-    const member = await this.userModel
-      .findOneAndUpdate(
-        {
-          _id: memberId,
-          tenantId: new Types.ObjectId(tenantId),
-          userType: UserType.TENANT,
-        },
-        { status: dto.status },
-        { new: true },
-      )
-      .select('-password -passwordResetToken');
-
-    if (!member) throw new NotFoundException('Team member not found');
-    return member;
-  }
-
-  async removeTeamMember(memberId: string, tenantId: string): Promise<void> {
-    const member = await this.userModel.findOne({
-      _id: memberId,
-      tenantId: new Types.ObjectId(tenantId),
-      userType: UserType.TENANT,
-      roles: { $nin: [TenantRole.TENANT_OWNER] },
-    });
-
-    if (!member) {
-      throw new NotFoundException(
-        'Team member not found or cannot remove a tenant owner',
-      );
-    }
-
-    await this.userModel.findByIdAndUpdate(memberId, {
-      status: AccountStatus.INACTIVE,
-    });
-  }
-
-  // ── Leave policy settings ───────────
-
-  // ── Get policy (creates default if none exists) ───────────
-  async getPolicy(tenantId: string): Promise<TenantTeamPolicyDocument> {
-    const existing = await this.policyModel
-      .findOne({ tenantId: new Types.ObjectId(tenantId) })
-      .lean();
-
-    if (existing) return existing as TenantTeamPolicyDocument;
-
-    // First time — create with defaults
-    const created = await this.policyModel.create({
-      tenantId: new Types.ObjectId(tenantId),
-      leavePolicy: DEFAULT_LEAVE_POLICY,
-      workingHours: DEFAULT_WORKING_HOURS,
-    });
-    return created.toObject() as TenantTeamPolicyDocument;
-  }
-
-  // ── Save leave policy ─────────────────────────────────────
-  async saveLeavePolicy(
-    tenantId: string,
-    leavePolicy: {
-      type: string;
-      days: number;
-      carryOver: boolean;
-      requiresApproval: boolean;
-    }[],
-  ): Promise<TenantTeamPolicyDocument> {
-    const policy = await this.policyModel.findOneAndUpdate(
-      { tenantId: new Types.ObjectId(tenantId) },
-      {
-        $set: {
-          tenantId: new Types.ObjectId(tenantId),
-          leavePolicy,
-        },
-      },
-      { upsert: true, new: true },
-    );
-    return policy;
-  }
-
-  // ── Save working hours ────────────────────────────────────
-  async saveWorkingHours(
-    tenantId: string,
-    workingHours: {
-      startTime: string;
-      endTime: string;
-      workdays: string;
-      requireClockIn: boolean;
-    },
-  ): Promise<TenantTeamPolicyDocument> {
-    const policy = await this.policyModel.findOneAndUpdate(
-      { tenantId: new Types.ObjectId(tenantId) },
-      {
-        $set: {
-          tenantId: new Types.ObjectId(tenantId),
-          workingHours,
-        },
-      },
-      { upsert: true, new: true },
-    );
-    return policy;
-  }
-
-  // ── Get leave balance for a team member ───────────────────
-  // Called by TeamMemberService.getMyLeaveBalance()
-  // Returns the policy entitlements for this tenant
-  async getLeavePolicyForTenant(tenantId: string) {
-    const policy = await this.getPolicy(tenantId);
-    const entries =
-      policy.leavePolicy?.length > 0
-        ? policy.leavePolicy
-        : DEFAULT_LEAVE_POLICY;
-
-    return entries.map((e) => ({
-      type: e.type,
-      label: this.leaveTypeLabel(e.type),
-      entitled: e.days,
-      carryOver: e.carryOver,
-      requiresApproval: e.requiresApproval,
-    }));
-  }
   // ═══════════════════════════════════════════════════════════
   // PRIVATE HELPERS
   // ═══════════════════════════════════════════════════════════

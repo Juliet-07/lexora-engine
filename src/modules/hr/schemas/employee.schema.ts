@@ -18,6 +18,7 @@ export enum EmploymentStatus {
   SUSPENDED = 'suspended',
   TERMINATED = 'terminated',
   RESIGNED = 'resigned',
+  PROBATION = 'probation',
 }
 
 export enum Gender {
@@ -37,19 +38,18 @@ export enum EmployeeAttendanceStatus {
 @Schema({ timestamps: true, collection: 'hr_employees' })
 export class Employee {
   // ── Ownership ──────────────────────────────────────────────
-  // tenantId: the firm managing this employee's HR
-  // clientId: the corporate client this employee works for
-  // userId:   linked User record for portal login (set on creation)
+  // tenantId: the organization this employee belongs to
+  // teamId:   the department/team
+  // locationId: the branch/office
+  // userId:   linked User record for portal login
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   tenantId: Types.ObjectId;
 
-  @Prop({
-    type: Types.ObjectId,
-    ref: 'ClientProfileRecord',
-    required: true,
-    index: true,
-  })
-  clientId: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'HrTeam', default: null, index: true })
+  teamId: Types.ObjectId | null;
+
+  @Prop({ type: Types.ObjectId, ref: 'HrLocation', default: null, index: true })
+  locationId: Types.ObjectId | null;
 
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   userId: Types.ObjectId | null;
@@ -95,16 +95,13 @@ export class Employee {
 
   // ── Employment Info ────────────────────────────────────────
   @Prop({ required: true, unique: true })
-  employeeNumber: string; // e.g. EMP-0001 — auto-generated per tenant+client
+  employeeNumber: string;
 
   @Prop({ required: true })
   jobTitle: string;
 
   @Prop({ default: null })
-  department: string | null;
-
-  @Prop({ default: null })
-  reportsTo: string | null; // manager name or employee number
+  reportsTo: string | null;
 
   @Prop({ enum: EmploymentType, default: EmploymentType.FULL_TIME })
   employmentType: EmploymentType;
@@ -129,7 +126,7 @@ export class Employee {
   salaryCurrency: string;
 
   @Prop({ default: 'monthly' })
-  salaryFrequency: string; // monthly | bi-weekly | weekly
+  salaryFrequency: string;
 
   @Prop({ default: null })
   bankName: string | null;
@@ -142,7 +139,7 @@ export class Employee {
 
   // ── Leave Balance ──────────────────────────────────────────
   @Prop({ default: 21 })
-  annualLeaveBalance: number; // days — reset annually
+  annualLeaveBalance: number;
 
   @Prop({ default: 0 })
   annualLeaveUsed: number;
@@ -157,8 +154,8 @@ export class Employee {
   @Prop({
     type: [
       {
-        name: { type: String },
-        url: { type: String },
+        name: String,
+        url: String,
         uploadedAt: { type: Date, default: Date.now },
       },
     ],
@@ -166,37 +163,25 @@ export class Employee {
   })
   documents: { name: string; url: string; uploadedAt: Date }[];
 
-  // ── Avatar ─────────────────────────────────────────────────
   @Prop({ default: null })
   avatarUrl: string | null;
 
-  // ── Metadata ──────────────────────────────────────────────
   @Prop({ type: Object, default: {} })
   metadata: Record<string, any>;
 }
 
 export const EmployeeSchema = SchemaFactory.createForClass(Employee);
 
+// ── Attendance — clientId removed ─────────────────────────────
+
 @Schema({ timestamps: true, collection: 'hr_employee_attendance' })
 export class EmployeeAttendance {
-  // Employee record _id
   @Prop({ type: Types.ObjectId, ref: 'Employee', required: true, index: true })
   employeeId: Types.ObjectId;
 
-  // The client this employee belongs to
-  @Prop({
-    type: Types.ObjectId,
-    ref: 'ClientProfileRecord',
-    required: true,
-    index: true,
-  })
-  clientId: Types.ObjectId;
-
-  // The tenant managing this employee's HR
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   tenantId: Types.ObjectId;
 
-  // Calendar date (start of day, midnight UTC — for unique index)
   @Prop({ required: true })
   date: Date;
 
@@ -206,15 +191,12 @@ export class EmployeeAttendance {
   @Prop({ default: null })
   clockOut: Date | null;
 
-  // Total break minutes accumulated
   @Prop({ default: 0 })
   breakMinutes: number;
 
-  // Track active break start
   @Prop({ default: null })
   breakStartedAt: Date | null;
 
-  // Calculated on clock-out
   @Prop({ default: null })
   hoursWorked: number | null;
 
@@ -227,7 +209,6 @@ export class EmployeeAttendance {
   })
   status: EmployeeAttendanceStatus;
 
-  // Notes added by manager or HR
   @Prop({ default: null })
   note: string | null;
 }

@@ -13,6 +13,16 @@ export enum LeaveType {
   UNPAID = 'unpaid',
 }
 
+export const DEFAULT_POLICY: Record<LeaveType, number> = {
+  [LeaveType.ANNUAL]: 21,
+  [LeaveType.SICK]: 10,
+  [LeaveType.MATERNITY]: 90,
+  [LeaveType.PATERNITY]: 5,
+  [LeaveType.COMPASSIONATE]: 3,
+  [LeaveType.STUDY]: 5,
+  [LeaveType.UNPAID]: 0,
+};
+
 @Schema({ _id: false })
 export class LeavePolicyEntry {
   @Prop({ required: true, enum: LeaveType })
@@ -33,23 +43,22 @@ export const LeavePolicyEntrySchema =
 
 @Schema({ timestamps: true, collection: 'hr_leave_policies' })
 export class LeavePolicy {
-  // tenantId: the firm managing this client's HR
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   tenantId: Types.ObjectId;
 
-  // clientId: which corporate client this policy applies to
+  // locationId: which branch/office this policy applies to
+  // null = default policy for the tenant (applies to employees with no location)
   @Prop({
     type: Types.ObjectId,
-    ref: 'ClientProfileRecord',
-    required: true,
+    ref: 'HrLocation',
+    default: null,
     index: true,
   })
-  clientId: Types.ObjectId;
+  locationId: Types.ObjectId | null;
 
   @Prop({ type: [LeavePolicyEntrySchema], default: [] })
   policies: LeavePolicyEntry[];
 
-  // Effective date — policy can change annually
   @Prop({ default: () => new Date() })
   effectiveFrom: Date;
 }

@@ -74,11 +74,11 @@ export class AttendanceService {
 
     return this.attendanceModel.create({
       employeeId: employee._id,
-      clientId: employee.clientId,
+      // teamId: employee.teamId,
       tenantId: employee.tenantId,
       date: today,
       clockIn: now,
-      location: dto.location || 'Office',
+      location: dto.location,
       status,
     });
   }
@@ -212,7 +212,11 @@ export class AttendanceService {
   // TENANT VIEW — today's attendance across all employees
   // ═══════════════════════════════════════════════════════════
 
-  async getTodayAttendance(tenantId: string, clientId?: string) {
+  async getTodayAttendance(
+    tenantId: string,
+    teamId?: string,
+    locationId?: string,
+  ) {
     const today = this.startOfDay(new Date());
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -224,14 +228,15 @@ export class AttendanceService {
       tenantId: tId,
       date: { $gte: today, $lt: tomorrow },
     };
-    if (clientId) matchAtt.clientId = new Types.ObjectId(clientId);
+    if (teamId) matchAtt.clientId = new Types.ObjectId(teamId);
 
     // ── All active employees for this tenant ──────────────
     const matchEmp: any = {
       tenantId: tId,
       employmentStatus: 'active',
     };
-    if (clientId) matchEmp.clientId = new Types.ObjectId(clientId);
+    if (teamId) matchEmp.teamId = new Types.ObjectId(teamId);
+    if (locationId) matchEmp.locationId = new Types.ObjectId(locationId);
 
     const [todayRecords, allEmployees, onLeaveIds] = await Promise.all([
       this.attendanceModel
@@ -283,9 +288,7 @@ export class AttendanceService {
           firstName: (record.employeeId as any)?.firstName ?? emp.firstName,
           lastName: (record.employeeId as any)?.lastName ?? emp.lastName,
           jobTitle: (record.employeeId as any)?.jobTitle ?? emp.jobTitle,
-          department: (record.employeeId as any)?.department ?? emp.department,
-          clientId:
-            (record.clientId as any)?.toString() ?? emp.clientId.toString(),
+          tean: emp.teamId,
           clockIn: record.clockIn,
           clockOut: record.clockOut,
           hoursWorked: record.hoursWorked,
@@ -306,8 +309,7 @@ export class AttendanceService {
         firstName: emp.firstName,
         lastName: emp.lastName,
         jobTitle: emp.jobTitle,
-        department: emp.department,
-        clientId: emp.clientId.toString(),
+        team: emp.teamId,
         clockIn: null,
         clockOut: null,
         hoursWorked: 0,
@@ -392,6 +394,54 @@ export class AttendanceService {
         avgHours: v.total > 0 ? +(v.avgHours / v.total).toFixed(1) : 0,
       }))
       .sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  async getEmployeeAttendance(employeeId: string, tenantId: string, limit = 5) {
+    return this.attendanceModel
+      .find({
+        employeeId: new Types.ObjectId(employeeId),
+        tenantId: new Types.ObjectId(tenantId),
+      })
+      .sort({ date: -1 })
+      .limit(limit)
+      .lean();
+  }
+
+  async getEmployeeAttendanceStats(employeeId: string, tenantId: string) {
+    const eId = new Types.ObjectId(employeeId);
+    const tId = new Types.ObjectId(tenantId);
+    const weekStart = this.startOfWeek(new Date());
+    const monthStart = this.startOfMonth(new Date());
+
+    const [weekRecs, monthRecs] = await Promise.all([
+      this.attendanceModel
+        .find({ employeeId: eId, tenantId: tId, date: { $gte: weekStart } })
+        .lean(),
+      this.attendanceModel
+        .find({ employeeId: eId, tenantId: tId, date: { $gte: monthStart } })
+        .lean(),
+    ]);
+
+    const monthHours = +monthRecs
+      .reduce((s, r) => s + (r.hoursWorked ?? 0), 0)
+      .toFixed(1);
+    const presentDays = monthRecs.filter((r) => r.status !== 'absent').length;
+    const punctualDays = monthRecs.filter(
+      (r) => r.status === 'present' || r.status === 'remote',
+    ).length;
+    const punctuality =
+      monthRecs.length > 0
+        ? Math.round((punctualDays / monthRecs.length) * 100)
+        : 100;
+
+    return {
+      weekHours: +weekRecs
+        .reduce((s, r) => s + (r.hoursWorked ?? 0), 0)
+        .toFixed(1),
+      monthHours,
+      daysPresent: presentDays,
+      punctuality,
+    };
   }
 
   // ═══════════════════════════════════════════════════════════
