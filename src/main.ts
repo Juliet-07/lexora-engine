@@ -1,4 +1,4 @@
-import { NestFactory, Reflector } from '@nestjs/core';
+import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
@@ -43,6 +43,7 @@ async function bootstrap() {
     join(process.cwd(), 'uploads', 'avatars'),
     join(process.cwd(), 'uploads', 'engagement'),
     join(process.cwd(), 'uploads', 'engagement', 'signed'),
+    join(process.cwd(), 'uploads', 'employee', 'onboarding'),
   ];
   for (const dir of uploadDirs) {
     if (!fs.existsSync(dir)) {

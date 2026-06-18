@@ -569,6 +569,7 @@ export class EmployeeService {
     userId: string,
     dto: {
       phone?: string;
+      dateOfBirth?: string;
       address?: {
         street?: string;
         city?: string;
@@ -590,6 +591,8 @@ export class EmployeeService {
 
     const update: any = {};
     if (dto.phone !== undefined) update.phone = dto.phone;
+    if (dto.dateOfBirth !== undefined)
+      update.dateOfBirth = dto.dateOfBirth ? new Date(dto.dateOfBirth) : null;
     if (dto.address !== undefined) update.address = dto.address;
     if (dto.emergencyContactName !== undefined)
       update.emergencyContactName = dto.emergencyContactName;

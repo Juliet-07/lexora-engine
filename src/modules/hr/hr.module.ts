@@ -7,7 +7,12 @@ import {
   EmployeeAttendanceSchema,
   EmployeeSchema,
 } from './schemas/employee.schema';
-import { EmployeeService, LeaveService, AttendanceService } from './services';
+import {
+  EmployeeService,
+  LeaveService,
+  AttendanceService,
+  OnboardingService,
+} from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailService } from '../../common/utils/mailing/email.service';
 import { HrEmployeeController, HrTenantController } from './controllers';
@@ -20,7 +25,12 @@ import {
   HrLocation,
   HrTeamSchema,
   HrLocationSchema,
+  OnboardingDocument,
+  EmployeeOnboarding,
+  OnboardingDocumentSchema,
+  EmployeeOnboardingSchema,
 } from './schemas';
+import { HrOnboardingController } from './controllers/employee-onboarding.controller';
 
 @Module({
   imports: [
@@ -32,10 +42,27 @@ import {
       { name: EmployeeAttendance.name, schema: EmployeeAttendanceSchema },
       { name: HrTeam.name, schema: HrTeamSchema },
       { name: HrLocation.name, schema: HrLocationSchema },
+      { name: OnboardingDocument.name, schema: OnboardingDocumentSchema },
+      { name: EmployeeOnboarding.name, schema: EmployeeOnboardingSchema },
     ]),
   ],
-  controllers: [HrTenantController, HrEmployeeController],
-  providers: [EmployeeService, EmailService, LeaveService, AttendanceService],
-  exports: [EmployeeService, LeaveService, AttendanceService],
+  controllers: [
+    HrTenantController,
+    HrEmployeeController,
+    HrOnboardingController,
+  ],
+  providers: [
+    EmployeeService,
+    EmailService,
+    LeaveService,
+    AttendanceService,
+    OnboardingService,
+  ],
+  exports: [
+    EmployeeService,
+    LeaveService,
+    AttendanceService,
+    OnboardingService,
+  ],
 })
 export class HrModule {}

@@ -8,10 +8,16 @@ import {
   HttpCode,
   HttpStatus,
   Query,
+  Req,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { AttendanceService, EmployeeService, LeaveService } from '../services';
-import { CreateLeaveRequestDto } from '../dtos';
+import {
+  AttendanceService,
+  EmployeeService,
+  LeaveService,
+  OnboardingService,
+} from '../services';
+import { CompleteOnboardingDto, CreateLeaveRequestDto } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
 
@@ -31,7 +37,37 @@ export class HrEmployeeController {
     private readonly employeeService: EmployeeService,
     private readonly leaveService: LeaveService,
     private readonly attendanceService: AttendanceService,
+    private readonly onboardingService: OnboardingService,
   ) {}
+
+  // ═══════════════════════════════════════════════════════════
+  // ONBOARDING — mandatory flow, checked right after login
+  // ═══════════════════════════════════════════════════════════
+
+  @Get('onboarding/status')
+  @ApiOperation({
+    summary: 'Check if onboarding is complete; get documents if not',
+  })
+  getOnboardingStatus(@CurrentUser('sub') userId: string) {
+    return this.onboardingService.getMyStatus(userId);
+  }
+
+  @Post('onboarding/complete')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Submit signed acknowledgement of all onboarding documents',
+  })
+  completeOnboarding(
+    @CurrentUser('sub') userId: string,
+    @Body() dto: CompleteOnboardingDto,
+    @Req() req: any,
+  ) {
+    const ipAddress =
+      req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+      req.connection?.remoteAddress ||
+      null;
+    return this.onboardingService.completeOnboarding(userId, dto, ipAddress);
+  }
 
   // ═══════════════════════════════════════════════════════════
   // PROFILE
@@ -51,6 +87,7 @@ export class HrEmployeeController {
     @Body()
     dto: {
       phone?: string;
+      dateOfBirth?: string;
       address?: {
         street?: string;
         city?: string;

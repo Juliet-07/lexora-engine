@@ -109,6 +109,9 @@ export class Employee {
   @Prop({ enum: EmploymentStatus, default: EmploymentStatus.ACTIVE })
   employmentStatus: EmploymentStatus;
 
+  @Prop({ default: false })
+  onboardingCompleted: boolean;
+
   @Prop({ required: true })
   startDate: Date;
 
