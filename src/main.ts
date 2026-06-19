@@ -6,6 +6,7 @@ import { AppModule } from './app.module';
 import * as fs from 'fs';
 import { join } from 'path';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import * as express from 'express';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -17,6 +18,9 @@ async function bootstrap() {
   const port = configService.get<number>('app.port', 3000);
   const appName = configService.get<string>('app.name', 'Lexora Engine');
   const nodeEnv = configService.get<string>('app.nodeEnv', 'development');
+
+  app.use(express.json({ limit: '15mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
   // ─── Global Prefix ──────────────────────────────────────────
   app.setGlobalPrefix('api');
@@ -44,6 +48,7 @@ async function bootstrap() {
     join(process.cwd(), 'uploads', 'engagement'),
     join(process.cwd(), 'uploads', 'engagement', 'signed'),
     join(process.cwd(), 'uploads', 'employee', 'onboarding'),
+    join(process.cwd(), 'uploads', 'employee', 'certificates'),
   ];
   for (const dir of uploadDirs) {
     if (!fs.existsSync(dir)) {

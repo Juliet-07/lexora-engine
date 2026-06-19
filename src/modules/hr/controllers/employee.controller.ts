@@ -9,17 +9,39 @@ import {
   HttpStatus,
   Query,
   Req,
+  Delete,
+  UploadedFile,
+  UseInterceptors,
+  BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiBody,
+  ApiConsumes,
+} from '@nestjs/swagger';
 import {
   AttendanceService,
   EmployeeService,
   LeaveService,
   OnboardingService,
+  PayrollRunService,
 } from '../services';
-import { CompleteOnboardingDto, CreateLeaveRequestDto } from '../dtos';
+import {
+  CompleteOnboardingDto,
+  CreateLeaveRequestDto,
+  SaveOnboardingMedicalDto,
+  SaveOnboardingPersonalDto,
+  SaveOnboardingReferencesDto,
+} from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { extname, join } from 'path';
+import { existsSync, mkdirSync } from 'fs';
+import { diskStorage } from 'multer';
+import { v4 as uuidv4 } from 'uuid';
 
 // ═══════════════════════════════════════════════════════════════
 // EMPLOYEE SELF-SERVICE CONTROLLER
@@ -27,6 +49,41 @@ import { UserType } from '../../../common/interfaces/user-role.enum';
 // UserType: EMPLOYEE only — these are the people the tenant created
 // via HR → Employees. They log into the same tenant app, scoped view.
 // ═══════════════════════════════════════════════════════════════
+
+const certificateStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(
+      process.cwd(),
+      'uploads',
+      'employee',
+      'certificates',
+    );
+    if (!existsSync(uploadPath)) {
+      mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) => {
+    const ext = extname(file.originalname);
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
+
+const certificateFileFilter = (
+  _req: any,
+  file: Express.Multer.File,
+  cb: any,
+) => {
+  const allowed = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(
+      new BadRequestException('Only PDF, JPG, or PNG files are accepted.'),
+      false,
+    );
+  }
+};
 
 @ApiTags('Employee Self-Service')
 @ApiBearerAuth('bearerAuth')
@@ -38,6 +95,7 @@ export class HrEmployeeController {
     private readonly leaveService: LeaveService,
     private readonly attendanceService: AttendanceService,
     private readonly onboardingService: OnboardingService,
+    private readonly payrollRunService: PayrollRunService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -50,6 +108,80 @@ export class HrEmployeeController {
   })
   getOnboardingStatus(@CurrentUser('sub') userId: string) {
     return this.onboardingService.getMyStatus(userId);
+  }
+
+  @Patch('onboarding/personal')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Onboarding step 1 — save personal & emergency details',
+  })
+  saveOnboardingPersonal(
+    @CurrentUser('sub') userId: string,
+    @Body() dto: SaveOnboardingPersonalDto,
+  ) {
+    return this.onboardingService.savePersonal(userId, dto);
+  }
+
+  @Patch('onboarding/medical')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Onboarding step 2 — save medical information' })
+  saveOnboardingMedical(
+    @CurrentUser('sub') userId: string,
+    @Body() dto: SaveOnboardingMedicalDto,
+  ) {
+    return this.onboardingService.saveMedical(userId, dto);
+  }
+
+  @Post('onboarding/certificates')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: certificateStorage,
+      fileFilter: certificateFileFilter,
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        name: {
+          type: 'string',
+          description: 'Optional display name, e.g. "AML Certification"',
+        },
+      },
+    },
+  })
+  @ApiOperation({ summary: 'Onboarding step 3 — upload a certificate file' })
+  uploadOnboardingCertificate(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('name') name: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.onboardingService.uploadCertificate(userId, file, name);
+  }
+
+  @Delete('onboarding/certificates')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remove an uploaded certificate' })
+  deleteOnboardingCertificate(
+    @CurrentUser('sub') userId: string,
+    @Body('fileUrl') fileUrl: string,
+  ) {
+    return this.onboardingService.deleteCertificate(userId, fileUrl);
+  }
+
+  @Patch('onboarding/references')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Onboarding step 3 — save professional references' })
+  saveOnboardingReferences(
+    @CurrentUser('sub') userId: string,
+    @Body() dto: SaveOnboardingReferencesDto,
+  ) {
+    return this.onboardingService.saveReferences(userId, dto);
   }
 
   @Post('onboarding/complete')
@@ -199,5 +331,31 @@ export class HrEmployeeController {
   @ApiOperation({ summary: 'Clock out' })
   clockOut(@CurrentUser('sub') userId: string) {
     return this.attendanceService.clockOut(userId);
+  }
+
+  @Get('payslips')
+  @ApiOperation({ summary: 'Get my payslip history' })
+  async getMyPayslips(@CurrentUser('sub') userId: string) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.payrollRunService.getMyPayslips(
+      (employee as any)._id.toString(),
+    );
+  }
+
+  @Get('payslips/:payslipId/render')
+  @ApiOperation({ summary: 'Render one of my payslips as branded HTML' })
+  async renderMyPayslip(
+    @Param('payslipId') payslipId: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    const slip = await this.payrollRunService.getPayslipForEmployee(
+      payslipId,
+      (employee as any)._id.toString(),
+    );
+    return this.payrollRunService.renderPayslipHtml(
+      (employee as any).tenantId.toString(),
+      slip,
+    );
   }
 }

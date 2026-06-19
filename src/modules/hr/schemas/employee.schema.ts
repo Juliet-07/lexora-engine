@@ -35,6 +35,62 @@ export enum EmployeeAttendanceStatus {
   ON_LEAVE = 'on_leave',
 }
 
+@Schema({ _id: false })
+export class NextOfKin {
+  @Prop({ default: null }) name: string | null;
+  @Prop({ default: null }) relationship: string | null;
+  @Prop({ default: null }) phone: string | null;
+}
+export const NextOfKinSchema = SchemaFactory.createForClass(NextOfKin);
+
+@Schema({ _id: false })
+export class MedicalInfo {
+  @Prop({ default: null }) bloodGroup: string | null;
+  @Prop({ default: null }) allergies: string | null;
+  @Prop({ default: null }) conditions: string | null;
+  @Prop({ default: null }) medications: string | null;
+  @Prop({ default: null }) doctorName: string | null;
+  @Prop({ default: null }) doctorPhone: string | null;
+}
+export const MedicalInfoSchema = SchemaFactory.createForClass(MedicalInfo);
+
+@Schema({ _id: false })
+export class EmployeeReference {
+  @Prop({ required: true }) name: string;
+  @Prop({ default: null }) relationship: string | null;
+  @Prop({ default: null }) email: string | null;
+  @Prop({ default: null }) phone: string | null;
+}
+export const EmployeeReferenceSchema =
+  SchemaFactory.createForClass(EmployeeReference);
+
+@Schema({ _id: false })
+export class EmployeeCertificate {
+  @Prop({ required: true }) name: string; // display name, e.g. "AML Certification"
+  @Prop({ required: true }) fileUrl: string;
+  @Prop({ required: true }) originalFileName: string;
+  @Prop({ default: () => new Date() }) uploadedAt: Date;
+}
+export const EmployeeCertificateSchema =
+  SchemaFactory.createForClass(EmployeeCertificate);
+
+@Schema({ _id: false })
+export class EmployeeAllowance {
+  @Prop({ required: true })
+  key: string;
+
+  @Prop({ required: true })
+  label: string;
+
+  @Prop({ required: true })
+  amount: number;
+
+  @Prop({ default: null })
+  currency: string | null;
+}
+export const EmployeeAllowanceSchema =
+  SchemaFactory.createForClass(EmployeeAllowance);
+
 @Schema({ timestamps: true, collection: 'hr_employees' })
 export class Employee {
   // ── Ownership ──────────────────────────────────────────────
@@ -93,6 +149,18 @@ export class Employee {
   @Prop({ default: null })
   emergencyContactPhone: string | null;
 
+  @Prop({ type: NextOfKinSchema, default: null })
+  nextOfKin: NextOfKin | null;
+
+  @Prop({ type: MedicalInfoSchema, default: null })
+  medicalInfo: MedicalInfo | null;
+
+  @Prop({ type: [EmployeeReferenceSchema], default: [] })
+  references: EmployeeReference[];
+
+  @Prop({ type: [EmployeeCertificateSchema], default: [] })
+  certificates: EmployeeCertificate[];
+
   // ── Employment Info ────────────────────────────────────────
   @Prop({ required: true, unique: true })
   employeeNumber: string;
@@ -108,6 +176,9 @@ export class Employee {
 
   @Prop({ enum: EmploymentStatus, default: EmploymentStatus.ACTIVE })
   employmentStatus: EmploymentStatus;
+
+  @Prop({ default: 0 })
+  onboardingStep: number;
 
   @Prop({ default: false })
   onboardingCompleted: boolean;
@@ -139,6 +210,9 @@ export class Employee {
 
   @Prop({ default: null })
   taxId: string | null;
+
+  @Prop({ type: [EmployeeAllowanceSchema], default: [] })
+  allowances: EmployeeAllowance[];
 
   // ── Leave Balance ──────────────────────────────────────────
   @Prop({ default: 21 })
@@ -218,3 +292,66 @@ export class EmployeeAttendance {
 
 export const EmployeeAttendanceSchema =
   SchemaFactory.createForClass(EmployeeAttendance);
+
+export type EmployeeLoanDocument = EmployeeLoan & Document;
+
+export enum LoanStatus {
+  ACTIVE = 'active',
+  PAID_OFF = 'paid_off',
+  CANCELLED = 'cancelled',
+  PAUSED = 'paused', // tenant can pause a deduction without cancelling the loan
+}
+
+@Schema({ timestamps: true, collection: 'hr_employee_loans' })
+export class EmployeeLoan {
+  @Prop({ type: Types.ObjectId, ref: 'Employee', required: true, index: true })
+  employeeId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({ required: true, trim: true })
+  label: string; // e.g. "Salary Advance — June 2026", "Emergency Loan"
+
+  @Prop({ required: true })
+  principalAmount: number;
+
+  @Prop({ required: true })
+  currency: string;
+
+  @Prop({ required: true })
+  monthlyInstallment: number;
+
+  // Decremented by monthlyInstallment (or the remainder, if smaller)
+  // each time a payroll run successfully deducts this loan.
+  @Prop({ required: true })
+  outstandingBalance: number;
+
+  @Prop({ enum: LoanStatus, default: LoanStatus.ACTIVE })
+  status: LoanStatus;
+
+  @Prop({ default: () => new Date() })
+  startDate: Date;
+
+  @Prop({ default: null })
+  note: string | null;
+
+  // Audit trail of which payroll runs deducted from this loan
+  @Prop({
+    type: [
+      {
+        payrollRunId: { type: Types.ObjectId, ref: 'PayrollRun' },
+        amount: Number,
+        deductedAt: Date,
+      },
+    ],
+    default: [],
+  })
+  deductionHistory: {
+    payrollRunId: Types.ObjectId;
+    amount: number;
+    deductedAt: Date;
+  }[];
+}
+
+export const EmployeeLoanSchema = SchemaFactory.createForClass(EmployeeLoan);

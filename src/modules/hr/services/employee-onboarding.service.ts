@@ -21,6 +21,9 @@ import {
   CreateOnboardingDocumentDto,
   UpdateOnboardingDocumentDto,
   CompleteOnboardingDto,
+  SaveOnboardingPersonalDto,
+  SaveOnboardingMedicalDto,
+  SaveOnboardingReferencesDto,
 } from '../dtos';
 
 @Injectable()
@@ -143,10 +146,6 @@ export class OnboardingService {
   // EMPLOYEE — self-service onboarding flow
   // ═══════════════════════════════════════════════════════════
 
-  /**
-   * Called right after login. Tells the frontend whether to redirect
-   * to the mandatory onboarding flow, and if so, what to show.
-   */
   async getMyStatus(userId: string) {
     const employee = await this.employeeModel
       .findOne({ userId: new Types.ObjectId(userId) })
@@ -154,11 +153,170 @@ export class OnboardingService {
     if (!employee) throw new NotFoundException('Employee profile not found');
 
     if (employee.onboardingCompleted) {
-      return { completed: true, documents: [] };
+      return { completed: true, step: 4, documents: [], saved: null };
     }
 
-    const documents = await this.getDocuments(employee.tenantId.toString());
-    return { completed: false, documents };
+    const documents =
+      (employee.onboardingStep ?? 0) >= 3
+        ? await this.getDocuments(employee.tenantId.toString())
+        : [];
+    return {
+      completed: false,
+      step: employee.onboardingStep ?? 0,
+      documents,
+      saved: {
+        dateOfBirth: employee.dateOfBirth,
+        nationality: employee.nationality,
+        address: employee.address,
+        nextOfKin: employee.nextOfKin,
+        emergencyContactName: employee.emergencyContactName,
+        emergencyContactPhone: employee.emergencyContactPhone,
+        medicalInfo: employee.medicalInfo,
+        certificates: employee.certificates,
+        references: employee.references,
+      },
+    };
+  }
+
+  async savePersonal(userId: string, dto: SaveOnboardingPersonalDto) {
+    const employee = await this.employeeModel.findOne({
+      userId: new Types.ObjectId(userId),
+    });
+    if (!employee) throw new NotFoundException('Employee profile not found');
+
+    if (employee.onboardingCompleted) {
+      throw new ConflictException('Onboarding has already been completed.');
+    }
+
+    await this.employeeModel.findByIdAndUpdate(employee._id, {
+      $set: {
+        dateOfBirth: new Date(dto.dateOfBirth),
+        nationality: dto.nationality ?? employee.nationality,
+        address: { street: dto.address }, // free-text onboarding capture
+        nextOfKin: {
+          name: dto.nextOfKin.name,
+          relationship: dto.nextOfKin.relationship ?? null,
+          phone: dto.nextOfKin.phone,
+        },
+        emergencyContactName: dto.emergencyContactName,
+        emergencyContactPhone: dto.emergencyContactPhone,
+        onboardingStep: Math.max(employee.onboardingStep ?? 0, 1),
+      },
+    });
+
+    return this.getMyStatus(userId);
+  }
+
+  async saveMedical(userId: string, dto: SaveOnboardingMedicalDto) {
+    const employee = await this.employeeModel.findOne({
+      userId: new Types.ObjectId(userId),
+    });
+    if (!employee) throw new NotFoundException('Employee profile not found');
+
+    if (employee.onboardingCompleted) {
+      throw new ConflictException('Onboarding has already been completed.');
+    }
+    if ((employee.onboardingStep ?? 0) < 1) {
+      throw new BadRequestException(
+        'Complete the personal details step first.',
+      );
+    }
+
+    await this.employeeModel.findByIdAndUpdate(employee._id, {
+      $set: {
+        medicalInfo: {
+          bloodGroup: dto.bloodGroup,
+          allergies: dto.allergies ?? null,
+          conditions: dto.conditions ?? null,
+          medications: dto.medications ?? null,
+          doctorName: dto.doctorName ?? null,
+          doctorPhone: dto.doctorPhone ?? null,
+        },
+        onboardingStep: Math.max(employee.onboardingStep ?? 0, 2),
+      },
+    });
+
+    return this.getMyStatus(userId);
+  }
+
+  async uploadCertificate(
+    userId: string,
+    file: Express.Multer.File,
+    displayName?: string,
+  ) {
+    if (!file) throw new BadRequestException('No file uploaded.');
+
+    const employee = await this.employeeModel.findOne({
+      userId: new Types.ObjectId(userId),
+    });
+    if (!employee) throw new NotFoundException('Employee profile not found');
+
+    if (employee.onboardingCompleted) {
+      throw new ConflictException('Onboarding has already been completed.');
+    }
+
+    const certificate = {
+      name: displayName?.trim() || file.originalname,
+      fileUrl: this.buildCertificateUrl(file.filename),
+      originalFileName: file.originalname,
+      uploadedAt: new Date(),
+    };
+
+    await this.employeeModel.findByIdAndUpdate(employee._id, {
+      $push: { certificates: certificate },
+    });
+
+    return certificate;
+  }
+
+  async deleteCertificate(userId: string, fileUrl: string) {
+    const employee = await this.employeeModel.findOne({
+      userId: new Types.ObjectId(userId),
+    });
+    if (!employee) throw new NotFoundException('Employee profile not found');
+
+    if (employee.onboardingCompleted) {
+      throw new ConflictException('Onboarding has already been completed.');
+    }
+
+    const diskPath = this.urlToCertificateDiskPath(fileUrl);
+    if (diskPath && fs.existsSync(diskPath)) fs.unlinkSync(diskPath);
+
+    await this.employeeModel.findByIdAndUpdate(employee._id, {
+      $pull: { certificates: { fileUrl } },
+    });
+
+    return { success: true };
+  }
+
+  async saveReferences(userId: string, dto: SaveOnboardingReferencesDto) {
+    const employee = await this.employeeModel.findOne({
+      userId: new Types.ObjectId(userId),
+    });
+    if (!employee) throw new NotFoundException('Employee profile not found');
+
+    if (employee.onboardingCompleted) {
+      throw new ConflictException('Onboarding has already been completed.');
+    }
+    if ((employee.onboardingStep ?? 0) < 2) {
+      throw new BadRequestException(
+        'Complete the medical information step first.',
+      );
+    }
+    if (employee.certificates.length === 0) {
+      throw new BadRequestException(
+        'Upload at least one certificate before continuing.',
+      );
+    }
+
+    await this.employeeModel.findByIdAndUpdate(employee._id, {
+      $set: {
+        references: dto.references,
+        onboardingStep: Math.max(employee.onboardingStep ?? 0, 3),
+      },
+    });
+
+    return this.getMyStatus(userId);
   }
 
   async completeOnboarding(
@@ -173,6 +331,12 @@ export class OnboardingService {
 
     if (employee.onboardingCompleted) {
       throw new ConflictException('Onboarding has already been completed.');
+    }
+
+    if ((employee.onboardingStep ?? 0) < 3) {
+      throw new BadRequestException(
+        'Complete personal, medical, and credentials steps before signing.',
+      );
     }
 
     const activeDocs = await this.getDocuments(employee.tenantId.toString());
@@ -211,6 +375,7 @@ export class OnboardingService {
 
     await this.employeeModel.findByIdAndUpdate(employee._id, {
       onboardingCompleted: true,
+      onboardingStep: 4,
     });
 
     return record;
@@ -258,5 +423,19 @@ export class OnboardingService {
     if (idx === -1) return null;
     const filename = fileUrl.slice(idx + marker.length);
     return `uploads/employee/onboarding/${filename}`;
+  }
+
+  private buildCertificateUrl(filename: string): string {
+    const baseUrl =
+      process.env.APP_URL || `http://localhost:${process.env.PORT || 3001}`;
+    return `${baseUrl}/uploads/employee/certificates/${filename}`;
+  }
+
+  private urlToCertificateDiskPath(fileUrl: string): string | null {
+    const marker = '/uploads/employee/certificates/';
+    const idx = fileUrl.indexOf(marker);
+    if (idx === -1) return null;
+    const filename = fileUrl.slice(idx + marker.length);
+    return `uploads/employee/certificates/${filename}`;
   }
 }
