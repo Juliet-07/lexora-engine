@@ -9,6 +9,8 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  BadRequestException,
+  Res,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -21,6 +23,9 @@ import {
   EmployeeLoanService,
   PayrollRunService,
   PayslipTemplateService,
+  PayrollCalculationService,
+  ExchangeRateService,
+  PayrollExportService,
 } from '../services';
 import {
   UpsertPayrollPolicyDto,
@@ -29,16 +34,21 @@ import {
   UpdateLoanDto,
   CreatePayrollRunDto,
   UpdatePayslipTemplateDto,
+  GrossUpFromNetDto,
 } from '../dtos/';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
+import { Response } from 'express';
 
 @ApiTags('HR — Payroll Policy (Tenant)')
 @ApiBearerAuth('bearerAuth')
 @UserTypes(UserType.TENANT)
 @Controller('hr/payroll/policy')
 export class PayrollPolicyController {
-  constructor(private readonly policyService: PayrollPolicyService) {}
+  constructor(
+    private readonly policyService: PayrollPolicyService,
+    private readonly calcService: PayrollCalculationService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List all payroll policies for this tenant' })
@@ -97,6 +107,33 @@ export class PayrollPolicyController {
       dto.locationId ?? null,
       dto.overwrite ?? false,
     );
+  }
+
+  @Post('gross-up')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Calculate the basic salary needed to achieve a target net pay, under a location's policy",
+  })
+  async grossUp(
+    @Body() dto: GrossUpFromNetDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const policy = await this.policyService.getPolicyForLocation(
+      t || u,
+      dto.locationId ?? null,
+    );
+    if (!policy) {
+      throw new BadRequestException(
+        'No payroll policy configured for this location or tenant default.',
+      );
+    }
+    const grossSalary = this.calcService.solveGrossFromNet(
+      dto.targetNet,
+      policy as any,
+    );
+    return { targetNet: dto.targetNet, grossSalary, currency: policy.currency };
   }
 
   @Delete(':policyId')
@@ -181,7 +218,11 @@ export class EmployeeLoanController {
 @UserTypes(UserType.TENANT)
 @Controller('hr/payroll/runs')
 export class PayrollRunController {
-  constructor(private readonly runService: PayrollRunService) {}
+  constructor(
+    private readonly runService: PayrollRunService,
+    private readonly fxService: ExchangeRateService,
+    private readonly exportService: PayrollExportService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List all payroll runs for this tenant' })
@@ -201,6 +242,17 @@ export class PayrollRunController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.runService.getAllEmployeesPeriodStatus(t || u, periodLabel);
+  }
+
+  @Get('fx-preview')
+  @ApiQuery({ name: 'from', required: true, example: 'USD' })
+  @ApiQuery({ name: 'to', required: true, example: 'RWF' })
+  @ApiOperation({
+    summary:
+      'Fetch a live exchange rate to pre-fill a manual rate (does not apply it automatically)',
+  })
+  async fxPreview(@Query('from') from: string, @Query('to') to: string) {
+    return this.fxService.getRate(from, to);
   }
 
   @Get(':runId')
@@ -254,7 +306,7 @@ export class PayrollRunController {
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.runService.markPaid(t || u, runId);
+    return this.runService.markPaid(t || u, runId, u);
   }
 
   @Delete(':runId')
@@ -267,6 +319,38 @@ export class PayrollRunController {
   ) {
     await this.runService.discardDraftRun(t || u, runId);
     return { success: true };
+  }
+
+  @Post(':runId/email-all')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Email every payslip in this run to its respective employee',
+  })
+  emailAllPayslips(
+    @Param('runId') runId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.runService.emailAllPayslipsInRun(t || u, runId);
+  }
+
+  @Get(':runId/export-excel')
+  @ApiOperation({
+    summary: 'Download this run as an Excel file for accounting/bank transfer',
+  })
+  async exportExcel(
+    @Param('runId') runId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.exportService.exportRunToExcel(t || u, runId);
+    res.set({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="payroll-export.xlsx"`,
+    });
+    res.send(buffer);
   }
 
   @Get('payslip/:payslipId')
@@ -290,6 +374,19 @@ export class PayrollRunController {
   ) {
     const slip = await this.runService.getPayslip(t || u, payslipId);
     return this.runService.renderPayslipHtml(t || u, slip);
+  }
+
+  @Post('payslip/:payslipId/email')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Email a payslip to the employee's own address on file",
+  })
+  async emailPayslip(
+    @Param('payslipId') payslipId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.runService.emailPayslipToEmployee(t || u, payslipId);
   }
 }
 

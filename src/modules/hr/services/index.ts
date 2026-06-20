@@ -5,6 +5,7 @@ export * from './employee.service';
 export * from './exchange-rate.service';
 export * from './leave.service';
 export * from './payroll-calculation.service';
+export * from './payroll-export.service';
 export * from './payroll-policy.service';
 export * from './payroll-run.service';
 export * from './payslip-template.service';

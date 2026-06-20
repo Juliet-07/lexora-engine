@@ -1,8 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
-export type PayrollPolicyDocument = PayrollPolicy & Document;
-
 export enum DeductionCalculationBase {
   GROSS = 'gross',
   GROSS_MINUS_TRANSPORT = 'gross_minus_transport',
@@ -17,7 +15,6 @@ export enum DeductionKind {
   PROGRESSIVE_BRACKETS = 'progressive_brackets', // PAYE-style
 }
 
-// A single tax bracket for progressive deductions (PAYE)
 @Schema({ _id: false })
 export class TaxBracket {
   @Prop({ required: true })
@@ -103,6 +100,7 @@ export class AllowanceType {
 }
 export const AllowanceTypeSchema = SchemaFactory.createForClass(AllowanceType);
 
+export type PayrollPolicyDocument = PayrollPolicy & Document;
 @Schema({ timestamps: true, collection: 'hr_payroll_policies' })
 export class PayrollPolicy {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -216,6 +214,12 @@ export class Payslip {
   @Prop({ required: true }) netSalary: number;
 
   @Prop({ default: null }) notes: string | null;
+
+  @Prop({ default: null })
+  emailedAt: Date | null;
+
+  @Prop({ default: 0 })
+  emailSendCount: number;
 }
 
 export const PayslipSchema = SchemaFactory.createForClass(Payslip);
@@ -247,6 +251,29 @@ export class PayrollRun {
   processedBy: Types.ObjectId | null;
   @Prop({ default: null }) processedAt: Date | null;
   @Prop({ default: null }) paidAt: Date | null;
+  @Prop({ default: null }) createdAt: Date | null;
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  paidBy: Types.ObjectId | null;
+  @Prop({
+    type: [{ fromCurrency: String, rate: Number }],
+    default: [],
+  })
+  manualRates: { fromCurrency: string; rate: number }[];
+  @Prop({
+    type: [
+      {
+        employeeId: { type: Types.ObjectId, ref: 'Employee' },
+        employeeName: String,
+        reason: String,
+      },
+    ],
+    default: [],
+  })
+  skippedEmployees: {
+    employeeId: Types.ObjectId;
+    employeeName: string;
+    reason: string;
+  }[];
 }
 
 export const PayrollRunSchema = SchemaFactory.createForClass(PayrollRun);

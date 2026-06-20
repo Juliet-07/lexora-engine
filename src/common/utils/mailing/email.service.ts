@@ -80,6 +80,10 @@ import {
   LeaveReviewNotificationData,
   leaveReviewNotificationTemplate,
 } from './templates/leave-emails.template';
+import {
+  PayslipEmailData,
+  payslipTemplate,
+} from './templates/payslip.template';
 
 @Injectable()
 export class EmailService {
@@ -338,6 +342,16 @@ export class EmailService {
     data: LeaveReviewNotificationData,
   ): Promise<void> {
     const { subject, html } = leaveReviewNotificationTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendPayslip(data: PayslipEmailData): Promise<void> {
+    const { subject, html } = payslipTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

@@ -17,6 +17,7 @@ import {
   ExchangeRateService,
   PayrollRunService,
   PayslipTemplateService,
+  PayrollExportService,
 } from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailService } from '../../common/utils/mailing/email.service';
@@ -97,6 +98,7 @@ import {
     ExchangeRateService,
     PayrollRunService,
     PayslipTemplateService,
+    PayrollExportService,
   ],
   exports: [
     EmployeeService,

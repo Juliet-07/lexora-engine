@@ -141,6 +141,10 @@ export class UpdateLoanDto {
 // ═══════════════════════════════════════════════════════════════
 // PAYROLL RUN
 // ═══════════════════════════════════════════════════════════════
+export class ManualExchangeRateDto {
+  @ApiProperty({ example: 'USD' }) @IsString() fromCurrency: string;
+  @ApiProperty({ example: 1455 }) @IsNumber() @Min(0.000001) rate: number;
+}
 
 export class CreatePayrollRunDto {
   @ApiProperty({ example: 'June 2026' }) @IsString() periodLabel: string;
@@ -159,6 +163,31 @@ export class CreatePayrollRunDto {
   @IsOptional()
   @IsMongoId()
   employeeId?: string;
+  @ApiPropertyOptional({
+    type: [ManualExchangeRateDto],
+    description:
+      'Lock specific exchange rates for this run instead of using the live API default. Matches how payroll is run in practice — one rate set per period, not refetched live.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ManualExchangeRateDto)
+  manualRates?: ManualExchangeRateDto[];
+}
+
+export class GrossUpFromNetDto {
+  @ApiProperty({ description: 'Desired net pay amount' })
+  @IsNumber()
+  @Min(1)
+  targetNet: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Location to resolve the policy from. Omit to use the tenant default policy.',
+  })
+  @IsOptional()
+  @IsMongoId()
+  locationId?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════

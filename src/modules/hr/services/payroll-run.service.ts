@@ -25,6 +25,8 @@ import { ExchangeRateService } from './exchange-rate.service';
 import { CreatePayrollRunDto } from '../dtos/payroll.dto';
 import { PayslipTemplateService } from './payslip-template.service';
 import { buildPayslipHtml } from 'src/common/utils/payslip-html.util';
+import { EmployeeService } from './employee.service';
+import { EmailService } from 'src/common/utils/mailing/email.service';
 
 @Injectable()
 export class PayrollRunService {
@@ -40,6 +42,8 @@ export class PayrollRunService {
     private readonly loanService: EmployeeLoanService,
     private readonly fxService: ExchangeRateService,
     private readonly templateService: PayslipTemplateService,
+    private readonly employeeService: EmployeeService,
+    private readonly emailService: EmailService,
   ) {}
 
   async createRun(
@@ -88,6 +92,7 @@ export class PayrollRunService {
       periodEnd: new Date(dto.periodEnd),
       runCurrency: dto.runCurrency,
       status: PayrollRunStatus.DRAFT,
+      manualRates: dto.manualRates ?? [],
     });
 
     await this.generatePayslipsForRun(run, employees as any);
@@ -180,6 +185,8 @@ export class PayrollRunService {
     }
 
     await this.payslipModel.deleteMany({ payrollRunId: run._id });
+    run.skippedEmployees = [];
+    await run.save();
 
     const employeeQuery: any = {
       tenantId: run.tenantId,
@@ -222,13 +229,18 @@ export class PayrollRunService {
     return run;
   }
 
-  async markPaid(tenantId: string, runId: string): Promise<PayrollRunDocument> {
+  async markPaid(
+    tenantId: string,
+    runId: string,
+    markedBy: string,
+  ): Promise<PayrollRunDocument> {
     const run = await this.getRunOrThrow(tenantId, runId);
     if (run.status !== PayrollRunStatus.PROCESSED) {
       throw new ConflictException('Only processed runs can be marked as paid.');
     }
     run.status = PayrollRunStatus.PAID;
     run.paidAt = new Date();
+    run.paidBy = new Types.ObjectId(markedBy);
     await run.save();
     return run;
   }
@@ -246,12 +258,21 @@ export class PayrollRunService {
     return this.runModel
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .populate('locationId', 'name country')
+      .populate('processedBy', 'firstName lastName email')
+      .populate('paidBy', 'firstName lastName email')
       .sort({ periodStart: -1 })
       .lean() as any;
   }
 
   async getRunDetail(tenantId: string, runId: string) {
-    const run = await this.getRunOrThrow(tenantId, runId);
+    const run = await this.runModel
+      .findOne({ _id: runId, tenantId: new Types.ObjectId(tenantId) })
+      .populate('locationId', 'name country')
+      .populate('processedBy', 'firstName lastName email')
+      .populate('paidBy', 'firstName lastName email');
+
+    if (!run) throw new NotFoundException('Payroll run not found');
+
     const payslips = await this.payslipModel
       .find({ payrollRunId: run._id })
       .sort({ employeeName: 1 })
@@ -298,6 +319,75 @@ export class PayrollRunService {
     return buildPayslipHtml(slip, template);
   }
 
+  async emailPayslipToEmployee(
+    tenantId: string,
+    payslipId: string,
+  ): Promise<{ sentTo: string; sentAt: string }> {
+    const slip = await this.payslipModel.findOne({
+      _id: payslipId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!slip) throw new NotFoundException('Payslip not found');
+
+    const employee = await this.employeeService.getEmployeeById(
+      slip.employeeId.toString(),
+      tenantId,
+    );
+    if (!employee?.email) {
+      throw new BadRequestException(
+        'This employee has no email address on file.',
+      );
+    }
+
+    const template = await this.templateService.getOrCreateTemplate(tenantId);
+    const payslipHtml = buildPayslipHtml(slip, template);
+
+    await this.emailService.sendPayslip({
+      to: employee.email,
+      employeeName: slip.employeeName,
+      periodLabel: slip.periodLabel,
+      payslipHtml,
+    });
+
+    const sentAt = new Date();
+    slip.emailedAt = sentAt;
+    slip.emailSendCount = (slip.emailSendCount ?? 0) + 1;
+    await slip.save();
+
+    return { sentTo: employee.email, sentAt: sentAt.toISOString() };
+  }
+
+  async emailAllPayslipsInRun(
+    tenantId: string,
+    runId: string,
+  ): Promise<{
+    sent: number;
+    failed: { employeeName: string; reason: string }[];
+  }> {
+    const run = await this.getRunOrThrow(tenantId, runId);
+    const payslips = await this.payslipModel.find({ payrollRunId: run._id });
+
+    let sent = 0;
+    const failed: { employeeName: string; reason: string }[] = [];
+
+    for (const slip of payslips) {
+      try {
+        await this.emailPayslipToEmployee(
+          tenantId,
+          (slip._id as any).toString(),
+        );
+        sent++;
+      } catch (err: any) {
+        failed.push({
+          employeeName: slip.employeeName,
+          reason: err?.message ?? 'Unknown error',
+        });
+      }
+    }
+
+    return { sent, failed };
+  }
+
   private async getRunOrThrow(
     tenantId: string,
     runId: string,
@@ -314,12 +404,28 @@ export class PayrollRunService {
     run: PayrollRunDocument,
     employees: EmployeeDocument[],
   ): Promise<void> {
+    const skipped: {
+      employeeId: Types.ObjectId;
+      employeeName: string;
+      reason: string;
+    }[] = [];
+
     for (const employee of employees) {
       try {
         await this.generatePayslipForEmployee(run, employee);
       } catch (err) {
-        continue;
+        skipped.push({
+          employeeId: employee._id as Types.ObjectId,
+          employeeName: `${employee.firstName} ${employee.lastName}`,
+          reason: err?.message ?? 'Unknown error during calculation.',
+        });
       }
+    }
+
+    if (skipped.length > 0) {
+      await this.runModel.findByIdAndUpdate(run._id, {
+        $set: { skippedEmployees: skipped },
+      });
     }
   }
 
@@ -349,13 +455,31 @@ export class PayrollRunService {
     const sourceCurrency = employee.salaryCurrency ?? policy.currency;
 
     if (sourceCurrency !== run.runCurrency) {
-      const { rate, fetchedAt } = await this.fxService.getRate(
-        sourceCurrency,
-        run.runCurrency,
+      const manualRate = (run.manualRates ?? []).find(
+        (r) => r.fromCurrency === sourceCurrency,
       );
-      exchangeRateApplied = rate;
-      exchangeRateDate = fetchedAt;
-      basicSalary = basicSalary * rate;
+
+      if (manualRate) {
+        // Tenant explicitly locked this rate for this run — use it
+        // as-is, no API call. This is the default/expected path,
+        // matching how payroll is run in practice today (one fixed
+        // rate set manually per period, e.g. "$1 = 1,455 RWF").
+        exchangeRateApplied = manualRate.rate;
+        exchangeRateDate = run.createdAt ?? new Date();
+        basicSalary = basicSalary * manualRate.rate;
+      } else {
+        // No manual rate was set for this currency pair — fall back
+        // to the live API as a convenience, but this should be the
+        // exception, not the default. The frontend should encourage
+        // tenants to set a rate explicitly before processing a run.
+        const { rate, fetchedAt } = await this.fxService.getRate(
+          sourceCurrency,
+          run.runCurrency,
+        );
+        exchangeRateApplied = rate;
+        exchangeRateDate = fetchedAt;
+        basicSalary = basicSalary * rate;
+      }
     }
 
     const allowanceTypeMap = new Map(
