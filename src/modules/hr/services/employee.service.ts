@@ -32,6 +32,7 @@ import {
 } from '../../../common/interfaces/user-role.enum';
 import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
+import { OffboardingService } from './offboarding.service';
 
 @Injectable()
 export class EmployeeService {
@@ -44,6 +45,7 @@ export class EmployeeService {
     private readonly teamModel: Model<HrTeamDocument>,
     @InjectModel(HrLocation.name)
     private readonly locationModel: Model<HrLocationDocument>,
+    private readonly offboardingService: OffboardingService,
     private readonly mailService: EmailService,
   ) {}
 
@@ -507,8 +509,8 @@ export class EmployeeService {
   }
 
   async terminateEmployee(
-    employeeId: string,
     tenantId: string,
+    employeeId: string,
     dto: TerminateEmployeeDto,
   ): Promise<EmployeeDocument> {
     const employee = await this.employeeModel.findOne({
@@ -517,37 +519,27 @@ export class EmployeeService {
     });
     if (!employee) throw new NotFoundException('Employee not found');
 
-    if (
-      employee.employmentStatus === EmploymentStatus.TERMINATED ||
-      employee.employmentStatus === EmploymentStatus.RESIGNED
-    ) {
+    employee.employmentStatus = dto.status as any;
+    employee.endDate = new Date(dto.endDate);
+    await employee.save();
+
+    if (dto.status !== 'terminated' && dto.status !== 'resigned') {
       throw new BadRequestException(
-        'Employee is already terminated or resigned',
+        'Offboarding can only be triggered for a "terminated" or "resigned" status.',
       );
     }
 
-    const updated = await this.employeeModel
-      .findByIdAndUpdate(
-        employeeId,
-        {
-          $set: {
-            employmentStatus: dto.status,
-            endDate: new Date(dto.endDate),
-            'metadata.terminationReason': dto.reason,
-            'metadata.terminatedAt': new Date(),
-          },
-        },
-        { new: true },
-      )
-      .lean();
+    await this.offboardingService.createFromTermination({
+      tenantId,
+      employeeId: (employee._id as any).toString(),
+      employeeName: `${employee.firstName} ${employee.lastName}`,
+      jobTitle: employee.jobTitle,
+      endDate: new Date(dto.endDate),
+      reason: dto.reason ?? null,
+      status: dto.status,
+    });
 
-    if (employee.userId) {
-      await this.userModel.findByIdAndUpdate(employee.userId, {
-        status: AccountStatus.INACTIVE,
-      });
-    }
-
-    return updated as EmployeeDocument;
+    return employee;
   }
 
   // ═══════════════════════════════════════════════════════════

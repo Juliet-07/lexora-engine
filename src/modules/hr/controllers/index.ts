@@ -2,3 +2,6 @@ export * from './employee.controller';
 export * from './employee-onboarding.controller';
 export * from './hr.controller';
 export * from './payroll-tenant.controller';
+export * from './performance-tenant.controller';
+export * from './recruitment-tenant.controller';
+export * from './requisition-tenant.controller';

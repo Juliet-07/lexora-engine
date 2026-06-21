@@ -27,13 +27,18 @@ import {
   LeaveService,
   OnboardingService,
   PayrollRunService,
+  PerformanceReviewService,
+  RequisitionService,
+  RequisitionTypeService,
 } from '../services';
 import {
   CompleteOnboardingDto,
   CreateLeaveRequestDto,
+  CreateRequisitionDto,
   SaveOnboardingMedicalDto,
   SaveOnboardingPersonalDto,
   SaveOnboardingReferencesDto,
+  UpdateEmployeeReviewSectionDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -96,6 +101,9 @@ export class HrEmployeeController {
     private readonly attendanceService: AttendanceService,
     private readonly onboardingService: OnboardingService,
     private readonly payrollRunService: PayrollRunService,
+    private readonly performanceReviewService: PerformanceReviewService,
+    private readonly requisitionService: RequisitionService,
+    private readonly requisitionTypeService: RequisitionTypeService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -356,6 +364,124 @@ export class HrEmployeeController {
     return this.payrollRunService.renderPayslipHtml(
       (employee as any).tenantId.toString(),
       slip,
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // PERFORMANCE — static routes BEFORE any future /:id
+  // ═══════════════════════════════════════════════════════════
+  @Get('performance/reviews')
+  @ApiOperation({ summary: 'Get my performance review history' })
+  async getMyReviews(@CurrentUser('sub') userId: string) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.performanceReviewService.getMyReviews(
+      (employee as any)._id.toString(),
+    );
+  }
+
+  @Get('performance/reviews/:reviewId')
+  @ApiOperation({
+    summary: 'Get one of my performance reviews, with live-computed scores',
+  })
+  async getMyReviewById(
+    @Param('reviewId') reviewId: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    const review = await this.performanceReviewService.getReviewForEmployee(
+      reviewId,
+      (employee as any)._id.toString(),
+    );
+    return {
+      review,
+      scores: this.performanceReviewService.getScoredView(review),
+    };
+  }
+
+  @Patch('performance/reviews/:reviewId')
+  @ApiOperation({
+    summary:
+      'Update my self-assessment section (only while employee_in_progress)',
+  })
+  async updateMyReviewSection(
+    @Param('reviewId') reviewId: string,
+    @Body() dto: UpdateEmployeeReviewSectionDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.performanceReviewService.updateEmployeeSection(
+      reviewId,
+      (employee as any)._id.toString(),
+      dto,
+    );
+  }
+
+  @Post('performance/reviews/:reviewId/submit')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Submit my self-assessment — locks my section and notifies my manager',
+  })
+  async submitMyReview(
+    @Param('reviewId') reviewId: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.performanceReviewService.submitEmployeeSection(
+      reviewId,
+      (employee as any)._id.toString(),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // REQUISITION — static routes BEFORE any future /:id
+  // ═══════════════════════════════════════════════════════════
+
+  @Get('requisitions/types')
+  @ApiOperation({
+    summary: 'Get the list of requisition types available to submit',
+  })
+  async getRequisitionTypes(@CurrentUser('sub') userId: string) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.requisitionTypeService.getOrCreate(
+      (employee as any).tenantId.toString(),
+    );
+  }
+
+  @Get('requisitions')
+  @ApiOperation({ summary: 'Get my requisition history' })
+  async getMyRequisitions(@CurrentUser('sub') userId: string) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.requisitionService.getMyRequisitions(
+      (employee as any)._id.toString(),
+    );
+  }
+
+  @Get('requisitions/:requisitionId')
+  @ApiOperation({ summary: 'Get one of my requisitions' })
+  async getMyRequisitionById(
+    @Param('requisitionId') requisitionId: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.requisitionService.getOneForEmployee(
+      requisitionId,
+      (employee as any)._id.toString(),
+    );
+  }
+
+  @Post('requisitions')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Submit a new requisition request' })
+  async createRequisition(
+    @Body() dto: CreateRequisitionDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.requisitionService.createForEmployee(
+      (employee as any).tenantId.toString(),
+      (employee as any)._id.toString(),
+      dto,
     );
   }
 }
