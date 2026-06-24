@@ -74,7 +74,6 @@ export class AttendanceService {
 
     return this.attendanceModel.create({
       employeeId: employee._id,
-      // teamId: employee.teamId,
       tenantId: employee.tenantId,
       date: today,
       clockIn: now,
@@ -223,34 +222,28 @@ export class AttendanceService {
 
     const tId = new Types.ObjectId(tenantId);
 
-    // ── Attendance records for today ──────────────────────
+    // EmployeeAttendance has no teamId of its own (it only
+    // references employeeId) — filtering by team/location happens
+    // on the EMPLOYEE side, then attendance records are narrowed to
+    // just those employee IDs.
     const matchAtt: any = {
       tenantId: tId,
       date: { $gte: today, $lt: tomorrow },
     };
-    if (teamId) matchAtt.clientId = new Types.ObjectId(teamId);
 
-    // ── All active employees for this tenant ──────────────
     const matchEmp: any = {
       tenantId: tId,
-      employmentStatus: 'active',
+      employmentStatus: { $nin: ['terminanted', 'resigned'] },
     };
     if (teamId) matchEmp.teamId = new Types.ObjectId(teamId);
     if (locationId) matchEmp.locationId = new Types.ObjectId(locationId);
 
-    const [todayRecords, allEmployees, onLeaveIds] = await Promise.all([
-      this.attendanceModel
-        .find(matchAtt)
-        .populate(
-          'employeeId',
-          'firstName lastName jobTitle department clientId',
-        )
-        .lean(),
+    const [allEmployees, onLeaveIds] = await Promise.all([
       this.employeeModel
         .find(matchEmp)
-        .select('_id firstName lastName jobTitle department clientId')
+        .select('_id firstName lastName jobTitle teamId')
+        .populate('teamId', 'name')
         .lean(),
-      // Employees on approved leave today
       this.leaveModel
         .find({
           tenantId: tId,
@@ -262,33 +255,31 @@ export class AttendanceService {
         .lean(),
     ]);
 
+    const filteredEmployeeIds = allEmployees.map((e) => e._id);
+    const todayRecords = await this.attendanceModel
+      .find({ ...matchAtt, employeeId: { $in: filteredEmployeeIds } })
+      .lean();
+
     const onLeaveSet = new Set(
       onLeaveIds.map((r) => (r as any).employeeId.toString()),
     );
 
-    const clockedInIds = new Set(
-      todayRecords.map(
-        (r: any) =>
-          (r.employeeId as any)?._id?.toString() ?? r.employeeId.toString(),
-      ),
+    const recordByEmployeeId = new Map(
+      todayRecords.map((r) => [r.employeeId.toString(), r]),
     );
 
-    // Build full log — merge attendance records with employee list
     const log = allEmployees.map((emp) => {
       const empId = (emp._id as any).toString();
-      const record = todayRecords.find(
-        (r: any) =>
-          ((r.employeeId as any)?._id?.toString() ??
-            r.employeeId.toString()) === empId,
-      );
+      const record = recordByEmployeeId.get(empId);
+      const teamName = (emp.teamId as any)?.name ?? null;
 
       if (record) {
         return {
           employeeId: empId,
-          firstName: (record.employeeId as any)?.firstName ?? emp.firstName,
-          lastName: (record.employeeId as any)?.lastName ?? emp.lastName,
-          jobTitle: (record.employeeId as any)?.jobTitle ?? emp.jobTitle,
-          tean: emp.teamId,
+          firstName: emp.firstName,
+          lastName: emp.lastName,
+          jobTitle: emp.jobTitle,
+          team: teamName,
           clockIn: record.clockIn,
           clockOut: record.clockOut,
           hoursWorked: record.hoursWorked,
@@ -299,7 +290,6 @@ export class AttendanceService {
         };
       }
 
-      // Not clocked in — check if on leave
       const status = onLeaveSet.has(empId)
         ? EmployeeAttendanceStatus.ON_LEAVE
         : EmployeeAttendanceStatus.ABSENT;
@@ -309,7 +299,7 @@ export class AttendanceService {
         firstName: emp.firstName,
         lastName: emp.lastName,
         jobTitle: emp.jobTitle,
-        team: emp.teamId,
+        team: teamName,
         clockIn: null,
         clockOut: null,
         hoursWorked: 0,
@@ -320,17 +310,16 @@ export class AttendanceService {
       };
     });
 
-    // ── Stats ─────────────────────────────────────────────
     const present = log.filter((r) => r.status === 'present').length;
     const late = log.filter((r) => r.status === 'late').length;
     const remote = log.filter((r) => r.status === 'remote').length;
     const absent = log.filter((r) => r.status === 'absent').length;
     const onLeave = log.filter((r) => r.status === 'on_leave').length;
+    const clockedInCount = present + late + remote;
     const avgHours =
-      log.filter((r) => r.hoursWorked && r.hoursWorked > 0).length > 0
+      clockedInCount > 0
         ? +(
-            log.reduce((s, r) => s + (r.hoursWorked ?? 0), 0) /
-            Math.max(1, present + late + remote)
+            log.reduce((s, r) => s + (r.hoursWorked ?? 0), 0) / clockedInCount
           ).toFixed(1)
         : 0;
 
@@ -349,49 +338,58 @@ export class AttendanceService {
     };
   }
 
-  async getWeeklyTrends(tenantId: string, clientId?: string) {
+  async getWeeklyTrends(tenantId: string, teamId?: string) {
     const weekStart = this.startOfWeek(new Date());
     const tId = new Types.ObjectId(tenantId);
+
+    let employeeIdFilter: Types.ObjectId[] | undefined;
+    if (teamId) {
+      const teamEmployees = await this.employeeModel
+        .find({ tenantId: tId, teamId: new Types.ObjectId(teamId) })
+        .select('_id')
+        .lean();
+      employeeIdFilter = teamEmployees.map((e) => e._id as Types.ObjectId);
+    }
 
     const match: any = {
       tenantId: tId,
       date: { $gte: weekStart },
     };
-    if (clientId) match.clientId = new Types.ObjectId(clientId);
+    if (employeeIdFilter) match.employeeId = { $in: employeeIdFilter };
 
-    const records = await this.attendanceModel
-      .find(match)
-      .populate('employeeId', 'firstName lastName')
-      .lean();
+    const records = await this.attendanceModel.find(match).lean();
 
-    // Group by date
     const byDay: Record<
       string,
       {
         present: number;
         late: number;
         remote: number;
-        avgHours: number;
+        totalHours: number;
         total: number;
       }
     > = {};
 
     for (const r of records) {
       const d = new Date(r.date).toISOString().slice(0, 10);
-      if (!byDay[d])
-        byDay[d] = { present: 0, late: 0, remote: 0, avgHours: 0, total: 0 };
+      if (!byDay[d]) {
+        byDay[d] = { present: 0, late: 0, remote: 0, totalHours: 0, total: 0 };
+      }
       byDay[d].total++;
       if (r.status === 'present') byDay[d].present++;
       if (r.status === 'late') byDay[d].late++;
       if (r.status === 'remote') byDay[d].remote++;
-      byDay[d].avgHours = +(byDay[d].avgHours + (r.hoursWorked ?? 0));
+      byDay[d].totalHours += r.hoursWorked ?? 0;
     }
 
     return Object.entries(byDay)
       .map(([date, v]) => ({
         date,
-        ...v,
-        avgHours: v.total > 0 ? +(v.avgHours / v.total).toFixed(1) : 0,
+        present: v.present,
+        late: v.late,
+        remote: v.remote,
+        total: v.total,
+        avgHours: v.total > 0 ? +(v.totalHours / v.total).toFixed(1) : 0,
       }))
       .sort((a, b) => a.date.localeCompare(b.date));
   }

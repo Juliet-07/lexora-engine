@@ -9,14 +9,24 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  UploadedFile,
+  UseInterceptors,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
   ApiQuery,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
-import { AttendanceService, EmployeeService, LeaveService } from '../services';
+import {
+  AttendanceService,
+  EmployeeService,
+  LeaveService,
+  EmployeeDocumentService,
+} from '../services';
 import {
   CreateEmployeeDto,
   UpdateEmployeeDto,
@@ -25,10 +35,61 @@ import {
   UpsertLeavePolicyDto,
   LeaveFilterDto,
   ReviewLeaveRequestDto,
+  UploadEmployeeDocumentDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
 import { PaginationDto } from '../../../common/pagination.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { extname, join } from 'path';
+import { existsSync, mkdirSync } from 'fs';
+import { diskStorage } from 'multer';
+import { v4 as uuidv4 } from 'uuid';
+
+// ── Document storage — SAME folder as the employee self-service
+// controller's employeeDocumentStorage ('uploads/employee/documents'),
+// since both upload entry points write into the SAME logical
+// document collection. Same inline-config pattern used throughout
+// this codebase — no shared/centralized multer config file exists. ──
+
+const employeeDocumentStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(process.cwd(), 'uploads', 'employee', 'documents');
+    if (!existsSync(uploadPath)) {
+      mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) => {
+    const ext = extname(file.originalname);
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
+
+const employeeDocumentFileFilter = (
+  _req: any,
+  file: Express.Multer.File,
+  cb: any,
+) => {
+  const allowed = [
+    'application/pdf',
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(
+      new BadRequestException(
+        'Only PDF, Word, JPG, or PNG files are accepted.',
+      ),
+      false,
+    );
+  }
+};
 
 @ApiTags('HR')
 @ApiBearerAuth('bearerAuth')
@@ -39,6 +100,7 @@ export class HrTenantController {
     private readonly employeeService: EmployeeService,
     private readonly leaveService: LeaveService,
     private readonly attendanceService: AttendanceService,
+    private readonly documentService: EmployeeDocumentService,
   ) {}
 
   // ── Stats ──────────────────────────────────────────────────
@@ -51,7 +113,6 @@ export class HrTenantController {
 
   // ═══════════════════════════════════════════════════════════
   // TEAMS (DEPARTMENTS)
-  // Static routes before /:id
   // ═══════════════════════════════════════════════════════════
 
   @Get('teams')
@@ -249,16 +310,72 @@ export class HrTenantController {
     return this.employeeService.terminateEmployee(id, t || u, dto);
   }
 
-  // @Get('consultants')
-  // @ApiOperation({ summary: 'List all employees classified as consultants' })
-  // getConsultants(
-  //   @CurrentUser('sub') u: string,
-  //   @CurrentUser('tenantId') t: string,
-  // ) {
-  //   return this.employeeService.getAll(t || u, {
-  //     workerCategory: 'consultant',
-  //   });
-  // }
+  // ═══════════════════════════════════════════════════════════
+  // EMPLOYEE DOCUMENTS — tenant view/manage on a SPECIFIC
+  // employee's file. ':id/documents' shares the same :id param
+  // depth as ':id/detail' / ':id/terminate' above — no new
+  // route-ordering concern, NestJS distinguishes these by their
+  // trailing literal segment regardless of declaration order.
+  // ═══════════════════════════════════════════════════════════
+
+  @Get('employees/:id/documents')
+  @ApiOperation({ summary: "Get an employee's uploaded documents" })
+  getEmployeeDocuments(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.documentService.getForEmployee(t || u, id);
+  }
+
+  @Post('employees/:id/documents')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: employeeDocumentStorage,
+      fileFilter: employeeDocumentFileFilter,
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        label: {
+          type: 'string',
+          description: 'Optional free-text label, e.g. "Passport copy"',
+        },
+      },
+    },
+  })
+  @ApiOperation({
+    summary: 'Upload a document onto an employee file, as the tenant',
+  })
+  uploadEmployeeDocument(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() dto: UploadEmployeeDocumentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.documentService.uploadAsTenant(t || u, id, u, file, dto.label);
+  }
+
+  @Delete('employees/documents/:documentId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete an employee document' })
+  async deleteEmployeeDocument(
+    @Param('documentId') documentId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    await this.documentService.deleteAsTenant(t || u, documentId);
+    return { success: true };
+  }
+
   // ═══════════════════════════════════════════════════════════
   // LEAVE
   // ═══════════════════════════════════════════════════════════

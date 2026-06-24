@@ -227,3 +227,15 @@ export class CompleteOnboardingDto {
   @IsString({ each: true })
   acknowledgedDocumentIds: string[];
 }
+
+// ═══════════════════════════════════════════════════════════════
+// EMPLOYEE DOCUMENTS - SELF UPLOAD/TENANT UPLOAD DTO
+// ═══════════════════════════════════════════════════════════════
+export class UploadEmployeeDocumentDto {
+  @ApiPropertyOptional({
+    description: 'Optional free-text label, e.g. "Passport copy"',
+  })
+  @IsOptional()
+  @IsString()
+  label?: string;
+}

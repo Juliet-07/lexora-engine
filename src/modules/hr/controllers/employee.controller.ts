@@ -30,6 +30,7 @@ import {
   PerformanceReviewService,
   RequisitionService,
   RequisitionTypeService,
+  EmployeeDocumentService,
 } from '../services';
 import {
   CompleteOnboardingDto,
@@ -39,6 +40,7 @@ import {
   SaveOnboardingPersonalDto,
   SaveOnboardingReferencesDto,
   UpdateEmployeeReviewSectionDto,
+  UploadEmployeeDocumentDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -51,8 +53,6 @@ import { v4 as uuidv4 } from 'uuid';
 // ═══════════════════════════════════════════════════════════════
 // EMPLOYEE SELF-SERVICE CONTROLLER
 // Routes: /employee/*
-// UserType: EMPLOYEE only — these are the people the tenant created
-// via HR → Employees. They log into the same tenant app, scoped view.
 // ═══════════════════════════════════════════════════════════════
 
 const certificateStorage = diskStorage({
@@ -90,6 +90,53 @@ const certificateFileFilter = (
   }
 };
 
+// ── Document storage — SAME exact pattern as certificateStorage
+// above, just a different destination folder and a slightly wider
+// allow-list (general employee documents like bank letters or ID
+// scans are less constrained than onboarding certificates). There
+// is no shared/centralized multer config file in this codebase —
+// every upload type defines its own storage config inline at
+// module scope, exactly like this. ──
+
+const employeeDocumentStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(process.cwd(), 'uploads', 'employee', 'documents');
+    if (!existsSync(uploadPath)) {
+      mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) => {
+    const ext = extname(file.originalname);
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
+
+const employeeDocumentFileFilter = (
+  _req: any,
+  file: Express.Multer.File,
+  cb: any,
+) => {
+  const allowed = [
+    'application/pdf',
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(
+      new BadRequestException(
+        'Only PDF, Word, JPG, or PNG files are accepted.',
+      ),
+      false,
+    );
+  }
+};
+
 @ApiTags('Employee Self-Service')
 @ApiBearerAuth('bearerAuth')
 @UserTypes(UserType.EMPLOYEE)
@@ -104,10 +151,11 @@ export class HrEmployeeController {
     private readonly performanceReviewService: PerformanceReviewService,
     private readonly requisitionService: RequisitionService,
     private readonly requisitionTypeService: RequisitionTypeService,
+    private readonly documentService: EmployeeDocumentService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
-  // ONBOARDING — mandatory flow, checked right after login
+  // ONBOARDING
   // ═══════════════════════════════════════════════════════════
 
   @Get('onboarding/status')
@@ -246,7 +294,77 @@ export class HrEmployeeController {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // LEAVE — static routes BEFORE /:id
+  // MY DOCUMENTS — placed right after Profile since upload is
+  // reachable from the "updating my profile" flow specifically.
+  // Static routes, no :id collision risk with anything else here.
+  // ═══════════════════════════════════════════════════════════
+
+  @Get('documents')
+  @ApiOperation({ summary: 'Get my uploaded documents' })
+  async getMyDocuments(@CurrentUser('sub') userId: string) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.documentService.getMyDocuments(
+      (employee as any).tenantId.toString(),
+      (employee as any)._id.toString(),
+    );
+  }
+
+  @Post('documents')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: employeeDocumentStorage,
+      fileFilter: employeeDocumentFileFilter,
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        label: {
+          type: 'string',
+          description: 'Optional free-text label, e.g. "Passport copy"',
+        },
+      },
+    },
+  })
+  @ApiOperation({ summary: 'Upload a document to my own employee file' })
+  async uploadMyDocument(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() dto: UploadEmployeeDocumentDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.documentService.uploadAsEmployee(
+      (employee as any).tenantId.toString(),
+      (employee as any)._id.toString(),
+      userId,
+      file,
+      dto.label,
+    );
+  }
+
+  @Delete('documents/:documentId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete a document I uploaded myself' })
+  async deleteMyDocument(
+    @Param('documentId') documentId: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    await this.documentService.deleteAsEmployee(
+      (employee as any)._id.toString(),
+      documentId,
+    );
+    return { success: true };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // LEAVE
   // ═══════════════════════════════════════════════════════════
 
   @Get('leave/balance')
@@ -279,7 +397,7 @@ export class HrEmployeeController {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // ATTENDANCE — static routes BEFORE any future /:id
+  // ATTENDANCE
   // ═══════════════════════════════════════════════════════════
 
   @Get('attendance/active')
@@ -368,7 +486,7 @@ export class HrEmployeeController {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // PERFORMANCE — static routes BEFORE any future /:id
+  // PERFORMANCE
   // ═══════════════════════════════════════════════════════════
   @Get('performance/reviews')
   @ApiOperation({ summary: 'Get my performance review history' })
@@ -434,7 +552,7 @@ export class HrEmployeeController {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // REQUISITION — static routes BEFORE any future /:id
+  // REQUISITION
   // ═══════════════════════════════════════════════════════════
 
   @Get('requisitions/types')

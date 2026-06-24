@@ -31,6 +31,7 @@ import {
   ContractTemplateService,
   ContractService,
   ContractPdfService,
+  EmployeeDocumentService,
 } from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailService } from '../../common/utils/mailing/email.service';
@@ -106,6 +107,8 @@ import {
   ContractTemplateSchema,
   ContractSchema,
   SigningTokenSchema,
+  EmployeeDocumentFile,
+  EmployeeDocumentFileSchema,
 } from './schemas';
 
 @Module({
@@ -139,6 +142,7 @@ import {
       { name: ContractTemplate.name, schema: ContractTemplateSchema },
       { name: Contract.name, schema: ContractSchema },
       { name: SigningToken.name, schema: SigningTokenSchema },
+      { name: EmployeeDocumentFile.name, schema: EmployeeDocumentFileSchema },
     ]),
   ],
   controllers: [
@@ -188,6 +192,7 @@ import {
     ContractTemplateService,
     ContractService,
     ContractPdfService,
+    EmployeeDocumentService,
   ],
   exports: [
     EmployeeService,
