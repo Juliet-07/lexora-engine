@@ -12,6 +12,11 @@ export enum EmploymentType {
   CONSULTANT = 'consultant',
 }
 
+export enum WorkerCategory {
+  EMPLOYEE = 'employee',
+  CONSULTANT = 'consultant',
+}
+
 export enum EmploymentStatus {
   ACTIVE = 'active',
   ON_LEAVE = 'on_leave',
@@ -109,6 +114,9 @@ export class Employee {
 
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   userId: Types.ObjectId | null;
+
+  @Prop({ enum: WorkerCategory, default: WorkerCategory.EMPLOYEE, index: true })
+  workerCategory: WorkerCategory;
 
   // ── Personal Info ──────────────────────────────────────────
   @Prop({ required: true, trim: true })

@@ -11,12 +11,30 @@ import {
   UpdateCandidateDto,
   MoveCandidateStageDto,
 } from '../dtos';
+import { EmailService } from 'src/common/utils/mailing/email.service';
+
+const EMPLOYEE_STAGES: CandidateStage[] = [
+  CandidateStage.SOURCED,
+  CandidateStage.SCREENING,
+  CandidateStage.INTERVIEW,
+  CandidateStage.OFFER,
+  CandidateStage.HIRED,
+  CandidateStage.REJECTED,
+];
+
+const CONSULTANT_STAGES: CandidateStage[] = [
+  CandidateStage.SOURCED,
+  CandidateStage.SCREENING,
+  CandidateStage.HIRED,
+  CandidateStage.REJECTED,
+];
 
 @Injectable()
 export class CandidateService {
   constructor(
     @InjectModel(Candidate.name)
     private readonly candidateModel: Model<CandidateDocument>,
+    private readonly emailService: EmailService,
   ) {}
 
   async getAll(tenantId: string, stage?: string): Promise<CandidateDocument[]> {
@@ -52,6 +70,7 @@ export class CandidateService {
       phone: dto.phone ?? null,
       roleAppliedFor: dto.roleAppliedFor,
       source: dto.source ?? 'other',
+      workerCategory: dto.workerCategory ?? 'employee',
       notes: dto.notes ?? null,
       stage: CandidateStage.SOURCED,
       stageHistory: [{ stage: CandidateStage.SOURCED, enteredAt: new Date() }],
@@ -76,15 +95,14 @@ export class CandidateService {
     return candidate;
   }
 
-  // Any-to-any stage transition is permitted deliberately — a real
-  // pipeline allows rejecting from any stage, or occasionally moving
-  // backward (e.g. a declined offer returning someone to interview
-  // for a different role). Records the move in stageHistory so the
-  // UI can show time-in-stage, not just the current snapshot.
+  // businessName is REQUIRED — resolved by the controller from the
+  // real tenant record (User.tenantProfile.businessName) before
+  // this is called, and threaded into the interview/hired emails.
   async moveStage(
     tenantId: string,
     candidateId: string,
     dto: MoveCandidateStageDto,
+    businessName: string,
   ): Promise<CandidateDocument> {
     const candidate = await this.getById(tenantId, candidateId);
     const newStage = dto.stage as CandidateStage;
@@ -92,6 +110,16 @@ export class CandidateService {
     if (candidate.stage === newStage) {
       throw new BadRequestException(
         `Candidate is already in the "${newStage}" stage.`,
+      );
+    }
+
+    const validStages =
+      candidate.workerCategory === 'consultant'
+        ? CONSULTANT_STAGES
+        : EMPLOYEE_STAGES;
+    if (!validStages.includes(newStage)) {
+      throw new BadRequestException(
+        `"${newStage}" is not a valid stage for a ${candidate.workerCategory}.`,
       );
     }
 
@@ -104,6 +132,37 @@ export class CandidateService {
     }
 
     await candidate.save();
+
+    try {
+      if (newStage === CandidateStage.INTERVIEW) {
+        await this.emailService.sendInterviewInvite({
+          to: candidate.email,
+          candidateName: candidate.name,
+          roleAppliedFor: candidate.roleAppliedFor,
+          businessName,
+        });
+      } else if (newStage === CandidateStage.HIRED) {
+        await this.emailService.sendHiredNotification({
+          to: candidate.email,
+          candidateName: candidate.name,
+          roleAppliedFor: candidate.roleAppliedFor,
+          workerCategory: candidate.workerCategory,
+          businessName,
+        });
+      } else if (newStage === CandidateStage.REJECTED) {
+        await this.emailService.sendRejectionNotification({
+          to: candidate.email,
+          candidateName: candidate.name,
+          roleAppliedFor: candidate.roleAppliedFor,
+        });
+      }
+    } catch (err) {
+      console.error(
+        `Failed to send stage-change email for candidate ${candidateId}:`,
+        err,
+      );
+    }
+
     return candidate;
   }
 

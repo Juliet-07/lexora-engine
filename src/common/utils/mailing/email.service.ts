@@ -84,6 +84,30 @@ import {
   PayslipEmailData,
   payslipTemplate,
 } from './templates/payslip.template';
+import {
+  InterviewInviteEmailData,
+  interviewInviteTemplate,
+} from './templates/interview-invite.template';
+import {
+  CandidateHiredEmailData,
+  candidateHiredTemplate,
+} from './templates/candidate-hired.template';
+import {
+  CandidateRejectionEmailData,
+  candidateRejectionTemplate,
+} from './templates/candidate-rejection.template';
+import {
+  ContractForSignatureEmailData,
+  contractForSignatureTemplate,
+} from './templates/contract-for-signature.template';
+import {
+  ContractSignedConfirmationEmailData,
+  contractSignedConfirmationTemplate,
+} from './templates/contract-signed-confirmation.template';
+import {
+  SignedContractCopyEmailData,
+  signedContractCopyTemplate,
+} from './templates/signed-contract-copy.template';
 
 @Injectable()
 export class EmailService {
@@ -357,6 +381,84 @@ export class EmailService {
       to: data.to,
       subject,
       html,
+    });
+  }
+
+  async sendInterviewInvite(data: InterviewInviteEmailData): Promise<void> {
+    const { subject, html } = interviewInviteTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendHiredNotification(data: CandidateHiredEmailData): Promise<void> {
+    const { subject, html } = candidateHiredTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendRejectionNotification(
+    data: CandidateRejectionEmailData,
+  ): Promise<void> {
+    const { subject, html } = candidateRejectionTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendContractForSignature(
+    data: ContractForSignatureEmailData,
+  ): Promise<void> {
+    const { subject, html } = contractForSignatureTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendContractSignedConfirmation(
+    data: ContractSignedConfirmationEmailData,
+  ): Promise<void> {
+    const { subject, html } = contractSignedConfirmationTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendSignedContractCopy(
+    data: SignedContractCopyEmailData,
+    pdfBuffer?: Buffer,
+  ): Promise<void> {
+    const { subject, html } = signedContractCopyTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+      attachments: pdfBuffer
+        ? [
+            {
+              filename: 'signed-agreement.pdf',
+              content: pdfBuffer,
+              contentType: 'application/pdf',
+            },
+          ]
+        : undefined,
     });
   }
 }

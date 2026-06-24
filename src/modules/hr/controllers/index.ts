@@ -1,3 +1,5 @@
+export * from './contract-signing.controller';
+export * from './contract-tenant.controller';
 export * from './employee.controller';
 export * from './employee-onboarding.controller';
 export * from './hr.controller';

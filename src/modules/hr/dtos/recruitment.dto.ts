@@ -24,6 +24,13 @@ export class CreateCandidateDto {
   @IsIn(['referral', 'linkedin', 'job_board', 'agency', 'website', 'other'])
   source?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+  @ApiPropertyOptional({
+    enum: ['employee', 'consultant'],
+    default: 'employee',
+  })
+  @IsOptional()
+  @IsIn(['employee', 'consultant'])
+  workerCategory?: 'employee' | 'consultant';
 }
 
 export class UpdateCandidateDto {

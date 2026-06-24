@@ -16,6 +16,8 @@ import {
   ApiOperation,
   ApiQuery,
 } from '@nestjs/swagger';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { CandidateService } from '../services/candidate.service';
 import { OffboardingService } from '../services/offboarding.service';
 import { SuccessionPlanService } from '../services/succession-plan.service';
@@ -30,13 +32,18 @@ import {
 } from '../dtos/recruitment.dto';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
+import { User, UserDocument } from '../../auth/schemas/user.schema';
+import { resolveBusinessName } from '../../../common/utils/resolve-business-name.util';
 
 @ApiTags('HR — Candidate Pipeline (Tenant)')
 @ApiBearerAuth('bearerAuth')
 @UserTypes(UserType.TENANT)
 @Controller('hr/recruitment/candidates')
 export class CandidateController {
-  constructor(private readonly candidateService: CandidateService) {}
+  constructor(
+    private readonly candidateService: CandidateService,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+  ) {}
 
   @Get()
   @ApiQuery({ name: 'stage', required: false })
@@ -98,13 +105,19 @@ export class CandidateController {
   @Patch(':candidateId/stage')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Move a candidate to a different pipeline stage' })
-  moveStage(
+  async moveStage(
     @Param('candidateId') candidateId: string,
     @Body() dto: MoveCandidateStageDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.candidateService.moveStage(t || u, candidateId, dto);
+    const businessName = await resolveBusinessName(this.userModel, t || u);
+    return this.candidateService.moveStage(
+      t || u,
+      candidateId,
+      dto,
+      businessName,
+    );
   }
 
   @Delete(':candidateId')

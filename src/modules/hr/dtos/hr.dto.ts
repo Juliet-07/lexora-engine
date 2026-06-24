@@ -8,7 +8,12 @@ import {
   IsDateString,
   Min,
 } from 'class-validator';
-import { EmploymentType, EmploymentStatus, Gender } from '../schemas';
+import {
+  EmploymentType,
+  EmploymentStatus,
+  Gender,
+  WorkerCategory,
+} from '../schemas';
 
 // ─────────────────────────────────────────────────────────────
 // EMPLOYEE DTOs
@@ -45,6 +50,11 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsString()
   locationId?: string;
+
+  @ApiPropertyOptional({ enum: WorkerCategory, default: 'employee' })
+  @IsOptional()
+  @IsEnum(WorkerCategory)
+  workerCategory?: WorkerCategory;
 
   // ── Optional personal ─────────────────────────────────────
   @ApiPropertyOptional({ example: '+250700000000' })

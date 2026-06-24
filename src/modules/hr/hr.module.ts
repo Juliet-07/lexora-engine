@@ -28,6 +28,9 @@ import {
   SuccessionPlanService,
   RequisitionTypeService,
   RequisitionService,
+  ContractTemplateService,
+  ContractService,
+  ContractPdfService,
 } from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailService } from '../../common/utils/mailing/email.service';
@@ -44,6 +47,13 @@ import {
   SuccessionPlanController,
   RequisitionController,
   RequisitionTypeController,
+  ContractTemplateController,
+  ContractController,
+  ContractSigningController,
+  FrameworkController,
+  KpiTemplateController,
+  PerformanceReviewController,
+  ReviewCycleController,
 } from './controllers';
 import {
   LeaveRequest,
@@ -90,13 +100,13 @@ import {
   Requisition,
   RequisitionTypeSchema,
   RequisitionSchema,
+  ContractTemplate,
+  Contract,
+  SigningToken,
+  ContractTemplateSchema,
+  ContractSchema,
+  SigningTokenSchema,
 } from './schemas';
-import {
-  FrameworkController,
-  KpiTemplateController,
-  PerformanceReviewController,
-  ReviewCycleController,
-} from './controllers/performance-tenant.controller';
 
 @Module({
   imports: [
@@ -126,6 +136,9 @@ import {
       { name: SuccessionPlan.name, schema: SuccessionPlanSchema },
       { name: RequisitionType.name, schema: RequisitionTypeSchema },
       { name: Requisition.name, schema: RequisitionSchema },
+      { name: ContractTemplate.name, schema: ContractTemplateSchema },
+      { name: Contract.name, schema: ContractSchema },
+      { name: SigningToken.name, schema: SigningTokenSchema },
     ]),
   ],
   controllers: [
@@ -145,6 +158,9 @@ import {
     SuccessionPlanController,
     RequisitionController,
     RequisitionTypeController,
+    ContractTemplateController,
+    ContractController,
+    ContractSigningController,
   ],
   providers: [
     EmployeeService,
@@ -169,6 +185,9 @@ import {
     SuccessionPlanService,
     RequisitionTypeService,
     RequisitionService,
+    ContractTemplateService,
+    ContractService,
+    ContractPdfService,
   ],
   exports: [
     EmployeeService,

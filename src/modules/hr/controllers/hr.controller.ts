@@ -249,6 +249,16 @@ export class HrTenantController {
     return this.employeeService.terminateEmployee(id, t || u, dto);
   }
 
+  // @Get('consultants')
+  // @ApiOperation({ summary: 'List all employees classified as consultants' })
+  // getConsultants(
+  //   @CurrentUser('sub') u: string,
+  //   @CurrentUser('tenantId') t: string,
+  // ) {
+  //   return this.employeeService.getAll(t || u, {
+  //     workerCategory: 'consultant',
+  //   });
+  // }
   // ═══════════════════════════════════════════════════════════
   // LEAVE
   // ═══════════════════════════════════════════════════════════

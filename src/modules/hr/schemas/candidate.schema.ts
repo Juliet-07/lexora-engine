@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import { WorkerCategory } from './employee.schema';
 
 export type CandidateDocument = Candidate & Document;
 
@@ -69,6 +70,9 @@ export class Candidate {
 
   @Prop({ default: null })
   resumeUrl: string | null;
+
+  @Prop({ enum: WorkerCategory, default: WorkerCategory.EMPLOYEE, index: true })
+  workerCategory: WorkerCategory;
 }
 
 export const CandidateSchema = SchemaFactory.createForClass(Candidate);

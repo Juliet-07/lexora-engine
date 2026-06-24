@@ -1,4 +1,6 @@
 export * from './candidate.schema';
+export * from './contract-template.schema';
+export * from './contract.schema';
 export * from './employee-onboarding.schema';
 export * from './employee.schema';
 export * from './hr.schema';
@@ -9,4 +11,5 @@ export * from './payroll.schema';
 export * from './performance.schema';
 export * from './framework';
 export * from './requisition.schema';
+export * from './signing-token.schema';
 export * from './succession-plan.schema';
