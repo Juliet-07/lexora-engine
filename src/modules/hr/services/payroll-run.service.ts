@@ -27,6 +27,7 @@ import { PayslipTemplateService } from './payslip-template.service';
 import { buildPayslipHtml } from 'src/common/utils/payslip-html.util';
 import { EmployeeService } from './employee.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
+import { PayslipPdfService } from './payslip-pdf.service';
 
 @Injectable()
 export class PayrollRunService {
@@ -44,6 +45,7 @@ export class PayrollRunService {
     private readonly templateService: PayslipTemplateService,
     private readonly employeeService: EmployeeService,
     private readonly emailService: EmailService,
+    private readonly pdfService: PayslipPdfService,
   ) {}
 
   async createRun(
@@ -341,13 +343,17 @@ export class PayrollRunService {
 
     const template = await this.templateService.getOrCreateTemplate(tenantId);
     const payslipHtml = buildPayslipHtml(slip, template);
+    const pdfBuffer = await this.pdfService.buildPayslipPdf(slip, template);
 
-    await this.emailService.sendPayslip({
-      to: employee.email,
-      employeeName: slip.employeeName,
-      periodLabel: slip.periodLabel,
-      payslipHtml,
-    });
+    await this.emailService.sendPayslip(
+      {
+        to: employee.email,
+        employeeName: slip.employeeName,
+        periodLabel: slip.periodLabel,
+        payslipHtml,
+      },
+      pdfBuffer,
+    );
 
     const sentAt = new Date();
     slip.emailedAt = sentAt;
@@ -357,6 +363,22 @@ export class PayrollRunService {
     return { sentTo: employee.email, sentAt: sentAt.toISOString() };
   }
 
+  async getPayslipPdf(tenantId: string, payslipId: string): Promise<Buffer> {
+    const slip = await this.getPayslip(tenantId, payslipId);
+    const template = await this.templateService.getOrCreateTemplate(tenantId);
+    return this.pdfService.buildPayslipPdf(slip, template);
+  }
+
+  async getPayslipPdfForEmployee(
+    payslipId: string,
+    employeeId: string,
+  ): Promise<Buffer> {
+    const slip = await this.getPayslipForEmployee(payslipId, employeeId);
+    const template = await this.templateService.getOrCreateTemplate(
+      slip.tenantId.toString(),
+    );
+    return this.pdfService.buildPayslipPdf(slip, template);
+  }
   async emailAllPayslipsInRun(
     tenantId: string,
     runId: string,
@@ -386,6 +408,19 @@ export class PayrollRunService {
     }
 
     return { sent, failed };
+  }
+
+  async getPayslipsForEmployee(
+    tenantId: string,
+    employeeId: string,
+  ): Promise<PayslipDocument[]> {
+    return this.payslipModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        employeeId: new Types.ObjectId(employeeId),
+      })
+      .sort({ periodStart: -1 })
+      .lean() as any;
   }
 
   private async getRunOrThrow(

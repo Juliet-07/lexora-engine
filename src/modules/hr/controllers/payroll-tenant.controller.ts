@@ -11,12 +11,16 @@ import {
   HttpStatus,
   BadRequestException,
   Res,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
 import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
   ApiQuery,
+  ApiBody,
+  ApiConsumes,
 } from '@nestjs/swagger';
 import {
   PayrollPolicyService,
@@ -30,15 +34,16 @@ import {
 import {
   UpsertPayrollPolicyDto,
   ApplyRwandaPresetDto,
-  CreateLoanDto,
-  UpdateLoanDto,
   CreatePayrollRunDto,
   UpdatePayslipTemplateDto,
   GrossUpFromNetDto,
+  DecideLoanRequestDto,
 } from '../dtos/';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
 import { Response } from 'express';
+import { memoryStorage } from 'multer';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 @ApiTags('HR — Payroll Policy (Tenant)')
 @ApiBearerAuth('bearerAuth')
@@ -156,6 +161,15 @@ export class PayrollPolicyController {
 export class EmployeeLoanController {
   constructor(private readonly loanService: EmployeeLoanService) {}
 
+  @Get('pending')
+  @ApiOperation({ summary: 'List loan requests awaiting a decision' })
+  getPending(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.loanService.getAllLoans(t || u, 'pending');
+  }
+
   @Get()
   @ApiQuery({ name: 'status', required: false })
   @ApiOperation({ summary: 'List all employee loans for this tenant' })
@@ -177,27 +191,16 @@ export class EmployeeLoanController {
     return this.loanService.getLoansForEmployee(employeeId, t || u);
   }
 
-  @Post()
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create a new loan for an employee' })
-  create(
-    @Body() dto: CreateLoanDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.loanService.createLoan(t || u, dto);
-  }
-
-  @Patch(':loanId')
+  @Patch(':loanId/decide')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Update a loan (installment amount, status, note)' })
-  update(
+  @ApiOperation({ summary: 'Approve or reject a pending loan request' })
+  decide(
     @Param('loanId') loanId: string,
-    @Body() dto: UpdateLoanDto,
+    @Body() dto: DecideLoanRequestDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.loanService.updateLoan(t || u, loanId, dto);
+    return this.loanService.decideLoanRequest(t || u, loanId, u, dto);
   }
 
   @Delete(':loanId')
@@ -363,6 +366,23 @@ export class PayrollRunController {
     return this.runService.getPayslip(t || u, payslipId);
   }
 
+  @Get('payslip/:payslipId/pdf')
+  @ApiOperation({ summary: 'Download a payslip as PDF' })
+  async downloadPayslipPdf(
+    @Param('payslipId') payslipId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.runService.getPayslipPdf(t || u, payslipId);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="payslip-${payslipId}.pdf"`,
+      'Content-Length': buffer.length,
+    });
+    res.send(buffer);
+  }
+
   @Get('payslip/:payslipId/render')
   @ApiOperation({
     summary: 'Render a payslip as branded HTML using the tenant template',
@@ -388,7 +408,33 @@ export class PayrollRunController {
   ) {
     return this.runService.emailPayslipToEmployee(t || u, payslipId);
   }
+
+  @Get('employee/:employeeId/payslips')
+  @ApiOperation({ summary: "Get an employee's payslip history (tenant view)" })
+  getEmployeePayslips(
+    @Param('employeeId') employeeId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.runService.getPayslipsForEmployee(t || u, employeeId);
+  }
 }
+
+const logoUploadConfig = {
+  storage: memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+  fileFilter: (_req: any, file: Express.Multer.File, cb: any) => {
+    const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml'];
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(
+        new BadRequestException('Only PNG, JPG, or SVG logos are accepted.'),
+        false,
+      );
+    }
+  },
+};
 
 @ApiTags('HR — Payslip Template (Tenant)')
 @ApiBearerAuth('bearerAuth')
@@ -412,5 +458,28 @@ export class PayslipTemplateController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.templateService.updateTemplate(t || u, dto);
+  }
+
+  @Post('logo')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(FileInterceptor('file', logoUploadConfig))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOperation({ summary: "Upload the tenant's payslip logo" })
+  async uploadLogo(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const dataUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+    return this.templateService.updateTemplate(t || u, {
+      logoUrl: dataUrl,
+    } as any);
   }
 }

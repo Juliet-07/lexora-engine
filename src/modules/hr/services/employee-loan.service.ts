@@ -2,11 +2,17 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { EmployeeLoan, EmployeeLoanDocument, LoanStatus } from '../schemas';
-import { CreateLoanDto, UpdateLoanDto } from '../dtos';
+import {
+  EmployeeLoan,
+  EmployeeLoanDocument,
+  LoanStatus,
+  LoanCreatedBy,
+} from '../schemas';
+import { RequestLoanDto, DecideLoanRequestDto } from '../dtos';
 
 @Injectable()
 export class EmployeeLoanService {
@@ -14,30 +20,6 @@ export class EmployeeLoanService {
     @InjectModel(EmployeeLoan.name)
     private readonly loanModel: Model<EmployeeLoanDocument>,
   ) {}
-
-  async createLoan(
-    tenantId: string,
-    dto: CreateLoanDto,
-  ): Promise<EmployeeLoanDocument> {
-    if (dto.monthlyInstallment > dto.principalAmount) {
-      throw new BadRequestException(
-        'Monthly installment cannot exceed the principal amount.',
-      );
-    }
-
-    return this.loanModel.create({
-      employeeId: new Types.ObjectId(dto.employeeId),
-      tenantId: new Types.ObjectId(tenantId),
-      label: dto.label,
-      principalAmount: dto.principalAmount,
-      currency: dto.currency,
-      monthlyInstallment: dto.monthlyInstallment,
-      outstandingBalance: dto.principalAmount,
-      startDate: dto.startDate ? new Date(dto.startDate) : new Date(),
-      note: dto.note ?? null,
-      status: LoanStatus.ACTIVE,
-    });
-  }
 
   async getLoansForEmployee(
     employeeId: string,
@@ -65,18 +47,51 @@ export class EmployeeLoanService {
       .lean() as any;
   }
 
-  async updateLoan(
+  async decideLoanRequest(
     tenantId: string,
     loanId: string,
-    dto: UpdateLoanDto,
+    decidedBy: string,
+    dto: DecideLoanRequestDto,
   ): Promise<EmployeeLoanDocument> {
-    const update: any = { ...dto };
-    const loan = await this.loanModel.findOneAndUpdate(
-      { _id: loanId, tenantId: new Types.ObjectId(tenantId) },
-      { $set: update },
-      { new: true },
-    );
-    if (!loan) throw new NotFoundException('Loan not found');
+    const loan = await this.loanModel.findOne({
+      _id: loanId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!loan) throw new NotFoundException('Loan request not found');
+
+    if (loan.status !== LoanStatus.PENDING) {
+      throw new ConflictException(
+        'This loan request has already been decided.',
+      );
+    }
+
+    if (dto.decision === 'approved') {
+      if (!dto.monthlyInstallment || dto.monthlyInstallment <= 0) {
+        throw new BadRequestException(
+          'A monthly installment amount is required to approve a loan.',
+        );
+      }
+      if (dto.monthlyInstallment > loan.principalAmount) {
+        throw new BadRequestException(
+          'Monthly installment cannot exceed the principal amount.',
+        );
+      }
+      loan.status = LoanStatus.ACTIVE;
+      loan.monthlyInstallment = dto.monthlyInstallment;
+      loan.startDate = new Date();
+    } else {
+      if (!dto.rejectionReason?.trim()) {
+        throw new BadRequestException(
+          'A reason is required when rejecting a loan request.',
+        );
+      }
+      loan.status = LoanStatus.REJECTED;
+      loan.rejectionReason = dto.rejectionReason;
+    }
+
+    loan.decidedBy = new Types.ObjectId(decidedBy);
+    loan.decidedAt = new Date();
+    await loan.save();
     return loan;
   }
 
@@ -124,5 +139,33 @@ export class EmployeeLoanService {
       }
       await loan.save();
     }
+  }
+
+  // Employee-facing request flow ──
+
+  async requestLoan(
+    tenantId: string,
+    employeeId: string,
+    dto: RequestLoanDto,
+  ): Promise<EmployeeLoanDocument> {
+    return this.loanModel.create({
+      employeeId: new Types.ObjectId(employeeId),
+      tenantId: new Types.ObjectId(tenantId),
+      label: dto.label,
+      principalAmount: dto.amountRequested,
+      currency: dto.currency ?? 'RWF',
+      monthlyInstallment: 0,
+      outstandingBalance: dto.amountRequested,
+      requestedReason: dto.reason,
+      createdBy: LoanCreatedBy.EMPLOYEE,
+      status: LoanStatus.PENDING,
+    });
+  }
+
+  async getMyLoans(employeeId: string): Promise<EmployeeLoanDocument[]> {
+    return this.loanModel
+      .find({ employeeId: new Types.ObjectId(employeeId) })
+      .sort({ createdAt: -1 })
+      .lean() as any;
   }
 }

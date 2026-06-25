@@ -304,10 +304,17 @@ export const EmployeeAttendanceSchema =
 export type EmployeeLoanDocument = EmployeeLoan & Document;
 
 export enum LoanStatus {
+  PENDING = 'pending', // employee requested, awaiting tenant decision — invisible to payroll
   ACTIVE = 'active',
+  REJECTED = 'rejected', // tenant declined the request
   PAID_OFF = 'paid_off',
   CANCELLED = 'cancelled',
   PAUSED = 'paused', // tenant can pause a deduction without cancelling the loan
+}
+
+export enum LoanCreatedBy {
+  EMPLOYEE = 'employee',
+  TENANT = 'tenant',
 }
 
 @Schema({ timestamps: true, collection: 'hr_employee_loans' })
@@ -327,7 +334,12 @@ export class EmployeeLoan {
   @Prop({ required: true })
   currency: string;
 
-  @Prop({ required: true })
+  // For a PENDING request, this starts at 0 — the employee never
+  // proposes an installment, only the tenant sets one, at approval
+  // time. getActiveLoanDeductionsForEmployee() only reads loans
+  // with status ACTIVE, so a 0 here on a pending request can never
+  // accidentally reach payroll regardless of this placeholder value.
+  @Prop({ required: true, default: 0 })
   monthlyInstallment: number;
 
   // Decremented by monthlyInstallment (or the remainder, if smaller)
@@ -344,7 +356,21 @@ export class EmployeeLoan {
   @Prop({ default: null })
   note: string | null;
 
-  // Audit trail of which payroll runs deducted from this loan
+  @Prop({ enum: LoanCreatedBy, required: true, default: LoanCreatedBy.TENANT })
+  createdBy: LoanCreatedBy;
+
+  @Prop({ default: null })
+  requestedReason: string | null;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  decidedBy: Types.ObjectId | null;
+
+  @Prop({ default: null })
+  decidedAt: Date | null;
+
+  @Prop({ default: null })
+  rejectionReason: string | null;
+
   @Prop({
     type: [
       {

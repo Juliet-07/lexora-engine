@@ -10,6 +10,7 @@ import {
   Min,
   IsDateString,
   IsMongoId,
+  IsIn,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { DeductionCalculationBase, DeductionKind } from '../schemas';
@@ -117,25 +118,44 @@ export class ApplyRwandaPresetDto {
 // EMPLOYEE LOAN
 // ═══════════════════════════════════════════════════════════════
 
-export class CreateLoanDto {
-  @ApiProperty() @IsMongoId() employeeId: string;
-  @ApiProperty() @IsString() label: string;
-  @ApiProperty() @IsNumber() @Min(1) principalAmount: number;
-  @ApiProperty() @IsString() currency: string;
-  @ApiProperty() @IsNumber() @Min(1) monthlyInstallment: number;
-  @ApiPropertyOptional() @IsOptional() @IsDateString() startDate?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() note?: string;
-}
+// export class CreateLoanDto {
+//   @ApiProperty() @IsMongoId() employeeId: string;
+//   @ApiProperty() @IsString() label: string;
+//   @ApiProperty() @IsNumber() @Min(1) principalAmount: number;
+//   @ApiProperty() @IsString() currency: string;
+//   @ApiProperty() @IsNumber() @Min(1) monthlyInstallment: number;
+//   @ApiPropertyOptional() @IsOptional() @IsDateString() startDate?: string;
+//   @ApiPropertyOptional() @IsOptional() @IsString() note?: string;
+// }
 
-export class UpdateLoanDto {
-  @ApiPropertyOptional() @IsOptional() @IsString() label?: string;
+// export class UpdateLoanDto {
+//   @ApiPropertyOptional() @IsOptional() @IsString() label?: string;
+//   @ApiPropertyOptional()
+//   @IsOptional()
+//   @IsNumber()
+//   @Min(0)
+//   monthlyInstallment?: number;
+//   @ApiPropertyOptional() @IsOptional() @IsString() status?: string;
+//   @ApiPropertyOptional() @IsOptional() @IsString() note?: string;
+// }
+
+export class DecideLoanRequestDto {
+  @ApiProperty({ enum: ['approved', 'rejected'] })
+  @IsIn(['approved', 'rejected'])
+  decision: 'approved' | 'rejected';
+
+  // Required when decision === 'rejected' — enforced in the
+  // SERVICE, not here.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  rejectionReason?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
-  @Min(0)
+  @Min(1)
   monthlyInstallment?: number;
-  @ApiPropertyOptional() @IsOptional() @IsString() status?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() note?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════

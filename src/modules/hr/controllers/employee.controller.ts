@@ -13,6 +13,7 @@ import {
   UploadedFile,
   UseInterceptors,
   BadRequestException,
+  Res,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -31,6 +32,7 @@ import {
   RequisitionService,
   RequisitionTypeService,
   EmployeeDocumentService,
+  EmployeeLoanService,
 } from '../services';
 import {
   CompleteOnboardingDto,
@@ -41,6 +43,7 @@ import {
   SaveOnboardingReferencesDto,
   UpdateEmployeeReviewSectionDto,
   UploadEmployeeDocumentDto,
+  RequestLoanDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -49,6 +52,7 @@ import { extname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { diskStorage } from 'multer';
 import { v4 as uuidv4 } from 'uuid';
+import { Response } from 'express';
 
 // ═══════════════════════════════════════════════════════════════
 // EMPLOYEE SELF-SERVICE CONTROLLER
@@ -89,14 +93,6 @@ const certificateFileFilter = (
     );
   }
 };
-
-// ── Document storage — SAME exact pattern as certificateStorage
-// above, just a different destination folder and a slightly wider
-// allow-list (general employee documents like bank letters or ID
-// scans are less constrained than onboarding certificates). There
-// is no shared/centralized multer config file in this codebase —
-// every upload type defines its own storage config inline at
-// module scope, exactly like this. ──
 
 const employeeDocumentStorage = diskStorage({
   destination: (_req, _file, cb) => {
@@ -152,6 +148,7 @@ export class HrEmployeeController {
     private readonly requisitionService: RequisitionService,
     private readonly requisitionTypeService: RequisitionTypeService,
     private readonly documentService: EmployeeDocumentService,
+    private readonly loanService: EmployeeLoanService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -294,9 +291,7 @@ export class HrEmployeeController {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // MY DOCUMENTS — placed right after Profile since upload is
-  // reachable from the "updating my profile" flow specifically.
-  // Static routes, no :id collision risk with anything else here.
+  // MY DOCUMENTS
   // ═══════════════════════════════════════════════════════════
 
   @Get('documents')
@@ -459,6 +454,10 @@ export class HrEmployeeController {
     return this.attendanceService.clockOut(userId);
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // PAYSLIPS
+  // ═══════════════════════════════════════════════════════════
+
   @Get('payslips')
   @ApiOperation({ summary: 'Get my payslip history' })
   async getMyPayslips(@CurrentUser('sub') userId: string) {
@@ -482,6 +481,53 @@ export class HrEmployeeController {
     return this.payrollRunService.renderPayslipHtml(
       (employee as any).tenantId.toString(),
       slip,
+    );
+  }
+
+  @Get('payslips/:payslipId/pdf')
+  @ApiOperation({ summary: 'Download one of my payslips as PDF' })
+  async downloadMyPayslipPdf(
+    @Param('payslipId') payslipId: string,
+    @CurrentUser('sub') userId: string,
+    @Res() res: Response,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    const buffer = await this.payrollRunService.getPayslipPdfForEmployee(
+      payslipId,
+      (employee as any)._id.toString(),
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="payslip-${payslipId}.pdf"`,
+      'Content-Length': buffer.length,
+    });
+    res.send(buffer);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // LOANS — request flow. Static routes, no :id collision risk
+  // with anything else in this controller.
+  // ═══════════════════════════════════════════════════════════
+
+  @Get('loans')
+  @ApiOperation({ summary: 'Get my loan request/history' })
+  async getMyLoans(@CurrentUser('sub') userId: string) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.loanService.getMyLoans((employee as any)._id.toString());
+  }
+
+  @Post('loans')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Request a new loan/advance' })
+  async requestLoan(
+    @Body() dto: RequestLoanDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.loanService.requestLoan(
+      (employee as any).tenantId.toString(),
+      (employee as any)._id.toString(),
+      dto,
     );
   }
 

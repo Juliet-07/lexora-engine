@@ -10,6 +10,7 @@ import {
   MinLength,
   ValidateNested,
   IsEmail,
+  Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { OnboardingDocType } from '../schemas';
@@ -59,24 +60,6 @@ export class UpdateOnboardingDocumentDto {
   @IsBoolean()
   isActive?: boolean;
 }
-
-// ── Employee: complete onboarding ──────────────────────────────
-
-// export class CompleteOnboardingDto {
-//   @ApiProperty({ example: 'Julienne Joseph' })
-//   @IsString()
-//   @MinLength(2, { message: 'Please type your full name to sign.' })
-//   signatureName: string;
-
-//   @ApiProperty({
-//     type: [String],
-//     description: 'IDs of every active onboarding document being acknowledged',
-//   })
-//   @IsArray()
-//   @ArrayMinSize(1)
-//   @IsString({ each: true })
-//   acknowledgedDocumentIds: string[];
-// }
 
 // ═══════════════════════════════════════════════════════════════
 // ONBOARDING STEPS DTO
@@ -238,4 +221,27 @@ export class UploadEmployeeDocumentDto {
   @IsOptional()
   @IsString()
   label?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EMPLOYEE LOAN REQUEST
+// ═══════════════════════════════════════════════════════════════
+export class RequestLoanDto {
+  @ApiProperty({ example: 'Salary Advance — June 2026' })
+  @IsString()
+  label: string;
+
+  @ApiProperty({ description: 'The amount the employee is asking for' })
+  @IsNumber()
+  @Min(1)
+  amountRequested: number;
+
+  @ApiPropertyOptional({ description: 'Defaults to RWF if omitted' })
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @ApiProperty({ description: 'Why the employee needs this loan' })
+  @IsString()
+  reason: string;
 }

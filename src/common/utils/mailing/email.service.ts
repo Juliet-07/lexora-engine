@@ -374,13 +374,22 @@ export class EmailService {
     });
   }
 
-  async sendPayslip(data: PayslipEmailData): Promise<void> {
+  async sendPayslip(data: PayslipEmailData, pdfBuffer?: Buffer): Promise<void> {
     const { subject, html } = payslipTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,
       subject,
       html,
+      attachments: pdfBuffer
+        ? [
+            {
+              fileName: 'payslip.pdf',
+              content: pdfBuffer,
+              contentType: 'application/pdf',
+            },
+          ]
+        : undefined,
     });
   }
 

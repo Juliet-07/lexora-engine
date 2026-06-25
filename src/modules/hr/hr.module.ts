@@ -32,6 +32,7 @@ import {
   ContractService,
   ContractPdfService,
   EmployeeDocumentService,
+  PayslipPdfService,
 } from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailService } from '../../common/utils/mailing/email.service';
@@ -193,6 +194,7 @@ import {
     ContractService,
     ContractPdfService,
     EmployeeDocumentService,
+    PayslipPdfService,
   ],
   exports: [
     EmployeeService,
