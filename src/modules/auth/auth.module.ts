@@ -11,6 +11,7 @@ import {
   ClientProfileRecord,
   ClientProfileSchema,
 } from '../tenant/schemas/client-profile.schema';
+import { Employee, EmployeeSchema } from '../hr/schemas';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import {
       { name: User.name, schema: UserSchema },
       { name: Session.name, schema: SessionSchema },
       { name: ClientProfileRecord.name, schema: ClientProfileSchema },
+      { name: Employee.name, schema: EmployeeSchema },
     ]),
   ],
   controllers: [AuthController],

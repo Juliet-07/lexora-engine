@@ -33,6 +33,7 @@ import {
   ContractPdfService,
   EmployeeDocumentService,
   PayslipPdfService,
+  ProbationService,
 } from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailService } from '../../common/utils/mailing/email.service';
@@ -56,6 +57,7 @@ import {
   KpiTemplateController,
   PerformanceReviewController,
   ReviewCycleController,
+  ProbationTenantController,
 } from './controllers';
 import {
   LeaveRequest,
@@ -110,6 +112,10 @@ import {
   SigningTokenSchema,
   EmployeeDocumentFile,
   EmployeeDocumentFileSchema,
+  PerformanceImprovementPlan,
+  PerformanceImprovementPlanSchema,
+  ProbationRecord,
+  ProbationRecordSchema,
 } from './schemas';
 
 @Module({
@@ -144,6 +150,14 @@ import {
       { name: Contract.name, schema: ContractSchema },
       { name: SigningToken.name, schema: SigningTokenSchema },
       { name: EmployeeDocumentFile.name, schema: EmployeeDocumentFileSchema },
+      {
+        name: PerformanceImprovementPlan.name,
+        schema: PerformanceImprovementPlanSchema,
+      },
+      {
+        name: ProbationRecord.name,
+        schema: ProbationRecordSchema,
+      },
     ]),
   ],
   controllers: [
@@ -166,6 +180,7 @@ import {
     ContractTemplateController,
     ContractController,
     ContractSigningController,
+    ProbationTenantController,
   ],
   providers: [
     EmployeeService,
@@ -195,6 +210,7 @@ import {
     ContractPdfService,
     EmployeeDocumentService,
     PayslipPdfService,
+    ProbationService,
   ],
   exports: [
     EmployeeService,
@@ -203,6 +219,7 @@ import {
     OnboardingService,
     PayrollRunService,
     PerformanceReviewService,
+    ProbationService,
   ],
 })
 export class HrModule {}

@@ -15,8 +15,8 @@ export class HrTeam {
   @Prop({ default: null })
   description: string | null;
 
-  @Prop({ default: null })
-  lead: string | null; // name of the team lead (free text for now)
+  // @Prop({ default: null })
+  // lead: string | null;
 
   @Prop({ default: true })
   isActive: boolean;

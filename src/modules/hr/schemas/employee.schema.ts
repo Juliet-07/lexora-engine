@@ -40,6 +40,12 @@ export enum EmployeeAttendanceStatus {
   ON_LEAVE = 'on_leave',
 }
 
+export enum EmployeeHierarchyRole {
+  REGULAR = 'regular',
+  MANAGER = 'manager',
+  HEAD_OF_DEPARTMENT = 'head_of_department',
+}
+
 @Schema({ _id: false })
 export class NextOfKin {
   @Prop({ default: null }) name: string | null;
@@ -176,14 +182,24 @@ export class Employee {
   @Prop({ required: true })
   jobTitle: string;
 
-  @Prop({ default: null })
-  reportsTo: string | null;
+  @Prop({
+    enum: EmployeeHierarchyRole,
+    default: EmployeeHierarchyRole.REGULAR,
+    index: true,
+  })
+  hierarchyRole: EmployeeHierarchyRole;
 
   @Prop({ enum: EmploymentType, default: EmploymentType.FULL_TIME })
   employmentType: EmploymentType;
 
+  @Prop({ type: Types.ObjectId, ref: 'Employee', default: null, index: true })
+  reportsToManagerId: Types.ObjectId | null;
+
   @Prop({ enum: EmploymentStatus, default: EmploymentStatus.ACTIVE })
   employmentStatus: EmploymentStatus;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  reportsToTenantId: Types.ObjectId | null;
 
   @Prop({ default: 0 })
   onboardingStep: number;

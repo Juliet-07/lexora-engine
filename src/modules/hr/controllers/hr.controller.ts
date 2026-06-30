@@ -36,6 +36,7 @@ import {
   LeaveFilterDto,
   ReviewLeaveRequestDto,
   UploadEmployeeDocumentDto,
+  PromoteToHeadOfDepartmentDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -45,6 +46,7 @@ import { extname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { diskStorage } from 'multer';
 import { v4 as uuidv4 } from 'uuid';
+import { EmployeeHierarchyRole } from '../schemas';
 
 // ── Document storage — SAME folder as the employee self-service
 // controller's employeeDocumentStorage ('uploads/employee/documents'),
@@ -124,7 +126,7 @@ export class HrTenantController {
   @Post('teams')
   @ApiOperation({ summary: 'Create a new team (department)' })
   createTeam(
-    @Body() dto: { name: string; description?: string; lead?: string },
+    @Body() dto: { name: string; description?: string },
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
@@ -136,7 +138,7 @@ export class HrTenantController {
   @ApiOperation({ summary: 'Update a team' })
   updateTeam(
     @Param('id') id: string,
-    @Body() dto: { name?: string; description?: string; lead?: string },
+    @Body() dto: { name?: string; description?: string },
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
@@ -152,6 +154,18 @@ export class HrTenantController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.employeeService.deleteTeam(t || u, id);
+  }
+
+  @Get('my-team')
+  @ApiOperation({ summary: 'Get my direct reports (Manager only)' })
+  getMyTeam(@CurrentUser('sub') userId: string) {
+    return this.employeeService.getDirectReports(userId);
+  }
+
+  @Get('my-department')
+  @ApiOperation({ summary: 'Get my department tree (Head of Department only)' })
+  getMyDepartment(@CurrentUser('sub') userId: string) {
+    return this.employeeService.getDepartmentTree(userId);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -307,7 +321,17 @@ export class HrTenantController {
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.employeeService.terminateEmployee(id, t || u, dto);
+    return this.employeeService.terminateEmployee(t || u, id, dto);
+  }
+
+  @Get('employees/:id/direct-reports')
+  @ApiOperation({ summary: "Get a specific employee's direct reports" })
+  getEmployeeDirectReports(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.employeeService.getDirectReportsOf(t || u, id);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -376,6 +400,37 @@ export class HrTenantController {
     return { success: true };
   }
 
+  @Get('employees/by-role/:role')
+  @ApiOperation({
+    summary:
+      'List employees with a specific hierarchy role (for manager/HoD pickers)',
+  })
+  getEmployeesByRole(
+    @Param('role') role: EmployeeHierarchyRole,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.employeeService.getEmployeesByHierarchyRole(t || u, role);
+  }
+
+  @Post('employees/promote-to-hod')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Promote a Manager to Head of Department, replacing the current one',
+  })
+  promoteToHod(
+    @Body() dto: PromoteToHeadOfDepartmentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.employeeService.promoteManagerToHeadOfDepartment(
+      t || u,
+      dto.teamId,
+      dto.promotedManagerId,
+      dto.regularsReassignToManagerId ?? null,
+    );
+  }
   // ═══════════════════════════════════════════════════════════
   // LEAVE
   // ═══════════════════════════════════════════════════════════

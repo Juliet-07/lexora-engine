@@ -7,12 +7,14 @@ import {
   IsNumber,
   IsDateString,
   Min,
+  IsMongoId,
 } from 'class-validator';
 import {
   EmploymentType,
   EmploymentStatus,
   Gender,
   WorkerCategory,
+  EmployeeHierarchyRole,
 } from '../schemas';
 
 // ─────────────────────────────────────────────────────────────
@@ -102,15 +104,21 @@ export class CreateEmployeeDto {
   emergencyContactPhone?: string;
 
   // ── Optional employment ───────────────────────────────────
-  @ApiPropertyOptional({ example: 'Engineering' })
+  @ApiPropertyOptional({
+    enum: EmployeeHierarchyRole,
+    default: EmployeeHierarchyRole.REGULAR,
+  })
   @IsOptional()
-  @IsString()
-  department?: string;
+  @IsEnum(EmployeeHierarchyRole)
+  hierarchyRole?: EmployeeHierarchyRole;
 
-  @ApiPropertyOptional({ example: 'EMP-0001' })
+  @ApiPropertyOptional({
+    description:
+      'Required when hierarchyRole is regular or manager — the Employee this person reports to',
+  })
   @IsOptional()
-  @IsString()
-  reportsTo?: string;
+  @IsMongoId()
+  reportsToManagerId?: string;
 
   @ApiPropertyOptional({
     enum: EmploymentType,
@@ -227,4 +235,24 @@ export class TerminateEmployeeDto {
   @ApiProperty({ enum: EmploymentStatus, example: EmploymentStatus.TERMINATED })
   @IsEnum(EmploymentStatus)
   status: EmploymentStatus;
+
+  @ApiPropertyOptional({
+    description:
+      'Required if this employee has direct reports: either the ID of who should take them over, or the literal string "clear" to explicitly leave them unassigned.',
+  })
+  @IsOptional()
+  @IsString()
+  reassignDirectReportsTo?: string;
+}
+
+export class PromoteToHeadOfDepartmentDto {
+  @ApiProperty() @IsMongoId() teamId: string;
+  @ApiProperty() @IsMongoId() promotedManagerId: string;
+  @ApiPropertyOptional({
+    description:
+      'Required only if the promoted Manager currently has Regular employees reporting to them.',
+  })
+  @IsOptional()
+  @IsMongoId()
+  regularsReassignToManagerId?: string;
 }

@@ -17,7 +17,11 @@ import {
   EmployeeDocument,
   DEFAULT_COMPLIANCE_CHECKLIST,
 } from '../schemas';
-import { KpiTemplateService, FrameworkService } from '../services';
+import {
+  KpiTemplateService,
+  FrameworkService,
+  PerformanceScoringService,
+} from '../services';
 import { CreateReviewCycleDto } from '../dtos';
 
 @Injectable()
@@ -31,17 +35,23 @@ export class ReviewCycleService {
     private readonly employeeModel: Model<EmployeeDocument>,
     private readonly kpiTemplateService: KpiTemplateService,
     private readonly frameworkService: FrameworkService,
+    private readonly scoringService: PerformanceScoringService,
   ) {}
 
   async createCycle(
     tenantId: string,
     dto: CreateReviewCycleDto,
+    allowProbationEmployee = false,
   ): Promise<ReviewCycleDocument> {
     const tId = new Types.ObjectId(tenantId);
 
+    const excludedStatuses = allowProbationEmployee
+      ? ['terminated', 'resigned']
+      : ['terminated', 'resigned', 'probation'];
+
     const employeeQuery: any = {
       tenantId: tId,
-      employmentStatus: { $nin: ['terminated', 'resigned'] },
+      employmentStatus: { $nin: excludedStatuses },
     };
     if (dto.employeeId) {
       employeeQuery._id = new Types.ObjectId(dto.employeeId);
@@ -51,7 +61,11 @@ export class ReviewCycleService {
       if (dto.teamId) employeeQuery.teamId = new Types.ObjectId(dto.teamId);
     }
 
-    const employees = await this.employeeModel.find(employeeQuery).lean();
+    const employees = await this.employeeModel
+      .find(employeeQuery)
+      .populate('reportsToManagerId', 'firstName lastName')
+      .lean();
+
     if (employees.length === 0) {
       throw new BadRequestException(
         dto.employeeId
@@ -113,7 +127,24 @@ export class ReviewCycleService {
       .find({ reviewCycleId: cycle._id })
       .sort({ employeeName: 1 })
       .lean();
-    return { cycle, reviews };
+
+    const enrichedReviews = reviews.map((review) => ({
+      ...review,
+      scores:
+        review.status === ReviewStatus.COMPLETED
+          ? {
+              kpiSection: this.scoringService.scoreKpiSection(review.kpis),
+              competencySection: this.scoringService.scoreFrameworkSection(
+                review.competencies,
+              ),
+              valuesSection: this.scoringService.scoreFrameworkSection(
+                review.values,
+              ),
+            }
+          : null,
+    }));
+
+    return { cycle, reviews: enrichedReviews };
   }
 
   async discardDraftCycle(tenantId: string, cycleId: string): Promise<void> {
@@ -135,6 +166,90 @@ export class ReviewCycleService {
     });
     if (!cycle) throw new NotFoundException('Review cycle not found');
     return cycle;
+  }
+
+  async retrySkippedEmployees(
+    tenantId: string,
+    cycleId: string,
+  ): Promise<{
+    cycle: ReviewCycleDocument;
+    recovered: number;
+    stillSkipped: number;
+  }> {
+    const cycle = await this.getCycleOrThrow(tenantId, cycleId);
+
+    if (cycle.skippedEmployees.length === 0) {
+      return { cycle, recovered: 0, stillSkipped: 0 };
+    }
+
+    // CLOSED cycles are excluded — confirmed: cycles are meant to be
+    // finished business once closed, matching how closeCycle()
+    // already treats status as a real lifecycle boundary elsewhere.
+    // DRAFT and OPEN are both allowed per the confirmed answer.
+    if (cycle.status === ReviewCycleStatus.CLOSED) {
+      throw new ConflictException(
+        'This cycle is closed. Reopen it, or create a new cycle for these employees.',
+      );
+    }
+
+    const employeeIds = cycle.skippedEmployees.map((s) => s.employeeId);
+    const employees = await this.employeeModel
+      .find({ _id: { $in: employeeIds } })
+      .lean();
+
+    const competencyFramework =
+      await this.frameworkService.getOrCreateCompetencies(tenantId);
+    const valuesFramework =
+      await this.frameworkService.getOrCreateValues(tenantId);
+
+    const stillSkipped: {
+      employeeId: Types.ObjectId;
+      employeeName: string;
+      reason: string;
+    }[] = [];
+    let recovered = 0;
+
+    for (const employee of employees) {
+      try {
+        // SAME private method createCycle() already calls — no
+        // duplicated KPI-lookup or review-building logic.
+        await this.generateReviewForEmployee(
+          cycle,
+          employee as any,
+          tenantId,
+          competencyFramework,
+          valuesFramework,
+        );
+        recovered++;
+      } catch (err: any) {
+        stillSkipped.push({
+          employeeId: employee._id as Types.ObjectId,
+          employeeName: `${employee.firstName} ${employee.lastName}`,
+          reason: err?.message ?? 'Unknown error while generating review.',
+        });
+      }
+    }
+
+    // REPLACE the skipped list entirely with whatever's STILL
+    // failing — anyone who succeeded this time is simply gone from
+    // it, no separate "recovered" log kept on the cycle itself
+    // (the recovered COUNT is returned to the caller for a one-time
+    // toast message; it's not persisted as cycle state, since once
+    // someone has a real review, their presence IN that reviews
+    // list IS the record of their recovery — no need for a second,
+    // redundant record of the same fact).
+    cycle.skippedEmployees = stillSkipped;
+    cycle.employeeCount += recovered;
+    await cycle.save();
+
+    return { cycle, recovered, stillSkipped: stillSkipped.length };
+  }
+
+  async deleteCycle(tenantId: string, cycleId: string): Promise<void> {
+    const cycle = await this.getCycleOrThrow(tenantId, cycleId);
+
+    await this.reviewModel.deleteMany({ reviewCycleId: cycle._id });
+    await this.cycleModel.deleteOne({ _id: cycle._id });
   }
 
   private async generateReviewsForCycle(
@@ -200,6 +315,16 @@ export class ReviewCycleService {
         ? (employee.teamId as any).lead
         : null;
 
+    const reportsToManager =
+      employee.reportsToManagerId &&
+      typeof employee.reportsToManagerId === 'object' &&
+      'firstName' in employee.reportsToManagerId
+        ? (employee.reportsToManagerId as any)
+        : null;
+    const managerName = reportsToManager
+      ? `${reportsToManager.firstName} ${reportsToManager.lastName}`
+      : null;
+
     await this.reviewModel.create({
       reviewCycleId: cycle._id,
       employeeId: employee._id,
@@ -207,7 +332,7 @@ export class ReviewCycleService {
       employeeName: `${employee.firstName} ${employee.lastName}`,
       jobTitle: employee.jobTitle,
       department: null,
-      managerName: employee.reportsTo ?? teamLead ?? null,
+      managerName: managerName ?? teamLead ?? null,
       status: ReviewStatus.EMPLOYEE_IN_PROGRESS,
       complianceChecks: DEFAULT_COMPLIANCE_CHECKLIST.map((c) => ({
         key: c.key,

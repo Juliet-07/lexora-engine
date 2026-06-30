@@ -33,6 +33,7 @@ import {
   RequisitionTypeService,
   EmployeeDocumentService,
   EmployeeLoanService,
+  ProbationService,
 } from '../services';
 import {
   CompleteOnboardingDto,
@@ -44,6 +45,7 @@ import {
   UpdateEmployeeReviewSectionDto,
   UploadEmployeeDocumentDto,
   RequestLoanDto,
+  UpdateManagerReviewSectionDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -54,10 +56,10 @@ import { diskStorage } from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import { Response } from 'express';
 
-// ═══════════════════════════════════════════════════════════════
+// =================================================================
 // EMPLOYEE SELF-SERVICE CONTROLLER
 // Routes: /employee/*
-// ═══════════════════════════════════════════════════════════════
+// =================================================================
 
 const certificateStorage = diskStorage({
   destination: (_req, _file, cb) => {
@@ -149,11 +151,14 @@ export class HrEmployeeController {
     private readonly requisitionTypeService: RequisitionTypeService,
     private readonly documentService: EmployeeDocumentService,
     private readonly loanService: EmployeeLoanService,
+    private readonly probationService: ProbationService,
   ) {}
 
-  // ═══════════════════════════════════════════════════════════
-  // ONBOARDING
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
+  // ONBOARDING (employee's OWN onboarding paperwork - unrelated to
+  // probation onboarding stage below, different concept entirely,
+  // left completely untouched)
+  // ===============================================================
 
   @Get('onboarding/status')
   @ApiOperation({
@@ -254,9 +259,9 @@ export class HrEmployeeController {
     return this.onboardingService.completeOnboarding(userId, dto, ipAddress);
   }
 
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
   // PROFILE
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
 
   @Get('profile')
   @ApiOperation({ summary: 'Get my employee profile' })
@@ -290,9 +295,9 @@ export class HrEmployeeController {
     return this.employeeService.updateMyProfile(userId, dto);
   }
 
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
   // MY DOCUMENTS
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
 
   @Get('documents')
   @ApiOperation({ summary: 'Get my uploaded documents' })
@@ -358,9 +363,9 @@ export class HrEmployeeController {
     return { success: true };
   }
 
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
   // LEAVE
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
 
   @Get('leave/balance')
   @ApiOperation({ summary: 'Get my leave balances for the year' })
@@ -391,9 +396,9 @@ export class HrEmployeeController {
     return this.leaveService.cancelLeaveRequest(id, userId);
   }
 
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
   // ATTENDANCE
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
 
   @Get('attendance/active')
   @ApiOperation({
@@ -454,9 +459,9 @@ export class HrEmployeeController {
     return this.attendanceService.clockOut(userId);
   }
 
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
   // PAYSLIPS
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
 
   @Get('payslips')
   @ApiOperation({ summary: 'Get my payslip history' })
@@ -504,10 +509,9 @@ export class HrEmployeeController {
     res.send(buffer);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // LOANS — request flow. Static routes, no :id collision risk
-  // with anything else in this controller.
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
+  // LOANS
+  // ===============================================================
 
   @Get('loans')
   @ApiOperation({ summary: 'Get my loan request/history' })
@@ -531,9 +535,10 @@ export class HrEmployeeController {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // PERFORMANCE
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
+  // PERFORMANCE (own self-assessment side)
+  // ===============================================================
+
   @Get('performance/reviews')
   @ApiOperation({ summary: 'Get my performance review history' })
   async getMyReviews(@CurrentUser('sub') userId: string) {
@@ -597,9 +602,173 @@ export class HrEmployeeController {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
+  @Get('performance/department-history')
+  @ApiOperation({
+    summary:
+      "HoD's read-only view of completed reviews across their whole department",
+  })
+  getDepartmentReviewHistory(@CurrentUser('sub') userId: string) {
+    return this.performanceReviewService.getDepartmentReviewHistory(userId);
+  }
+  // ===============================================================
+  // PERFORMANCE (manager/reviewer side - acting on a DIRECT REPORT's
+  // review, not my own)
+  // ===============================================================
+
+  @Patch('reviews/:id/manager-section')
+  @ApiOperation({
+    summary: "Manager fills in their section of a direct report's review",
+  })
+  updateManagerSection(
+    @Param('id') id: string,
+    @Body() dto: UpdateManagerReviewSectionDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.performanceReviewService.updateManagerSection(userId, id, dto);
+  }
+
+  // CORRECTED: now accepts an optional body carrying the probation
+  // recommendation reasoning. Harmless/unused for a normal,
+  // non-probation review - only matters when completing a probation
+  // Month 3 evaluation, where the service-side guard now REQUIRES it.
+  @Patch('reviews/:id/complete')
+  @ApiOperation({
+    summary: "Manager completes and signs a direct report's review",
+  })
+  completeReview(
+    @Param('id') id: string,
+    @Body() dto: { probationRecommendationReasoning?: string },
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.performanceReviewService.completeReview(
+      userId,
+      id,
+      dto?.probationRecommendationReasoning,
+    );
+  }
+
+  @Get('reviews/pending-for-my-team')
+  @ApiOperation({
+    summary: "Reviews awaiting THIS manager's input, across all direct reports",
+  })
+  getPendingReviewsForMyTeam(@CurrentUser('sub') userId: string) {
+    return this.performanceReviewService.getPendingReviewsForManager(userId);
+  }
+
+  @Get('reviews/reviewed-by-me')
+  @ApiOperation({
+    summary: 'Reviews this manager/HoD has personally completed, with scores',
+  })
+  getReviewedHistory(@CurrentUser('sub') userId: string) {
+    return this.performanceReviewService.getReviewedHistoryForManager(userId);
+  }
+
+  @Get('reviews/:id')
+  @ApiOperation({
+    summary: "Get a direct report's review, with live-computed scores",
+  })
+  async getReviewForReviewer(
+    @Param('id') id: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const review = await this.performanceReviewService.getReviewForReviewer(
+      userId,
+      id,
+    );
+    return {
+      review,
+      scores: this.performanceReviewService.getScoredView(review),
+    };
+  }
+  // ===============================================================
+  // PROBATION (manager-side actions on a direct report's probation
+  // record) - ALL FOUR manager-facing stages, consistently, per the
+  // document's real Owner column: Onboarding (manager acts, HR just
+  // views), Month 1 (manager only), Month 2 (manager acts, HR just
+  // views), Month 3-start (manager only - triggers the review cycle
+  // above). Final Decision is HR-only and lives on the TENANT
+  // controller instead, never here.
+  // ===============================================================
+
+  @Get('probation/my-team')
+  @ApiOperation({
+    summary: "Probation records for this manager's direct reports",
+  })
+  getProbationForMyTeam(@CurrentUser('sub') userId: string) {
+    return this.probationService.getForMyDirectReports(userId);
+  }
+
+  @Get('probation/me')
+  @ApiOperation({ summary: 'Get my own probation record, if I have one' })
+  getMyOwnProbation(@CurrentUser('sub') userId: string) {
+    return this.probationService.getMyProbation(userId);
+  }
+
+  @Get('probation/:employeeId')
+  @ApiOperation({ summary: "Get a direct report's full probation record" })
+  getProbationForMyReport(
+    @Param('employeeId') employeeId: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.probationService.getForMyReport(userId, employeeId);
+  }
+
+  @Patch('probation/:employeeId/onboarding')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Manager completes a direct report's probation onboarding stage",
+  })
+  completeProbationOnboarding(
+    @Param('employeeId') employeeId: string,
+    @Body() dto: { objectives: string; successMeasures?: string },
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.probationService.completeOnboarding(employeeId, userId, dto);
+  }
+
+  @Patch('probation/:employeeId/month-1')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Manager completes a direct report's Month 1 check-in",
+  })
+  completeMonth1(
+    @Param('employeeId') employeeId: string,
+    @Body() dto: { note?: string },
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.probationService.completeMonth1(employeeId, userId, dto);
+  }
+
+  @Patch('probation/:employeeId/month-2')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Manager completes a direct report's Month 2 review — written progress note required",
+  })
+  completeProbationMonth2(
+    @Param('employeeId') employeeId: string,
+    @Body() dto: { progressNote: string },
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.probationService.completeMonth2(employeeId, userId, dto);
+  }
+
+  @Post('probation/:employeeId/month-3/start')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      "Manager starts a direct report's Month 3 evaluation — generates a review cycle",
+  })
+  startProbationMonth3(
+    @Param('employeeId') employeeId: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.probationService.startMonth3Evaluation(employeeId, userId);
+  }
+
+  // ===============================================================
   // REQUISITION
-  // ═══════════════════════════════════════════════════════════
+  // ===============================================================
 
   @Get('requisitions/types')
   @ApiOperation({
@@ -647,5 +816,11 @@ export class HrEmployeeController {
       (employee as any)._id.toString(),
       dto,
     );
+  }
+
+  @Get('my-team')
+  @ApiOperation({ summary: 'Get my direct reports (Manager only)' })
+  getMyDirectReports(@CurrentUser('sub') userId: string) {
+    return this.employeeService.getDirectReports(userId);
   }
 }

@@ -18,6 +18,7 @@ export * from './payslip-pdf.service';
 export * from './payslip-template.service';
 export * from './performance.service';
 export * from './performance-review.service';
+export * from './probation.service';
 export * from './review-cycle.service';
 export * from './requisition.service';
 export * from './requisition-type.service';

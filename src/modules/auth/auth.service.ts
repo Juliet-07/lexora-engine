@@ -28,6 +28,7 @@ import {
   ClientProfileDocument,
   ClientProfileRecord,
 } from '../tenant/schemas/client-profile.schema';
+import { Employee, EmployeeDocument } from '../hr/schemas';
 
 @Injectable()
 export class AuthService {
@@ -36,6 +37,8 @@ export class AuthService {
     @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
     @InjectModel(ClientProfileRecord.name)
     private clientProfileModel: Model<ClientProfileDocument>,
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
     private jwtService: JwtService,
     private configService: ConfigService,
   ) {}
@@ -133,10 +136,21 @@ export class AuthService {
       };
     }
 
+    let hierarchyRole: string | null = null;
+
+    if (updatedUser.userType === UserType.EMPLOYEE) {
+      const employee = await this.employeeModel
+        .findOne({ userId: updatedUser._id })
+        .select('hierarchyRole')
+        .lean();
+      hierarchyRole = employee?.hierarchyRole ?? null;
+    }
+
     return {
       user: this.sanitize(updatedUser),
       tokens,
       ...(kycContext && { kycContext }),
+      ...(hierarchyRole && { hierarchyRole }),
     };
   }
 

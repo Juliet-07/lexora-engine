@@ -27,6 +27,7 @@ import { TransformInterceptor } from 'src/common/interceptors/transform.intercep
 import { LoggingInterceptor } from 'src/common/interceptors/logging.interceptor';
 import { PaymentModule } from './modules/payment/payment.module';
 import { HrModule } from './modules/hr/hr.module';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 
 @Module({
   imports: [
@@ -36,7 +37,7 @@ import { HrModule } from './modules/hr/hr.module';
       load: [appConfig, databaseConfig, jwtConfig],
       envFilePath: '.env',
     }),
-
+    EventEmitterModule.forRoot(),
     // Database
     MongooseModule.forRootAsync({
       imports: [ConfigModule],

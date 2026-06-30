@@ -15,12 +15,12 @@ import {
   FrameworkService,
   ReviewCycleService,
   PerformanceReviewService,
+  ProbationService,
 } from '../services';
 import {
   UpsertKpiTemplateDto,
   UpdateFrameworkDto,
   CreateReviewCycleDto,
-  UpdateManagerReviewSectionDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -194,6 +194,35 @@ export class ReviewCycleController {
     await this.cycleService.discardDraftCycle(t || u, cycleId);
     return { success: true };
   }
+
+  @Delete(':cycleId/force')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Permanently delete a cycle and all its reviews, regardless of status — irreversible',
+  })
+  async forceDelete(
+    @Param('cycleId') cycleId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    await this.cycleService.deleteCycle(t || u, cycleId);
+    return { success: true };
+  }
+
+  @Post(':cycleId/retry-skipped')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Retry generating reviews for employees previously skipped in this cycle',
+  })
+  retrySkipped(
+    @Param('cycleId') cycleId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.cycleService.retrySkippedEmployees(t || u, cycleId);
+  }
 }
 
 @ApiTags('HR — Performance Reviews (Tenant/Manager)')
@@ -216,26 +245,101 @@ export class PerformanceReviewController {
     return { review, scores: this.reviewService.getScoredView(review) };
   }
 
-  @Patch(':reviewId/manager')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Update the manager's section of a review" })
-  updateManagerSection(
-    @Param('reviewId') reviewId: string,
-    @Body() dto: UpdateManagerReviewSectionDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.reviewService.updateManagerSection(t || u, reviewId, dto);
+  @Get('pending/hods')
+  @ApiOperation({
+    summary:
+      "Pending HoD reviews awaiting this tenant's input or HoD self-assessment",
+  })
+  getPendingHodReviews(@CurrentUser('sub') u: string) {
+    return this.reviewService.getPendingHodReviews(u);
   }
 
   @Post(':reviewId/complete')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Sign off and complete the review — irreversible' })
-  complete(
-    @Param('reviewId') reviewId: string,
+  @ApiOperation({
+    summary: "Tenant completes and signs off a Head of Department's review",
+  })
+  complete(@Param('reviewId') reviewId: string, @CurrentUser('sub') u: string) {
+    return this.reviewService.completeReview(u, reviewId);
+  }
+
+  @Get(':employeeId/history')
+  @ApiOperation({
+    summary: "An employee's full completed review history (HR/tenant view)",
+  })
+  getReviewHistory(
+    @Param('employeeId') employeeId: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.reviewService.completeReview(t || u, reviewId, u);
+    return this.reviewService.getReviewHistoryForEmployee(t || u, employeeId);
+  }
+}
+
+// =================================================================
+// NEW — added in this same file, following the EXACT pattern every
+// other controller class above already uses (UserTypes(TENANT),
+// CurrentUser('sub')/CurrentUser('tenantId'), constructor injection
+// of one service). This is the ONLY tenant-side probation
+// controller now — read-only list/detail, PLUS the one real action
+// the document actually assigns to HR: the Final Decision.
+// =================================================================
+
+@ApiTags('HR — Probation (Tenant / HR)')
+@ApiBearerAuth('bearerAuth')
+@UserTypes(UserType.TENANT)
+@Controller('hr/probation')
+export class ProbationTenantController {
+  constructor(private readonly probationService: ProbationService) {}
+
+  @Get()
+  @ApiOperation({
+    summary:
+      'List all in-progress/extended probation records for this tenant, with employee details (view only)',
+  })
+  getAllInProgress(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.probationService.getAllInProgressEnriched(t || u);
+  }
+
+  @Get('employee/:employeeId')
+  @ApiOperation({
+    summary:
+      "Get one employee's probation record with live due-window info (view only)",
+  })
+  getForEmployee(
+    @Param('employeeId') employeeId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.probationService.getEnrichedRecord(t || u, employeeId);
+  }
+
+  @Post('employee/:employeeId/final-decision')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      'HR records the final probation decision: confirm, extend, or terminate',
+  })
+  recordFinalDecision(
+    @Param('employeeId') employeeId: string,
+    @Body()
+    dto: {
+      outcome: 'confirm' | 'extend' | 'terminate';
+      agreedWithRecommendation: boolean;
+      extensionReason?: string;
+      revisedObjectives?: string;
+    },
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.probationService.recordFinalDecision(
+      t || u,
+      employeeId,
+      u,
+      dto as any,
+    );
   }
 }
