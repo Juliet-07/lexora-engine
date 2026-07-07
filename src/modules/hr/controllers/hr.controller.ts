@@ -156,17 +156,17 @@ export class HrTenantController {
     return this.employeeService.deleteTeam(t || u, id);
   }
 
-  @Get('my-team')
-  @ApiOperation({ summary: 'Get my direct reports (Manager only)' })
-  getMyTeam(@CurrentUser('sub') userId: string) {
-    return this.employeeService.getDirectReports(userId);
-  }
+  // @Get('my-team')
+  // @ApiOperation({ summary: 'Get my direct reports (Manager only)' })
+  // getMyTeam(@CurrentUser('sub') userId: string) {
+  //   return this.employeeService.getDirectReports(userId);
+  // }
 
-  @Get('my-department')
-  @ApiOperation({ summary: 'Get my department tree (Head of Department only)' })
-  getMyDepartment(@CurrentUser('sub') userId: string) {
-    return this.employeeService.getDepartmentTree(userId);
-  }
+  // @Get('my-department')
+  // @ApiOperation({ summary: 'Get my department tree (Head of Department only)' })
+  // getMyDepartment(@CurrentUser('sub') userId: string) {
+  //   return this.employeeService.getDepartmentTree(userId);
+  // }
 
   // ═══════════════════════════════════════════════════════════
   // LOCATIONS (BRANCHES)

@@ -108,7 +108,7 @@ export class SubscriptionExpiryService {
 
       if (!tenant) return;
 
-      const renewalUrl = `${process.env.APP_URL}/subscription/renew/${sub.tenantId}`;
+      const renewalUrl = `${process.env.TENANT_APP_URL}/settings?tab=plan`;
 
       await this.mailService.sendSubscriptionWarning({
         to: (tenant as any).email,
@@ -158,7 +158,7 @@ export class SubscriptionExpiryService {
         .lean();
 
       if (tenant) {
-        const renewalUrl = `${process.env.APP_URL}/subscription/renew/${tenantId}`;
+        const renewalUrl = `${process.env.TENANT_APP_URL}/settings?tab=plan`;
 
         await this.mailService.sendSubscriptionExpired({
           to: (tenant as any).email,

@@ -356,6 +356,12 @@ export class PayrollRunController {
     res.send(buffer);
   }
 
+  @Get('payroll/my-summary')
+  @ApiOperation({ summary: 'YTD payroll summary for the logged-in employee' })
+  getMyPayrollSummary(@CurrentUser('sub') userId: string) {
+    return this.runService.getMyPayrollSummary(userId);
+  }
+
   @Get('payslip/:payslipId')
   @ApiOperation({ summary: 'Get a single payslip by ID' })
   getPayslip(

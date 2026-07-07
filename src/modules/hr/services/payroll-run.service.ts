@@ -29,6 +29,15 @@ import { EmployeeService } from './employee.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { PayslipPdfService } from './payslip-pdf.service';
 
+interface PayslipLean {
+  _id: Types.ObjectId;
+  employeeId: Types.ObjectId;
+  periodEnd: Date;
+  totalGross: number;
+  netPay: number;
+  payslipStatus: string;
+}
+
 @Injectable()
 export class PayrollRunService {
   constructor(
@@ -294,6 +303,43 @@ export class PayrollRunService {
     return slip;
   }
 
+  async getMyPayrollSummary(userId: string) {
+    const employee = await this.employeeModel.findOne({
+      userId: new Types.ObjectId(userId),
+    });
+    if (!employee)
+      return { ytdGross: 0, ytdNet: 0, ytdDeductions: 0, months: [] };
+
+    const currentYear = new Date().getFullYear();
+    const payslips = (await this.payslipModel
+      .find({
+        employeeId: employee._id,
+        periodEnd: {
+          $gte: new Date(`${currentYear}-01-01`),
+          $lte: new Date(`${currentYear}-12-31`),
+        },
+      })
+      .sort({ payPeriodEnd: -1 })
+      .lean()) as unknown as PayslipLean[];
+
+    const ytdGross = payslips.reduce((sum, p) => sum + (p.totalGross ?? 0), 0);
+    const ytdNet = payslips.reduce((sum, p) => sum + (p.netPay ?? 0), 0);
+    const ytdDeductions = payslips.reduce(
+      (sum, p) => sum + ((p.totalGross ?? 0) - (p.netPay ?? 0)),
+      0,
+    );
+
+    const months = payslips.map((p) => ({
+      period: p.periodEnd,
+      grossPay: p.totalGross ?? 0,
+      netPay: p.netPay ?? 0,
+      status: p.payslipStatus,
+      _id: p._id,
+    }));
+
+    return { ytdGross, ytdNet, ytdDeductions, months };
+  }
+
   async getMyPayslips(employeeId: string): Promise<PayslipDocument[]> {
     return this.payslipModel
       .find({ employeeId: new Types.ObjectId(employeeId) })
@@ -379,6 +425,7 @@ export class PayrollRunService {
     );
     return this.pdfService.buildPayslipPdf(slip, template);
   }
+
   async emailAllPayslipsInRun(
     tenantId: string,
     runId: string,

@@ -509,6 +509,11 @@ export class HrEmployeeController {
     res.send(buffer);
   }
 
+  @Get('payroll/my-summary')
+  @ApiOperation({ summary: 'YTD payroll summary for the logged-in employee' })
+  async getMyPayrollSummary(@CurrentUser('sub') userId: string) {
+    return this.payrollRunService.getMyPayrollSummary(userId);
+  }
   // ===============================================================
   // LOANS
   // ===============================================================
@@ -544,6 +549,15 @@ export class HrEmployeeController {
   async getMyReviews(@CurrentUser('sub') userId: string) {
     const employee = await this.employeeService.getMyProfile(userId);
     return this.performanceReviewService.getMyReviews(
+      (employee as any)._id.toString(),
+    );
+  }
+
+  @Get('performance/summary')
+  @ApiOperation({ summary: 'My performance summary — latest + full history' })
+  async getMyPerformanceSummary(@CurrentUser('sub') userId: string) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.performanceReviewService.getMyPerformanceSummary(
       (employee as any)._id.toString(),
     );
   }
@@ -823,4 +837,18 @@ export class HrEmployeeController {
   getMyDirectReports(@CurrentUser('sub') userId: string) {
     return this.employeeService.getDirectReports(userId);
   }
+
+  @Get('department/tree')
+  @ApiOperation({
+    summary: "HoD's department — managers with their direct reports",
+  })
+  getDepartmentTree(@CurrentUser('sub') userId: string) {
+    return this.employeeService.getDepartmentTree(userId);
+  }
+
+  // @Get('department/team')
+  // @ApiOperation({ summary: "HoD's read-only view of their full department" })
+  // getDepartmentTeam(@CurrentUser('sub') userId: string) {
+  //   return this.employeeService.getDepartmentTeam(userId);
+  // }
 }

@@ -114,6 +114,35 @@ export class PerformanceReviewService {
     return { kpiSection, competencySection, valuesSection };
   }
 
+  async getMyPerformanceSummary(employeeId: string) {
+    const reviews = await this.reviewModel
+      .find({
+        employeeId: new Types.ObjectId(employeeId),
+        status: ReviewStatus.COMPLETED,
+      })
+      .populate('reviewCycleId', 'name')
+      .sort({ managerSignedAt: -1 })
+      .lean();
+
+    const mapped = reviews.map((r) => {
+      const scored = this.scoringService.scoreKpiSection(r.kpis);
+      return {
+        _id: r._id,
+        cycle: (r.reviewCycleId as any)?.name ?? 'Review',
+        score: scored.totalWeightedScore,
+        rating: scored.ratingBand,
+        completedAt: r.managerSignedAt,
+        managerName: r.managerName ?? null,
+        managerConclusions: r.managerConclusions ?? null,
+      };
+    });
+
+    return {
+      latestReview: mapped[0] ?? null,
+      reviews: mapped,
+    };
+  }
+
   async updateEmployeeSection(
     reviewId: string,
     employeeId: string,

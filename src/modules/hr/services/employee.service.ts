@@ -930,6 +930,8 @@ export class EmployeeService {
         teamId: hod.teamId,
         employmentStatus: { $nin: ['terminated', 'resigned'] },
       })
+      .populate('teamId', 'name')
+      .populate('locationId', 'name')
       .sort({ firstName: 1 })
       .lean();
 
@@ -963,6 +965,42 @@ export class EmployeeService {
       })) as any,
     };
   }
+
+  // async getDepartmentTeam(hodUserId: string) {
+  //   const hod = await this.employeeModel.findOne({
+  //     userId: new Types.ObjectId(hodUserId),
+  //   });
+  //   if (!hod || hod.hierarchyRole !== 'head_of_department') return [];
+
+  //   // HOP 1: managers who report to this HoD
+  //   const managers = await this.employeeModel
+  //     .find({
+  //       reportsToManagerId: hod._id,
+  //       hierarchyRole: 'manager',
+  //       employmentStatus: { $nin: ['terminated', 'resigned'] },
+  //     })
+  //     .populate('teamId', 'name')
+  //     .populate('locationId', 'name')
+  //     .lean();
+
+  //   const managerIds = managers.map((m) => m._id);
+
+  //   // HOP 2: regulars who report to those managers
+  //   const regulars =
+  //     managerIds.length === 0
+  //       ? []
+  //       : await this.employeeModel
+  //           .find({
+  //             reportsToManagerId: { $in: managerIds },
+  //             employmentStatus: { $nin: ['terminated', 'resigned'] },
+  //           })
+  //           .populate('teamId', 'name')
+  //           .populate('locationId', 'name')
+  //           .lean();
+
+  //   // Return flat array — frontend groups by teamId?.name itself
+  //   return [...managers, ...regulars];
+  // }
 
   async promoteManagerToHeadOfDepartment(
     tenantId: string,
