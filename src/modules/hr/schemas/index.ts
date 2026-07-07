@@ -1,6 +1,7 @@
 export * from './candidate.schema';
 export * from './contract-template.schema';
 export * from './contract.schema';
+export * from './dispute.schema';
 export * from './employee-document.schema';
 export * from './employee-onboarding.schema';
 export * from './employee.schema';

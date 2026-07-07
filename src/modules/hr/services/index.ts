@@ -3,6 +3,7 @@ export * from './candidate.service';
 export * from './contract-pdf.service';
 export * from './contract-template.service';
 export * from './contract.service';
+export * from './dispute.service';
 export * from './employee-document.service';
 export * from './employee-loan.service';
 export * from './employee-onboarding.service';

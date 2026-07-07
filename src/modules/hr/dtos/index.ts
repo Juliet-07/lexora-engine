@@ -1,5 +1,6 @@
-export * from './employee-onboarding.dto';
 export * from './contract.dto';
+export * from './dispute.dto';
+export * from './employee-onboarding.dto';
 export * from './hr.dto';
 export * from './leave.dto';
 export * from './payroll.dto';

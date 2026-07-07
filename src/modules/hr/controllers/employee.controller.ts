@@ -34,6 +34,7 @@ import {
   EmployeeDocumentService,
   EmployeeLoanService,
   ProbationService,
+  DisputeService,
 } from '../services';
 import {
   CompleteOnboardingDto,
@@ -46,6 +47,9 @@ import {
   UploadEmployeeDocumentDto,
   RequestLoanDto,
   UpdateManagerReviewSectionDto,
+  OpenDisputeCaseDto,
+  FileAppealDto,
+  AttachDocumentDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -152,6 +156,7 @@ export class HrEmployeeController {
     private readonly documentService: EmployeeDocumentService,
     private readonly loanService: EmployeeLoanService,
     private readonly probationService: ProbationService,
+    private readonly disputeService: DisputeService,
   ) {}
 
   // ===============================================================
@@ -851,4 +856,73 @@ export class HrEmployeeController {
   // getDepartmentTeam(@CurrentUser('sub') userId: string) {
   //   return this.employeeService.getDepartmentTeam(userId);
   // }
+
+  // ===============================================================
+  // DISPUTE MANAGEMENT
+  // ===============================================================
+  @Post('disputes')
+  @ApiOperation({ summary: 'Raise a grievance (employee self-report)' })
+  openCase(
+    @Body() dto: OpenDisputeCaseDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.openCaseAsEmployee(t || u, u, dto);
+  }
+
+  @Get('disputes/my-cases')
+  @ApiOperation({ summary: 'Get my own dispute cases' })
+  getMyCases(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.getMyCases(t || u, u);
+  }
+
+  @Get('disputes/team-cases')
+  @ApiOperation({
+    summary: "Manager's read-only view — cases involving direct reports",
+  })
+  getTeamCases(
+    @CurrentUser('sub') userId: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.getCasesForManager(t || userId, userId);
+  }
+
+  @Get('disputes/department-cases')
+  @ApiOperation({
+    summary: "HoD's read-only view — all cases in their department",
+  })
+  getDepartmentCases(
+    @CurrentUser('sub') userId: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.getCasesForHod(t || userId, userId);
+  }
+
+  @Post(':caseId/appeal')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'File an appeal against an outcome (within 5 working days)',
+  })
+  fileAppeal(
+    @Param('caseId') caseId: string,
+    @Body() dto: FileAppealDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.fileAppeal(t || u, caseId, u, dto);
+  }
+
+  @Post(':caseId/documents')
+  @ApiOperation({ summary: 'Attach a supporting document (employee side)' })
+  attachDocument(
+    @Param('caseId') caseId: string,
+    @Body() dto: AttachDocumentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.attachDocument(t || u, caseId, u, dto);
+  }
 }

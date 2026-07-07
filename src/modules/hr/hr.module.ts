@@ -34,6 +34,7 @@ import {
   EmployeeDocumentService,
   PayslipPdfService,
   ProbationService,
+  DisputeService,
 } from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailService } from '../../common/utils/mailing/email.service';
@@ -58,6 +59,7 @@ import {
   PerformanceReviewController,
   ReviewCycleController,
   ProbationTenantController,
+  DisputeTenantController,
 } from './controllers';
 import {
   LeaveRequest,
@@ -116,6 +118,8 @@ import {
   PerformanceImprovementPlanSchema,
   ProbationRecord,
   ProbationRecordSchema,
+  DisputeCase,
+  DisputeCaseSchema,
 } from './schemas';
 
 @Module({
@@ -158,6 +162,10 @@ import {
         name: ProbationRecord.name,
         schema: ProbationRecordSchema,
       },
+      {
+        name: DisputeCase.name,
+        schema: DisputeCaseSchema,
+      },
     ]),
   ],
   controllers: [
@@ -181,6 +189,7 @@ import {
     ContractController,
     ContractSigningController,
     ProbationTenantController,
+    DisputeTenantController,
   ],
   providers: [
     EmployeeService,
@@ -211,6 +220,7 @@ import {
     EmployeeDocumentService,
     PayslipPdfService,
     ProbationService,
+    DisputeService,
   ],
   exports: [
     EmployeeService,
@@ -220,6 +230,7 @@ import {
     PayrollRunService,
     PerformanceReviewService,
     ProbationService,
+    DisputeService,
   ],
 })
 export class HrModule {}
