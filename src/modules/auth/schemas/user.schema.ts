@@ -125,6 +125,9 @@ export class User {
   @Prop({ default: false })
   mustChangePassword: boolean;
 
+  @Prop({ default: null })
+  lastWelcomeEmailSentAt: Date | null;
+
   @Prop({ type: Object, default: {} })
   metadata: Record<string, any>;
 

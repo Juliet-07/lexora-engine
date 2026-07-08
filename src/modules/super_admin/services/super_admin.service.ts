@@ -381,6 +381,7 @@ export class SuperAdminService {
 
     return paginate(enriched, total, page, limit);
   }
+
   async getTenantById(
     id: string,
   ): Promise<UserDocument & { subscription?: any }> {
@@ -793,6 +794,7 @@ export class SuperAdminService {
 
     return updated;
   }
+
   async repairSubscriptionModules(): Promise<{
     plansFixed: number;
     subscriptionsFixed: number;
@@ -986,6 +988,19 @@ export class SuperAdminService {
       { new: true },
     );
     if (!sub) throw new NotFoundException('Tenant subscription not found');
+
+    const isActive = dto.status === SubscriptionStatus.ACTIVE;
+    await this.userModel.updateMany(
+      {
+        userType: UserType.EMPLOYEE,
+        tenantId: new Types.ObjectId(tenantId),
+      },
+      {
+        $set: {
+          status: isActive ? AccountStatus.ACTIVE : AccountStatus.INACTIVE,
+        },
+      },
+    );
     return sub;
   }
 

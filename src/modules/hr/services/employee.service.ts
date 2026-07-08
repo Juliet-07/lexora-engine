@@ -486,6 +486,80 @@ export class EmployeeService {
     return employee;
   }
 
+  async resendWelcomeEmail(
+    tenantId: string,
+    employeeId: string,
+  ): Promise<{ message: string }> {
+    // 1. Find the employee, scoped to this tenant
+    const employee = await this.employeeModel.findOne({
+      _id: new Types.ObjectId(employeeId),
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+
+    // 2. Find their linked User record
+    const user = await this.userModel.findById(employee.userId);
+    if (!user)
+      throw new NotFoundException('User account not found for this employee.');
+
+    // ── COOLDOWN CHECK ───────────────────────────────────────────
+    // Enforce 5-minute minimum between resend attempts.
+    // Prevents multiple passwords being "in flight" simultaneously,
+    // which causes the stale-password race condition.
+    if (user.lastWelcomeEmailSentAt) {
+      const minutesSinceLastSend =
+        (Date.now() - new Date(user.lastWelcomeEmailSentAt).getTime()) /
+        (1000 * 60);
+      if (minutesSinceLastSend < 5) {
+        const remaining = Math.ceil(5 - minutesSinceLastSend);
+        throw new BadRequestException(
+          `Please wait ${remaining} more minute${remaining !== 1 ? 's' : ''} before resending.`,
+        );
+      }
+    }
+
+    // 3. Generate a new temp password — same method as createEmployee()
+    const tempPassword = Math.random().toString(36).slice(-8);
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+
+    // 4. Update the user's password and flag mustChangePassword
+    await this.userModel.findByIdAndUpdate(user._id, {
+      password: hashedPassword,
+      mustChangePassword: true,
+      lastWelcomeEmailSentAt: new Date(),
+    });
+
+    // 5. Fetch tenant businessName — same pattern as createEmployee()
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile')
+      .lean();
+
+    // ADD THIS TEMPORARILY:
+    const verify = await this.userModel
+      .findById(user._id)
+      .select('+password')
+      .lean();
+    console.log('[resend] stored hash:', verify?.password);
+    console.log('[resend] tempPassword:', tempPassword);
+    console.log(
+      '[resend] bcrypt verify:',
+      await bcrypt.compare(tempPassword, verify?.password ?? ''),
+    );
+
+    // 6. Send the welcome email using the same mailService call
+    await this.mailService.sendEmployeeWelcome({
+      to: employee.email,
+      firstName: employee.firstName,
+      businessName: (tenant as any)?.tenantProfile?.businessName ?? '',
+      jobTitle: employee.jobTitle,
+      employeeNumber: employee.employeeNumber,
+      tempPassword,
+      loginUrl: `${process.env.TENANT_APP_URL}/login`,
+    });
+
+    return { message: 'Welcome email resent successfully.' };
+  }
   // ═══════════════════════════════════════════════════════════
   // GET EMPLOYEES
   // ═══════════════════════════════════════════════════════════

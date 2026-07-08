@@ -334,6 +334,19 @@ export class HrTenantController {
     return this.employeeService.getDirectReportsOf(t || u, id);
   }
 
+  @Post('employees/:id/resend-welcome')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Resend welcome email with new temporary credentials',
+  })
+  resendWelcomeEmail(
+    @Param('id') employeeId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.employeeService.resendWelcomeEmail(t || u, employeeId);
+  }
+
   // ═══════════════════════════════════════════════════════════
   // EMPLOYEE DOCUMENTS — tenant view/manage on a SPECIFIC
   // employee's file. ':id/documents' shares the same :id param
