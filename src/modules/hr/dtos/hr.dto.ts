@@ -8,6 +8,7 @@ import {
   IsDateString,
   Min,
   IsMongoId,
+  MinLength,
 } from 'class-validator';
 import {
   EmploymentType,
@@ -15,6 +16,7 @@ import {
   Gender,
   WorkerCategory,
   EmployeeHierarchyRole,
+  EmployeeRecordType,
 } from '../schemas';
 
 // ─────────────────────────────────────────────────────────────
@@ -255,4 +257,15 @@ export class PromoteToHeadOfDepartmentDto {
   @IsOptional()
   @IsMongoId()
   regularsReassignToManagerId?: string;
+}
+
+export class AddEmployeeRecordDto {
+  @ApiProperty({ enum: EmployeeRecordType })
+  @IsEnum(EmployeeRecordType)
+  type: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(10)
+  description: string;
 }

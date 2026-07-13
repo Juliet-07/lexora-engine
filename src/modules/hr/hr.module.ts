@@ -4,6 +4,8 @@ import {
   Employee,
   EmployeeAttendance,
   EmployeeAttendanceSchema,
+  EmployeeRecord,
+  EmployeeRecordSchema,
   EmployeeSchema,
 } from './schemas/employee.schema';
 import {
@@ -35,6 +37,8 @@ import {
   PayslipPdfService,
   ProbationService,
   DisputeService,
+  DisputeLetterPdfService,
+  EmployeeRecordService,
 } from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailService } from '../../common/utils/mailing/email.service';
@@ -166,6 +170,10 @@ import {
         name: DisputeCase.name,
         schema: DisputeCaseSchema,
       },
+      {
+        name: EmployeeRecord.name,
+        schema: EmployeeRecordSchema,
+      },
     ]),
   ],
   controllers: [
@@ -221,6 +229,8 @@ import {
     PayslipPdfService,
     ProbationService,
     DisputeService,
+    DisputeLetterPdfService,
+    EmployeeRecordService,
   ],
   exports: [
     EmployeeService,

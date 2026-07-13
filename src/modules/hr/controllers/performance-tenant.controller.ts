@@ -342,4 +342,58 @@ export class ProbationTenantController {
       dto as any,
     );
   }
+
+  @Patch('employee/:employeeId/onboarding')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Tenant completes a Head of Department's probation onboarding stage",
+  })
+  completeOnboarding(
+    @Param('employeeId') employeeId: string,
+    @Body() dto: { objectives: string; successMeasures?: string },
+    @CurrentUser('sub') u: string,
+  ) {
+    return this.probationService.completeOnboarding(employeeId, u, dto);
+  }
+
+  @Patch('employee/:employeeId/month-1')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Tenant completes a Head of Department's Month 1 check-in",
+  })
+  completeMonth1(
+    @Param('employeeId') employeeId: string,
+    @Body() dto: { note?: string },
+    @CurrentUser('sub') u: string,
+  ) {
+    return this.probationService.completeMonth1(employeeId, u, dto);
+  }
+
+  @Patch('employee/:employeeId/month-2')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Tenant completes a Head of Department's Month 2 review — written progress note required",
+  })
+  completeMonth2(
+    @Param('employeeId') employeeId: string,
+    @Body() dto: { progressNote: string },
+    @CurrentUser('sub') u: string,
+  ) {
+    return this.probationService.completeMonth2(employeeId, u, dto);
+  }
+
+  @Post('employee/:employeeId/month-3/start')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      "Tenant starts a Head of Department's Month 3 evaluation — generates a review cycle",
+  })
+  startMonth3(
+    @Param('employeeId') employeeId: string,
+    @CurrentUser('sub') u: string,
+  ) {
+    return this.probationService.startMonth3Evaluation(employeeId, u);
+  }
 }

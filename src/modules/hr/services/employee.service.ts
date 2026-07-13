@@ -37,6 +37,13 @@ import { OffboardingService } from './offboarding.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 // import { ProbationService } from './probation.service';
 
+export interface DirectoryEmployee {
+  _id: string;
+  firstName: string;
+  lastName: string;
+  jobTitle: string;
+}
+
 @Injectable()
 export class EmployeeService {
   constructor(
@@ -480,7 +487,7 @@ export class EmployeeService {
       employeeNumber,
       jobTitle: dto.jobTitle,
       tempPassword,
-      loginUrl: `${process.env.TENANT_APP_URL}/login`,
+      loginUrl: `${process.env.TENANT_APP_URL}`,
     });
 
     return employee;
@@ -560,6 +567,7 @@ export class EmployeeService {
 
     return { message: 'Welcome email resent successfully.' };
   }
+
   // ═══════════════════════════════════════════════════════════
   // GET EMPLOYEES
   // ═══════════════════════════════════════════════════════════
@@ -601,6 +609,26 @@ export class EmployeeService {
     ]);
 
     return paginate(items, total, page, limit);
+  }
+
+  async getEmployeeDirectory(tenantId: string): Promise<DirectoryEmployee[]> {
+    const employees = await this.employeeModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        employmentStatus: {
+          $nin: [EmploymentStatus.TERMINATED, EmploymentStatus.RESIGNED],
+        },
+      })
+      .select('firstName lastName jobTitle')
+      .sort({ firstName: 1 })
+      .lean();
+
+    return employees.map((e) => ({
+      _id: (e._id as Types.ObjectId).toString(),
+      firstName: e.firstName,
+      lastName: e.lastName,
+      jobTitle: e.jobTitle,
+    }));
   }
 
   async getEmployeeById(
@@ -870,6 +898,31 @@ export class EmployeeService {
       reason: dto.reason ?? null,
       status: dto.status,
     });
+
+    // Only actual terminations get this notice — resignations are
+    // voluntary, the employee already knows.
+    if (dto.status === EmploymentStatus.TERMINATED) {
+      const tenant = await this.userModel
+        .findById(tenantId)
+        .select('tenantProfile firstName')
+        .lean();
+      const businessName =
+        (tenant as any)?.tenantProfile?.businessName ||
+        (tenant as any)?.firstName ||
+        'Your Organization';
+
+      await this.mailService
+        .sendEmployeeTerminated({
+          to: employee.email,
+          firstName: employee.firstName,
+          businessName,
+          endDate: employee.endDate as Date,
+          reason: dto.reason ?? null,
+        })
+        .catch(() => {
+          // Don't let an email failure undo the termination itself.
+        });
+    }
 
     return employee;
   }

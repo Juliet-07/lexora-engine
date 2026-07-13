@@ -7,6 +7,7 @@ export enum DisputeType {
   GRIEVANCE = 'grievance',
   DISCIPLINARY = 'disciplinary',
   INCIDENT = 'incident',
+  REPORT = 'report',
 }
 
 export enum DisputeTrack {
@@ -46,12 +47,33 @@ export enum DisputeOutcomeDecision {
   NO_ACTION = 'no_action',
 }
 
-export enum DisputeFormType {
-  D1 = 'D1', // Formal Grievance Form
-  D2 = 'D2', // Employee Warning Letter
-  D3 = 'D3', // Disciplinary Appeal Form
-  D4 = 'D4', // Notice to Attend Disciplinary Hearing
-  E1 = 'E1', // Employee Incident Report
+export enum GrievanceNature {
+  HARASSMENT_OR_BULLYING = 'harassment_or_bullying',
+  DISCRIMINATION = 'discrimination',
+  UNFAIR_TREATMENT = 'unfair_treatment',
+  VIOLATION_OF_POLICY = 'violation_of_policy',
+  PAY_OR_BENEFITS_DISPUTE = 'pay_or_benefits_dispute',
+  WORKING_CONDITIONS = 'working_conditions',
+  HEALTH_AND_SAFETY = 'health_and_safety',
+  OTHERS = 'others',
+}
+
+export enum InjurySeverity {
+  NO_INJURY = 'no_injury',
+  MINOR_INJURY = 'minor_injury',
+  SERIOUS_INJURY = 'serious_injury',
+  FATALITY = 'fatality',
+}
+
+export enum HearingMode {
+  PHYSICAL = 'physical',
+  ONLINE = 'online',
+}
+
+export enum MeetingPlatform {
+  GOOGLE_MEET = 'google_meet',
+  MICROSOFT_TEAMS = 'microsoft_teams',
+  ZOOM = 'zoom',
 }
 
 // ── Sub-schemas ───────────────────────────────────────────────────
@@ -80,6 +102,8 @@ class DisputeOutcome {
   @Prop({ required: true }) recordedBy: Types.ObjectId;
   @Prop() notes: string;
   @Prop() attachmentUrl: string;
+  @Prop({ default: null }) emailSentAt: Date | null;
+  @Prop({ default: null }) terminationTriggerError: string | null;
 }
 
 @Schema({ _id: false })
@@ -109,12 +133,10 @@ class ExternalEscalation {
 }
 
 @Schema({ _id: false })
-class DisputeForm {
-  @Prop({ required: true, enum: DisputeFormType }) formType: string;
-  @Prop({ type: Object }) fields: Record<string, any>;
-  @Prop() attachmentUrl: string;
-  @Prop({ default: Date.now }) createdAt: Date;
-  @Prop({ required: true }) createdBy: Types.ObjectId;
+class RespondentResponse {
+  @Prop({ required: true, type: Types.ObjectId }) respondentId: Types.ObjectId;
+  @Prop({ required: true }) text: string;
+  @Prop({ required: true }) respondedAt: Date;
 }
 
 // ── Main schema ───────────────────────────────────────────────────
@@ -148,11 +170,14 @@ export class DisputeCase {
 
   @Prop({ required: true, type: Types.ObjectId }) filedBy: Types.ObjectId;
 
-  @Prop({ required: true, type: Types.ObjectId })
-  complainantId: Types.ObjectId;
-
   @Prop({ type: Types.ObjectId, default: null })
-  respondentId: Types.ObjectId | null;
+  complainantId: Types.ObjectId | null;
+
+  @Prop({ type: [Types.ObjectId], default: [] })
+  respondentIds: Types.ObjectId[];
+
+  @Prop({ required: true, enum: ['manager', 'tenant'] })
+  resolverLevel: string;
 
   @Prop({ required: true }) description: string;
 
@@ -175,13 +200,37 @@ export class DisputeCase {
   @Prop({ type: Object, default: null })
   externalEscalation: ExternalEscalation | null;
 
-  @Prop({ type: [Object], default: [] }) forms: DisputeForm[];
+  // ── Grievance-only fields ──────────────────────────────────────
+  @Prop({ enum: GrievanceNature, default: null })
+  natureOfGrievance: string | null;
+
+  @Prop({ default: null }) adverseEffect: string | null;
+
+  @Prop({ default: null }) informalResolutionSteps: string | null;
+
+  @Prop({ default: null }) desiredOutcome: string | null;
+
+  @Prop({ type: [Object], default: [] })
+  respondentResponses: RespondentResponse[];
+
+  // ── Incident-only fields ───────────────────────────────────────
+  @Prop({ default: null }) causeOfIncident: string | null;
+
+  @Prop({ enum: InjurySeverity, default: null })
+  injurySeverity: string | null;
+
+  @Prop({ default: null }) natureOfInjury: string | null;
+
+  @Prop({ default: null }) medicalTreatmentProvided: string | null;
 
   // Hearing details
   @Prop({ type: Object, default: null })
   hearing: {
     scheduledAt: Date;
-    venue: string;
+    mode: string;
+    venue: string | null;
+    meetingPlatform: string | null;
+    meetingLink: string | null;
     scheduledBy: Types.ObjectId;
     notes: string;
   } | null;

@@ -236,14 +236,25 @@ export class ProbationService {
     managerUserId: string,
     employeeId: string,
   ): Promise<EmployeeDocument> {
+    const subject = await this.employeeModel.findById(employeeId);
+    if (!subject) throw new NotFoundException('Employee not found.');
+
+    if (subject.hierarchyRole === 'head_of_department') {
+      const isTheirTenant =
+        subject.reportsToTenantId &&
+        subject.reportsToTenantId.toString() === managerUserId;
+
+      if (!isTheirTenant) {
+        throw new ForbiddenException("Only this HOD's tenant can do this.");
+      }
+      return subject;
+    }
+
     const manager = await this.employeeModel.findOne({
       userId: new Types.ObjectId(managerUserId),
     });
     if (!manager)
       throw new ForbiddenException("Only this employee's manager can do this.");
-
-    const subject = await this.employeeModel.findById(employeeId);
-    if (!subject) throw new NotFoundException('Employee not found.');
 
     const isRealManager =
       subject.reportsToManagerId &&

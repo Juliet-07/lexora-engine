@@ -26,6 +26,7 @@ import {
   EmployeeService,
   LeaveService,
   EmployeeDocumentService,
+  EmployeeRecordService,
 } from '../services';
 import {
   CreateEmployeeDto,
@@ -37,6 +38,7 @@ import {
   ReviewLeaveRequestDto,
   UploadEmployeeDocumentDto,
   PromoteToHeadOfDepartmentDto,
+  AddEmployeeRecordDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -103,6 +105,7 @@ export class HrTenantController {
     private readonly leaveService: LeaveService,
     private readonly attendanceService: AttendanceService,
     private readonly documentService: EmployeeDocumentService,
+    private readonly recordService: EmployeeRecordService,
   ) {}
 
   // ── Stats ──────────────────────────────────────────────────
@@ -345,6 +348,30 @@ export class HrTenantController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.employeeService.resendWelcomeEmail(t || u, employeeId);
+  }
+
+  @Post('employees/:id/records')
+  @ApiOperation({
+    summary:
+      'Add a standalone HR record to an employee (warning, suspension, termination, or note) — not a dispute case',
+  })
+  addRecord(
+    @Param('id') employeeId: string,
+    @Body() dto: AddEmployeeRecordDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.recordService.addRecord(t || u, employeeId, u, dto);
+  }
+
+  @Get('employees/:id/records')
+  @ApiOperation({ summary: "Get an employee's HR records" })
+  getRecords(
+    @Param('id') employeeId: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('sub') u: string,
+  ) {
+    return this.recordService.getRecordsForEmployee(t || u, employeeId);
   }
 
   // ═══════════════════════════════════════════════════════════

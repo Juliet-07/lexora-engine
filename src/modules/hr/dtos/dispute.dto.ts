@@ -5,15 +5,29 @@ import {
   IsArray,
   IsDateString,
   IsMongoId,
-  IsObject,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   DisputeType,
   DisputeOutcomeDecision,
-  DisputeFormType,
+  GrievanceNature,
+  InjurySeverity,
+  HearingMode,
+  MeetingPlatform,
 } from '../schemas';
+
+// ── Attachment sub-shape for filing-time uploads ───────────────────
+export class DisputeAttachmentDto {
+  @ApiProperty()
+  @IsString()
+  name: string;
+
+  @ApiProperty()
+  @IsString()
+  url: string;
+}
 
 // ── Open a case ───────────────────────────────────────────────────
 export class OpenDisputeCaseDto {
@@ -26,10 +40,14 @@ export class OpenDisputeCaseDto {
   @MinLength(10)
   description: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Employee IDs involved in this case (multi-select)',
+  })
   @IsOptional()
-  @IsMongoId()
-  respondentId?: string;
+  @IsArray()
+  @IsMongoId({ each: true })
+  respondentIds?: string[];
 
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
@@ -40,7 +58,85 @@ export class OpenDisputeCaseDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsDateString()
-  filedAt?: string; // defaults to now if not provided
+  filedAt?: string;
+
+  @ApiPropertyOptional({
+    type: [DisputeAttachmentDto],
+    description: 'Documents or screenshots attached at filing time',
+  })
+  @IsOptional()
+  @IsArray()
+  attachments?: DisputeAttachmentDto[];
+
+  // ── Grievance-only fields — required when type is "grievance" ───
+  @ApiPropertyOptional({ enum: GrievanceNature })
+  @ValidateIf((o) => o.type === DisputeType.GRIEVANCE)
+  @IsEnum(GrievanceNature)
+  natureOfGrievance?: string;
+
+  @ApiPropertyOptional({
+    description: 'How has this adversely affected you?',
+  })
+  @ValidateIf((o) => o.type === DisputeType.GRIEVANCE)
+  @IsString()
+  @MinLength(5)
+  adverseEffect?: string;
+
+  @ApiPropertyOptional({
+    description: 'Steps taken for informal resolution and outcome, if any',
+  })
+  @IsOptional()
+  @IsString()
+  informalResolutionSteps?: string;
+
+  @ApiPropertyOptional({
+    description: 'What specific outcome or remedy are you seeking?',
+  })
+  @ValidateIf((o) => o.type === DisputeType.GRIEVANCE)
+  @IsString()
+  @MinLength(5)
+  desiredOutcome?: string;
+
+  // ── Incident-only fields — required when type is "incident" ─────
+  @ApiPropertyOptional({
+    description: 'What do you believe caused this incident?',
+  })
+  @ValidateIf((o) => o.type === DisputeType.INCIDENT)
+  @IsString()
+  @MinLength(5)
+  causeOfIncident?: string;
+
+  @ApiPropertyOptional({ enum: InjurySeverity })
+  @ValidateIf((o) => o.type === DisputeType.INCIDENT)
+  @IsEnum(InjurySeverity)
+  injurySeverity?: string;
+
+  // Only required if an injury actually occurred
+  @ApiPropertyOptional({
+    description: 'Nature of injury and body part affected, if applicable',
+  })
+  @ValidateIf(
+    (o) =>
+      o.type === DisputeType.INCIDENT &&
+      o.injurySeverity &&
+      o.injurySeverity !== InjurySeverity.NO_INJURY,
+  )
+  @IsString()
+  @MinLength(3)
+  natureOfInjury?: string;
+
+  @ApiPropertyOptional({
+    description: 'Medical treatment provided / referral made',
+  })
+  @ValidateIf(
+    (o) =>
+      o.type === DisputeType.INCIDENT &&
+      o.injurySeverity &&
+      o.injurySeverity !== InjurySeverity.NO_INJURY,
+  )
+  @IsString()
+  @MinLength(3)
+  medicalTreatmentProvided?: string;
 }
 
 // ── Acknowledge ───────────────────────────────────────────────────
@@ -77,9 +173,27 @@ export class ScheduleHearingDto {
   @IsDateString()
   scheduledAt: string;
 
-  @ApiProperty()
+  @ApiProperty({ enum: HearingMode })
+  @IsEnum(HearingMode)
+  mode: string;
+
+  @ApiPropertyOptional({ description: 'Required when mode is "physical"' })
+  @ValidateIf((o) => o.mode === HearingMode.PHYSICAL)
   @IsString()
-  venue: string;
+  venue?: string;
+
+  @ApiPropertyOptional({
+    enum: MeetingPlatform,
+    description: 'Required when mode is "online"',
+  })
+  @ValidateIf((o) => o.mode === HearingMode.ONLINE)
+  @IsEnum(MeetingPlatform)
+  meetingPlatform?: string;
+
+  @ApiPropertyOptional({ description: 'Required when mode is "online"' })
+  @ValidateIf((o) => o.mode === HearingMode.ONLINE)
+  @IsString()
+  meetingLink?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -102,6 +216,14 @@ export class RecordOutcomeDto {
   @IsOptional()
   @IsString()
   attachmentUrl?: string;
+}
+
+// ── Respondent replies to a case ─────────────────────────────────
+export class RespondToDisputeDto {
+  @ApiProperty({ description: "The respondent's reply to the case" })
+  @IsString()
+  @MinLength(10)
+  response: string;
 }
 
 // ── File appeal (employee) ────────────────────────────────────────
@@ -147,34 +269,4 @@ export class CloseDisputeDto {
   @IsOptional()
   @IsString()
   notes?: string;
-}
-
-// ── Attach form ───────────────────────────────────────────────────
-export class AttachFormDto {
-  @ApiProperty({ enum: DisputeFormType })
-  @IsEnum(DisputeFormType)
-  formType: string;
-
-  @ApiPropertyOptional({
-    description: 'Structured form fields as key-value pairs',
-  })
-  @IsOptional()
-  @IsObject()
-  fields?: Record<string, any>;
-
-  @ApiPropertyOptional({ description: 'URL of uploaded form PDF' })
-  @IsOptional()
-  @IsString()
-  attachmentUrl?: string;
-}
-
-// ── Attach supporting document ────────────────────────────────────
-export class AttachDocumentDto {
-  @ApiProperty()
-  @IsString()
-  name: string;
-
-  @ApiProperty()
-  @IsString()
-  url: string;
 }

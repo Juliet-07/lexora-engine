@@ -46,6 +46,15 @@ export enum EmployeeHierarchyRole {
   HEAD_OF_DEPARTMENT = 'head_of_department',
 }
 
+export enum EmployeeRecordType {
+  NOTE = 'note',
+  FIRST_WARNING = 'first_warning',
+  SECOND_WARNING = 'second_warning',
+  FINAL_WARNING = 'final_warning',
+  SUSPENSION = 'suspension',
+  TERMINATION = 'termination',
+}
+
 @Schema({ _id: false })
 export class NextOfKin {
   @Prop({ default: null }) name: string | null;
@@ -405,3 +414,28 @@ export class EmployeeLoan {
 }
 
 export const EmployeeLoanSchema = SchemaFactory.createForClass(EmployeeLoan);
+
+export type EmployeeRecordDocument = EmployeeRecord & Document;
+@Schema({ timestamps: true, collection: 'employee_records' })
+export class EmployeeRecord {
+  @Prop({ required: true, type: Types.ObjectId }) tenantId: Types.ObjectId;
+
+  @Prop({ required: true, type: Types.ObjectId })
+  employeeId: Types.ObjectId;
+
+  @Prop({ required: true, enum: EmployeeRecordType }) type: string;
+
+  @Prop({ required: true }) description: string;
+
+  @Prop({ required: true, type: Types.ObjectId })
+  recordedBy: Types.ObjectId;
+
+  @Prop({ required: true }) recordedAt: Date;
+
+  @Prop({ default: null }) emailSentAt: Date | null;
+
+  @Prop({ default: null }) terminationTriggerError: string | null;
+}
+
+export const EmployeeRecordSchema =
+  SchemaFactory.createForClass(EmployeeRecord);

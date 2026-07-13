@@ -108,6 +108,38 @@ import {
   SignedContractCopyEmailData,
   signedContractCopyTemplate,
 } from './templates/signed-contract-copy.template';
+import {
+  DisputeFiledAgainstYouData,
+  disputeFiledAgainstYouTemplate,
+} from './templates/dispute-filed-against-you.template';
+import {
+  DisputeAcknowledgedData,
+  disputeAcknowledgedTemplate,
+} from './templates/dispute-acknowledged.template';
+import {
+  DisputeHearingScheduledData,
+  disputeHearingScheduledTemplate,
+} from './templates/dispute-hearing-scheduled.template';
+import {
+  DisputeWarningIssuedData,
+  disputeWarningIssuedTemplate,
+} from './templates/dispute-warning-issued.template';
+import {
+  DisputeSuspensionEmailData,
+  disputeSuspensionEmailTemplate,
+} from './templates/dispute-suspension-letter.template';
+import {
+  EmployeeTerminatedData,
+  employeeTerminatedTemplate,
+} from './templates/employee-terminated.template';
+import {
+  DisputeRespondentReplyData,
+  disputeRespondentReplyTemplate,
+} from './templates/dispute-respondent-reply.template';
+import {
+  EmployeeRecordAddedData,
+  employeeRecordAddedTemplate,
+} from './templates/employee-record-added.template';
 
 @Injectable()
 export class EmailService {
@@ -468,6 +500,104 @@ export class EmailService {
             },
           ]
         : undefined,
+    });
+  }
+
+  async sendDisputeFiledAgainstYou(
+    data: DisputeFiledAgainstYouData,
+  ): Promise<void> {
+    const { subject, html } = disputeFiledAgainstYouTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendDisputeAcknowledged(data: DisputeAcknowledgedData): Promise<void> {
+    const { subject, html } = disputeAcknowledgedTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendDisputeHearingScheduled(
+    data: DisputeHearingScheduledData,
+  ): Promise<void> {
+    const { subject, html } = disputeHearingScheduledTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendDisputeWarningIssued(
+    data: DisputeWarningIssuedData,
+  ): Promise<void> {
+    const { subject, html } = disputeWarningIssuedTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendDisputeSuspensionLetter(
+    data: DisputeSuspensionEmailData,
+    letterPdf: Buffer,
+  ): Promise<void> {
+    const { subject, html } = disputeSuspensionEmailTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+      attachments: [
+        {
+          filename: `Suspension-Letter-${data.caseNumber}.pdf`,
+          content: letterPdf,
+          contentType: 'application/pdf',
+        },
+      ],
+    });
+  }
+
+  async sendEmployeeTerminated(data: EmployeeTerminatedData): Promise<void> {
+    const { subject, html } = employeeTerminatedTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${data.businessName}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendDisputeRespondentReply(
+    data: DisputeRespondentReplyData,
+  ): Promise<void> {
+    const { subject, html } = disputeRespondentReplyTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendEmployeeRecordAdded(data: EmployeeRecordAddedData): Promise<void> {
+    const { subject, html } = employeeRecordAddedTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
     });
   }
 }

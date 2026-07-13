@@ -49,7 +49,12 @@ import {
   UpdateManagerReviewSectionDto,
   OpenDisputeCaseDto,
   FileAppealDto,
-  AttachDocumentDto,
+  CloseDisputeDto,
+  RecordOutcomeDto,
+  ScheduleHearingDto,
+  InvestigateDisputeDto,
+  AcknowledgeDisputeDto,
+  RespondToDisputeDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -99,6 +104,20 @@ const certificateFileFilter = (
     );
   }
 };
+
+const disputeDocumentStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(process.cwd(), 'uploads', 'disputes', 'documents');
+    if (!existsSync(uploadPath)) {
+      mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) => {
+    const ext = extname(file.originalname);
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
 
 const employeeDocumentStorage = diskStorage({
   destination: (_req, _file, cb) => {
@@ -858,6 +877,20 @@ export class HrEmployeeController {
   // }
 
   // ===============================================================
+  // DIRECTORY (used by pickers like "employees involved" on disputes)
+  // ===============================================================
+  @Get('directory')
+  @ApiOperation({
+    summary: 'Lightweight list of all active employees in the tenant',
+  })
+  getDirectory(
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('sub') u: string,
+  ) {
+    return this.employeeService.getEmployeeDirectory(t || u);
+  }
+
+  // ===============================================================
   // DISPUTE MANAGEMENT
   // ===============================================================
   @Post('disputes')
@@ -877,6 +910,17 @@ export class HrEmployeeController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.disputeService.getMyCases(t || u, u);
+  }
+
+  @Get('disputes/against-me')
+  @ApiOperation({
+    summary: 'Cases where I am named as a respondent',
+  })
+  getCasesAgainstMe(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.getCasesAgainstMe(t || u, u);
   }
 
   @Get('disputes/team-cases')
@@ -901,7 +945,102 @@ export class HrEmployeeController {
     return this.disputeService.getCasesForHod(t || userId, userId);
   }
 
-  @Post(':caseId/appeal')
+  // ── Manager resolution actions ─────────────────────────────────
+  @Get('disputes/:caseId')
+  @ApiOperation({
+    summary: 'Get full detail of a case involving one of your direct reports',
+  })
+  getCaseForManager(
+    @Param('caseId') caseId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.getCaseByIdForManager(t || u, u, caseId);
+  }
+
+  @Patch('disputes/:caseId/respond')
+  @ApiOperation({ summary: 'Respondent replies to a case filed against them' })
+  respondToDispute(
+    @Param('caseId') caseId: string,
+    @Body() dto: RespondToDisputeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.respondToDispute(t || u, caseId, u, dto);
+  }
+
+  @Patch('disputes/:caseId/manager/acknowledge')
+  @ApiOperation({ summary: 'Manager acknowledges a case assigned to them' })
+  acknowledgeAsManager(
+    @Param('caseId') caseId: string,
+    @Body() dto: AcknowledgeDisputeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.acknowledgeAsManager(t || u, caseId, u, dto);
+  }
+
+  @Patch('disputes/:caseId/manager/investigate')
+  @ApiOperation({ summary: 'Manager records investigation findings' })
+  investigateAsManager(
+    @Param('caseId') caseId: string,
+    @Body() dto: InvestigateDisputeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.investigateAsManager(t || u, caseId, u, dto);
+  }
+
+  @Patch('disputes/:caseId/manager/schedule-hearing')
+  @ApiOperation({ summary: 'Manager schedules a hearing' })
+  scheduleHearingAsManager(
+    @Param('caseId') caseId: string,
+    @Body() dto: ScheduleHearingDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.scheduleHearingAsManager(t || u, caseId, u, dto);
+  }
+
+  @Patch('disputes/:caseId/manager/outcome')
+  @ApiOperation({ summary: 'Manager records the outcome decision' })
+  recordOutcomeAsManager(
+    @Param('caseId') caseId: string,
+    @Body() dto: RecordOutcomeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.recordOutcomeAsManager(t || u, caseId, u, dto);
+  }
+
+  @Patch('disputes/:caseId/manager/close')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Manager closes a case' })
+  closeCaseAsManager(
+    @Param('caseId') caseId: string,
+    @Body() dto: CloseDisputeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.closeCaseAsManager(t || u, caseId, u, dto);
+  }
+
+  @Patch('disputes/:caseId/manager/escalate-to-tenant')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Manager escalates a case to HR/tenant — unable to resolve at their level',
+  })
+  escalateToTenant(
+    @Param('caseId') caseId: string,
+    @Body('notes') notes: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.escalateToTenant(t || u, caseId, u, notes);
+  }
+
+  @Post('disputes/:caseId/appeal')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'File an appeal against an outcome (within 5 working days)',
@@ -915,14 +1054,30 @@ export class HrEmployeeController {
     return this.disputeService.fileAppeal(t || u, caseId, u, dto);
   }
 
-  @Post(':caseId/documents')
+  @Post('disputes/:caseId/documents')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: disputeDocumentStorage,
+      fileFilter: employeeDocumentFileFilter,
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
   @ApiOperation({ summary: 'Attach a supporting document (employee side)' })
   attachDocument(
     @Param('caseId') caseId: string,
-    @Body() dto: AttachDocumentDto,
+    @UploadedFile() file: Express.Multer.File,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.disputeService.attachDocument(t || u, caseId, u, dto);
+    return this.disputeService.attachDocument(t || u, caseId, u, file);
   }
 }
