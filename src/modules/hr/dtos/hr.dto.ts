@@ -269,3 +269,26 @@ export class AddEmployeeRecordDto {
   @MinLength(10)
   description: string;
 }
+
+export class SuspendEmployeeDto {
+  @ApiProperty({ example: 'Breach of company policy — under investigation' })
+  @IsString()
+  @MinLength(10)
+  reason: string;
+
+  @ApiProperty({
+    example: '2026-08-15',
+    description:
+      'When the suspension ends — reactivation is automatic at this date',
+  })
+  @IsDateString()
+  endDate: string;
+
+  @ApiPropertyOptional({
+    description:
+      'The Contract document ID if a suspension letter was generated and issued via the Contracts system',
+  })
+  @IsOptional()
+  @IsMongoId()
+  contractId?: string;
+}

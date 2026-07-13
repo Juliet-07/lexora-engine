@@ -33,7 +33,8 @@ import {
   TenantRespondToCommentDto,
   EditContractBodyDto,
   CountersignContractDto,
-} from '../dtos/contract.dto';
+  IssueLetterDto,
+} from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
@@ -260,6 +261,36 @@ export class ContractController {
       dto,
       ipAddress,
       userAgent,
+    );
+  }
+
+  @Post(':contractId/issue')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Issue a one-way letter (requiresSignature: false) — signs, renders, and emails it in one step',
+  })
+  async issueLetter(
+    @Param('contractId') contractId: string,
+    @Body() dto: IssueLetterDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Req() req: Request,
+  ) {
+    const ipAddress =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.ip ||
+      null;
+    const userAgent = req.headers['user-agent'] || null;
+    const businessName = await resolveBusinessName(this.userModel, t || u);
+    return this.contractService.issueLetter(
+      t || u,
+      contractId,
+      u,
+      dto,
+      ipAddress,
+      userAgent,
+      businessName,
     );
   }
 

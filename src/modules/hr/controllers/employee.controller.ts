@@ -314,6 +314,10 @@ export class HrEmployeeController {
       bankAccountNumber?: string;
       nationality?: string;
       nationalId?: string;
+      educationLevel?: string;
+      occupationalCategory?: string;
+      hasDisability?: boolean;
+      disabilityNote?: string;
     },
   ) {
     return this.employeeService.updateMyProfile(userId, dto);

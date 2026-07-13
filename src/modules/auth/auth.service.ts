@@ -28,7 +28,7 @@ import {
   ClientProfileDocument,
   ClientProfileRecord,
 } from '../tenant/schemas/client-profile.schema';
-import { Employee, EmployeeDocument } from '../hr/schemas';
+import { Employee, EmployeeDocument, EmploymentStatus } from '../hr/schemas';
 
 @Injectable()
 export class AuthService {
@@ -76,6 +76,27 @@ export class AuthService {
       .select('+password');
 
     if (!user) throw new UnauthorizedException('Invalid credentials');
+
+    let linkedEmployee: EmployeeDocument | null = null;
+    if (user.userType === UserType.EMPLOYEE) {
+      linkedEmployee = await this.employeeModel.findOne({ userId: user._id });
+    }
+
+    if (
+      user.status === AccountStatus.SUSPENDED &&
+      linkedEmployee?.employmentStatus === EmploymentStatus.SUSPENDED &&
+      linkedEmployee.suspensionEndDate &&
+      linkedEmployee.suspensionEndDate <= new Date()
+    ) {
+      linkedEmployee.employmentStatus = EmploymentStatus.ACTIVE;
+      linkedEmployee.suspensionReason = null;
+      linkedEmployee.suspensionStartDate = null;
+      linkedEmployee.suspensionEndDate = null;
+      await linkedEmployee.save();
+
+      user.status = AccountStatus.ACTIVE;
+      await user.save();
+    }
 
     if (user.status === AccountStatus.SUSPENDED) {
       throw new UnauthorizedException(

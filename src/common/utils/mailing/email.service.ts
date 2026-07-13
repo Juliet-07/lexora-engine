@@ -140,6 +140,18 @@ import {
   EmployeeRecordAddedData,
   employeeRecordAddedTemplate,
 } from './templates/employee-record-added.template';
+import {
+  IssuedDocumentEmailData,
+  issuedDocumentTemplate,
+} from './templates/issued-document.template';
+import {
+  NewJobOpeningEmailData,
+  newJobOpeningTemplate,
+} from './templates/new-job-opening.template';
+import {
+  JobOpeningFilledEmailData,
+  jobOpeningFilledTemplate,
+} from './templates/job-opening-filled.template';
 
 @Injectable()
 export class EmailService {
@@ -593,6 +605,47 @@ export class EmailService {
 
   async sendEmployeeRecordAdded(data: EmployeeRecordAddedData): Promise<void> {
     const { subject, html } = employeeRecordAddedTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendIssuedDocument(
+    data: IssuedDocumentEmailData,
+    pdfBuffer: Buffer,
+  ): Promise<void> {
+    const { subject, html } = issuedDocumentTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+      attachments: [
+        {
+          filename: `${data.documentName.replace(/\s+/g, '_')}.pdf`,
+          content: pdfBuffer,
+        },
+      ],
+    });
+  }
+
+  async sendNewJobOpeningNotice(data: NewJobOpeningEmailData): Promise<void> {
+    const { subject, html } = newJobOpeningTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendJobOpeningFilledNotice(
+    data: JobOpeningFilledEmailData,
+  ): Promise<void> {
+    const { subject, html } = jobOpeningFilledTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

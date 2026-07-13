@@ -39,6 +39,9 @@ import {
   DisputeService,
   DisputeLetterPdfService,
   EmployeeRecordService,
+  JobOpeningService,
+  HrOverviewService,
+  HrReportsService,
 } from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailService } from '../../common/utils/mailing/email.service';
@@ -64,6 +67,7 @@ import {
   ReviewCycleController,
   ProbationTenantController,
   DisputeTenantController,
+  JobOpeningController,
 } from './controllers';
 import {
   LeaveRequest,
@@ -124,6 +128,8 @@ import {
   ProbationRecordSchema,
   DisputeCase,
   DisputeCaseSchema,
+  JobOpening,
+  JobOpeningSchema,
 } from './schemas';
 
 @Module({
@@ -174,6 +180,10 @@ import {
         name: EmployeeRecord.name,
         schema: EmployeeRecordSchema,
       },
+      {
+        name: JobOpening.name,
+        schema: JobOpeningSchema,
+      },
     ]),
   ],
   controllers: [
@@ -198,6 +208,7 @@ import {
     ContractSigningController,
     ProbationTenantController,
     DisputeTenantController,
+    JobOpeningController,
   ],
   providers: [
     EmployeeService,
@@ -231,6 +242,9 @@ import {
     DisputeService,
     DisputeLetterPdfService,
     EmployeeRecordService,
+    JobOpeningService,
+    HrOverviewService,
+    HrReportsService,
   ],
   exports: [
     EmployeeService,

@@ -18,9 +18,12 @@ import {
 } from '@nestjs/swagger';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { CandidateService } from '../services/candidate.service';
-import { OffboardingService } from '../services/offboarding.service';
-import { SuccessionPlanService } from '../services/succession-plan.service';
+import {
+  CandidateService,
+  OffboardingService,
+  SuccessionPlanService,
+  JobOpeningService,
+} from '../services';
 import {
   CreateCandidateDto,
   UpdateCandidateDto,
@@ -29,7 +32,9 @@ import {
   CreateSuccessionPlanDto,
   UpdateSuccessionPlanDto,
   AddSuccessorDto,
-} from '../dtos/recruitment.dto';
+  CreateJobOpeningDto,
+  UpdateJobOpeningDto,
+} from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
@@ -254,5 +259,57 @@ export class SuccessionPlanController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.planService.removeSuccessor(t || u, planId, employeeId);
+  }
+}
+
+@ApiTags('HR — Job Openings (Tenant)')
+@ApiBearerAuth()
+@UserTypes(UserType.TENANT)
+@Controller('hr/job-openings')
+export class JobOpeningController {
+  constructor(private readonly jobOpeningService: JobOpeningService) {}
+
+  @Post()
+  @ApiOperation({
+    summary:
+      'Create a job opening — all active employees are emailed a vacancy notice',
+  })
+  create(
+    @Body() dto: CreateJobOpeningDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.jobOpeningService.create(t || u, dto);
+  }
+
+  @Get()
+  @ApiOperation({ summary: 'List all job openings' })
+  getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
+    return this.jobOpeningService.getAll(t || u);
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary:
+      'Update a job opening — setting status to Filled emails all active employees',
+  })
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateJobOpeningDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.jobOpeningService.update(t || u, id, dto);
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Delete a job opening' })
+  async delete(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    await this.jobOpeningService.delete(t || u, id);
+    return { success: true };
   }
 }

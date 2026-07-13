@@ -21,6 +21,20 @@ export class CreateContractTemplateDto {
   body: string;
 
   @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
+
+  @ApiPropertyOptional({ enum: ['contract', 'letter'], default: 'contract' })
+  @IsOptional()
+  @IsIn(['contract', 'letter'])
+  category?: 'contract' | 'letter';
+
+  @ApiPropertyOptional({
+    description:
+      'False for a one-way letter (e.g. a suspension letter) that only the tenant signs',
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  requiresSignature?: boolean;
 }
 
 export class EditContractBodyDto {
@@ -41,6 +55,16 @@ export class UpdateContractTemplateDto {
   @ApiPropertyOptional() @IsOptional() @IsString() body?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() isActive?: boolean;
+
+  @ApiPropertyOptional({ enum: ['contract', 'letter'] })
+  @IsOptional()
+  @IsIn(['contract', 'letter'])
+  category?: 'contract' | 'letter';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  requiresSignature?: boolean;
 }
 
 export class GenerateContractFromCandidateDto {
@@ -51,6 +75,27 @@ export class GenerateContractFromCandidateDto {
 export class GenerateContractForEmployeeDto {
   @ApiProperty() @IsMongoId() employeeId: string;
   @ApiProperty() @IsMongoId() templateId: string;
+
+  @ApiPropertyOptional({
+    description: 'For letters — e.g. the grounds for a suspension',
+  })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+
+  @ApiPropertyOptional({
+    description: 'For letters — e.g. suspension start date',
+  })
+  @IsOptional()
+  @IsString()
+  effectiveDate?: string;
+
+  @ApiPropertyOptional({
+    description: 'For letters — e.g. suspension end date',
+  })
+  @IsOptional()
+  @IsString()
+  endDate?: string;
 }
 
 export class SendContractDto {
@@ -86,6 +131,12 @@ export class DeclineContractDto {
 }
 
 export class CountersignContractDto {
+  @ApiProperty() @IsString() signerName: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() signatureImageData?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() stampImageData?: string;
+}
+
+export class IssueLetterDto {
   @ApiProperty() @IsString() signerName: string;
   @ApiPropertyOptional() @IsOptional() @IsString() signatureImageData?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() stampImageData?: string;

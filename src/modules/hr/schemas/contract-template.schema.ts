@@ -4,11 +4,6 @@ import { WorkerCategory } from './employee.schema';
 
 export type ContractTemplateDocument = ContractTemplate & Document;
 
-// The fixed, known set of merge fields a template body may
-// reference. Kept as a real allow-list (not free-form) so template
-// validation can catch a typo'd placeholder at SAVE time, rather
-// than silently leaving "{{salry}}" unreplaced in a generated
-// contract months later.
 export const AVAILABLE_MERGE_FIELDS = [
   'employeeName',
   'jobTitle',
@@ -19,8 +14,16 @@ export const AVAILABLE_MERGE_FIELDS = [
   'workerCategory',
   'tenantCompanyName',
   'todayDate',
+  'reason',
+  'effectiveDate',
+  'endDate',
 ] as const;
 export type MergeField = (typeof AVAILABLE_MERGE_FIELDS)[number];
+
+export enum TemplateCategory {
+  CONTRACT = 'contract',
+  LETTER = 'letter',
+}
 
 @Schema({ timestamps: true, collection: 'hr_contract_templates' })
 export class ContractTemplate {
@@ -34,10 +37,16 @@ export class ContractTemplate {
   workerCategory: WorkerCategory;
 
   @Prop({ required: true })
-  body: string; // raw text with {{placeholder}} syntax, NOT yet rendered
+  body: string;
 
   @Prop({ default: null })
   description: string | null;
+
+  @Prop({ enum: TemplateCategory, default: TemplateCategory.CONTRACT })
+  category: TemplateCategory;
+
+  @Prop({ default: true })
+  requiresSignature: boolean;
 
   @Prop({ default: true })
   isActive: boolean;

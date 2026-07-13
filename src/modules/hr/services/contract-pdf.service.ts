@@ -9,12 +9,6 @@ const MUTED = '#777777';
 
 @Injectable()
 export class ContractPdfService {
-  // Builds the PDF as an in-memory Buffer — used both for email
-  // attachment (sendSignedCopy) and the tenant download route.
-  // Only meant to be called for FULLY EXECUTED (countersigned)
-  // contracts — enforced by the CALLER, not this method itself,
-  // since this service has no business knowing about status rules;
-  // it just draws whatever document it's given.
   async buildSignedContractPdf(
     contract: ContractDocument,
     firmName: string,
@@ -169,6 +163,119 @@ export class ContractPdfService {
             width: doc.page.width - 100,
             align: 'center',
           },
+        );
+
+      doc.end();
+    });
+  }
+
+  async buildIssuedLetterPdf(
+    contract: ContractDocument,
+    firmName: string,
+  ): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: 'A4', margin: 50 });
+      const chunks: Buffer[] = [];
+
+      doc.on('data', (chunk) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      doc.rect(0, 0, doc.page.width, 90).fill(PURPLE);
+      doc
+        .fillColor(GOLD)
+        .fontSize(9)
+        .font('Helvetica-Bold')
+        .text(firmName.toUpperCase(), 50, 28, { characterSpacing: 2 });
+      doc
+        .fillColor('#ffffff')
+        .fontSize(18)
+        .font('Helvetica')
+        .text(contract.templateName || 'Official Document', 50, 44);
+
+      doc.moveDown(4);
+      doc.y = 110;
+
+      doc
+        .fillColor(INK)
+        .font('Helvetica')
+        .fontSize(11)
+        .text(contract.renderedBody, 50, doc.y, {
+          width: doc.page.width - 100,
+          align: 'left',
+          lineGap: 4,
+        });
+
+      if (doc.y > doc.page.height - 180) {
+        doc.addPage();
+      } else {
+        doc.moveDown(3);
+      }
+
+      const sigTop = doc.y;
+
+      doc
+        .fontSize(9)
+        .fillColor(MUTED)
+        .font('Helvetica-Bold')
+        .text('ISSUED BY', 50, sigTop, { characterSpacing: 1 });
+
+      let sigY = sigTop + 16;
+      if (contract.tenantSignature?.signatureImageData) {
+        try {
+          const base64 =
+            contract.tenantSignature.signatureImageData.split(',')[1];
+          const imgBuffer = Buffer.from(base64, 'base64');
+          doc.image(imgBuffer, 50, sigY, { height: 40 });
+          sigY += 48;
+        } catch {
+          doc
+            .fontSize(15)
+            .fillColor(INK)
+            .font('Helvetica-Oblique')
+            .text(contract.tenantSignature?.signerName ?? '—', 50, sigY);
+          sigY += 24;
+        }
+      } else {
+        doc
+          .fontSize(15)
+          .fillColor(INK)
+          .font('Helvetica-Oblique')
+          .text(contract.tenantSignature?.signerName ?? '—', 50, sigY);
+        sigY += 24;
+      }
+
+      doc
+        .fontSize(9)
+        .fillColor(MUTED)
+        .font('Helvetica')
+        .text(
+          contract.tenantSignature
+            ? new Date(contract.tenantSignature.signedAt).toLocaleString()
+            : '',
+          50,
+          sigY,
+        );
+
+      if (contract.tenantSignature?.stampImageData) {
+        try {
+          const base64 = contract.tenantSignature.stampImageData.split(',')[1];
+          const imgBuffer = Buffer.from(base64, 'base64');
+          doc.image(imgBuffer, 50, sigY + 16, { height: 60 });
+        } catch {
+          // A bad stamp image should never crash the whole PDF.
+        }
+      }
+
+      doc
+        .fontSize(8)
+        .fillColor(MUTED)
+        .font('Helvetica')
+        .text(
+          `Issued by ${firmName} · ${new Date().toLocaleDateString()}`,
+          50,
+          doc.page.height - 40,
+          { width: doc.page.width - 100, align: 'center' },
         );
 
       doc.end();

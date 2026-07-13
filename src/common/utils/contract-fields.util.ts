@@ -57,6 +57,9 @@ export function buildMergeFieldsForEmployee(params: {
   salaryCurrency: string;
   workerCategory: string;
   tenantCompanyName: string;
+  reason?: string;
+  effectiveDate?: string;
+  endDate?: string;
 }): Record<string, string> {
   return {
     employeeName: params.employeeName,
@@ -68,5 +71,8 @@ export function buildMergeFieldsForEmployee(params: {
     workerCategory: params.workerCategory,
     tenantCompanyName: params.tenantCompanyName,
     todayDate: new Date().toISOString().slice(0, 10),
+    reason: params.reason ?? '',
+    effectiveDate: params.effectiveDate ?? '',
+    endDate: params.endDate ?? '',
   };
 }

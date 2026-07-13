@@ -19,6 +19,7 @@ import {
   UpdateEmployeeDto,
   EmployeeFilterDto,
   TerminateEmployeeDto,
+  SuspendEmployeeDto,
 } from '../dtos';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
 import {
@@ -825,6 +826,88 @@ export class EmployeeService {
     return employee as EmployeeDocument;
   }
 
+  async suspendEmployee(
+    tenantId: string,
+    employeeId: string,
+    dto: SuspendEmployeeDto,
+  ): Promise<EmployeeDocument> {
+    const employee = await this.employeeModel.findOne({
+      _id: employeeId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!employee) throw new NotFoundException('Employee not found');
+
+    if (
+      [EmploymentStatus.TERMINATED, EmploymentStatus.RESIGNED].includes(
+        employee.employmentStatus,
+      )
+    ) {
+      throw new BadRequestException(
+        'Cannot suspend someone who has already left the organization.',
+      );
+    }
+    if (employee.employmentStatus === EmploymentStatus.SUSPENDED) {
+      throw new ConflictException('This employee is already suspended.');
+    }
+
+    const endDate = new Date(dto.endDate);
+    if (endDate <= new Date()) {
+      throw new BadRequestException(
+        'Suspension end date must be in the future.',
+      );
+    }
+
+    employee.employmentStatus = EmploymentStatus.SUSPENDED;
+    employee.suspensionReason = dto.reason;
+    employee.suspensionStartDate = new Date();
+    employee.suspensionEndDate = endDate;
+    if (dto.contractId) {
+      employee.suspensionLetterContractId = new Types.ObjectId(dto.contractId);
+    }
+    await employee.save();
+
+    if (employee.userId) {
+      await this.userModel.findByIdAndUpdate(employee.userId, {
+        status: AccountStatus.SUSPENDED,
+      });
+    }
+
+    return employee;
+  }
+
+  // Manual early end to a suspension — the automatic path (login
+  // time, once suspensionEndDate has passed) is separate, in
+  // AuthService.login.
+  async reinstateEmployee(
+    tenantId: string,
+    employeeId: string,
+  ): Promise<EmployeeDocument> {
+    const employee = await this.employeeModel.findOne({
+      _id: employeeId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!employee) throw new NotFoundException('Employee not found');
+    if (employee.employmentStatus !== EmploymentStatus.SUSPENDED) {
+      throw new BadRequestException(
+        'This employee is not currently suspended.',
+      );
+    }
+
+    employee.employmentStatus = EmploymentStatus.ACTIVE;
+    employee.suspensionReason = null;
+    employee.suspensionStartDate = null;
+    employee.suspensionEndDate = null;
+    await employee.save();
+
+    if (employee.userId) {
+      await this.userModel.findByIdAndUpdate(employee.userId, {
+        status: AccountStatus.ACTIVE,
+      });
+    }
+
+    return employee;
+  }
+
   async terminateEmployee(
     tenantId: string,
     employeeId: string,
@@ -960,6 +1043,10 @@ export class EmployeeService {
       bankAccountNumber?: string;
       nationality?: string;
       nationalId?: string;
+      educationLevel?: string;
+      occupationalCategory?: string;
+      hasDisability?: boolean;
+      disabilityNote?: string;
     },
   ): Promise<EmployeeDocument> {
     const employee = await this.employeeModel.findOne({
@@ -981,6 +1068,14 @@ export class EmployeeService {
     if (dto.bankName !== undefined) update.bankName = dto.bankName;
     if (dto.bankAccountNumber !== undefined)
       update.bankAccountNumber = dto.bankAccountNumber;
+    if (dto.educationLevel !== undefined)
+      update.educationLevel = dto.educationLevel;
+    if (dto.occupationalCategory !== undefined)
+      update.occupationalCategory = dto.occupationalCategory;
+    if (dto.hasDisability !== undefined)
+      update.hasDisability = dto.hasDisability;
+    if (dto.disabilityNote !== undefined)
+      update.disabilityNote = dto.disabilityNote;
 
     const updated = await this.employeeModel
       .findByIdAndUpdate(employee._id, { $set: update }, { new: true })

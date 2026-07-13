@@ -53,6 +53,8 @@ export class ContractTemplateService {
       workerCategory: dto.workerCategory,
       body: dto.body,
       description: dto.description ?? null,
+      category: dto.category ?? 'contract',
+      requiresSignature: dto.requiresSignature ?? true,
     });
   }
 
@@ -70,6 +72,9 @@ export class ContractTemplateService {
     if (dto.name !== undefined) template.name = dto.name;
     if (dto.description !== undefined) template.description = dto.description;
     if (dto.isActive !== undefined) template.isActive = dto.isActive;
+    if (dto.category !== undefined) template.category = dto.category as any;
+    if (dto.requiresSignature !== undefined)
+      template.requiresSignature = dto.requiresSignature;
 
     await template.save();
     return template;

@@ -35,6 +35,7 @@ import {
   TenantRespondToCommentDto,
   EditContractBodyDto,
   CountersignContractDto,
+  IssueLetterDto,
 } from '../dtos/contract.dto';
 import { ContractPdfService } from './contract-pdf.service';
 
@@ -144,6 +145,9 @@ export class ContractService {
       salaryCurrency: employee.salaryCurrency,
       workerCategory: employeeCategory,
       tenantCompanyName,
+      reason: dto.reason,
+      effectiveDate: dto.effectiveDate,
+      endDate: dto.endDate,
     });
 
     return this.contractModel.create({
@@ -157,6 +161,7 @@ export class ContractService {
       workerCategory: employeeCategory,
       renderedBody: renderContractBody(template.body, fields),
       status: ContractStatus.DRAFT,
+      requiresSignature: template.requiresSignature,
     });
   }
 
@@ -190,6 +195,12 @@ export class ContractService {
     expiresInHours?: number,
   ): Promise<ContractDocument> {
     const contract = await this.getById(tenantId, contractId);
+
+    if (contract.requiresSignature === false) {
+      throw new BadRequestException(
+        'This document is a one-way letter — use "Issue Letter" instead of sending it for signature.',
+      );
+    }
 
     if (contract.status === ContractStatus.SIGNED) {
       throw new ConflictException('This contract has already been signed.');
@@ -459,6 +470,12 @@ export class ContractService {
   ): Promise<ContractDocument> {
     const contract = await this.getById(tenantId, contractId);
 
+    if (contract.requiresSignature === false) {
+      throw new BadRequestException(
+        'This document is a one-way letter with no recipient signature to countersign — use "Issue Letter" instead.',
+      );
+    }
+
     if (contract.status !== ContractStatus.SIGNED) {
       throw new ConflictException(
         contract.status === ContractStatus.COUNTERSIGNED
@@ -490,50 +507,71 @@ export class ContractService {
     return contract;
   }
 
-  // async sendSignedCopy(
-  //   tenantId: string,
-  //   contractId: string,
-  // ): Promise<ContractDocument> {
-  //   const contract = await this.getById(tenantId, contractId);
+  async issueLetter(
+    tenantId: string,
+    contractId: string,
+    issuedByUserId: string,
+    dto: IssueLetterDto,
+    ipAddress: string | null,
+    userAgent: string | null,
+    businessName: string,
+  ): Promise<ContractDocument> {
+    const contract = await this.getById(tenantId, contractId);
 
-  //   if (contract.status !== ContractStatus.COUNTERSIGNED) {
-  //     throw new ConflictException(
-  //       'Both parties must sign before the fully-executed copy can be sent.',
-  //     );
-  //   }
+    if (contract.requiresSignature !== false) {
+      throw new BadRequestException(
+        'This document requires the recipient to sign — use "Send for Signature" instead.',
+      );
+    }
+    if (contract.status !== ContractStatus.DRAFT) {
+      throw new ConflictException('This document has already been issued.');
+    }
 
-  //   try {
-  //     await this.emailService.sendSignedContractCopy({
-  //       to: contract.signerEmail,
-  //       signerName: contract.signerName,
-  //       contractBody: contract.renderedBody,
-  //       signerSignatureName: contract.signature!.signerName,
-  //       signerSignedAt: contract.signature!.signedAt,
-  //       tenantSignatureName: contract.tenantSignature!.signerName,
-  //       tenantSignedAt: contract.tenantSignature!.signedAt,
-  //       tenantSignatureImageData: contract.tenantSignature!.signatureImageData,
-  //       tenantStampImageData: contract.tenantSignature!.stampImageData,
-  //     });
-  //   } catch (err) {
-  //     console.error(
-  //       `Failed to send signed copy for contract ${contractId}:`,
-  //       err,
-  //     );
-  //     throw err; // unlike other stage-change emails, this failure
-  //     // should be visible to the tenant immediately
-  //   }
+    const signedAt = new Date();
+    contract.tenantSignature = {
+      signedAt,
+      signerName: dto.signerName,
+      signedByUserId: new Types.ObjectId(issuedByUserId),
+      signatureImageData: dto.signatureImageData ?? null,
+      stampImageData: dto.stampImageData ?? null,
+      ipAddress,
+      userAgent,
+    };
+    contract.status = ContractStatus.ISSUED;
+    contract.interactions.push({
+      type: InteractionType.ISSUED,
+      occurredAt: signedAt,
+      actor: 'tenant',
+      message: null,
+      tenantUserId: new Types.ObjectId(issuedByUserId),
+    });
 
-  //   contract.signedCopySentAt = new Date();
-  //   contract.interactions.push({
-  //     type: InteractionType.SIGNED_COPY_SENT,
-  //     occurredAt: contract.signedCopySentAt,
-  //     actor: 'tenant',
-  //     message: null,
-  //     tenantUserId: null,
-  //   });
-  //   await contract.save();
-  //   return contract;
-  // }
+    const pdfBuffer = await this.pdfService.buildIssuedLetterPdf(
+      contract,
+      businessName,
+    );
+
+    try {
+      await this.emailService.sendIssuedDocument(
+        {
+          to: contract.signerEmail,
+          recipientName: contract.signerName,
+          documentName: contract.templateName,
+        },
+        pdfBuffer,
+      );
+      contract.signedCopySentAt = signedAt;
+    } catch (err) {
+      console.error(
+        `Failed to email issued document for contract ${contractId}:`,
+        err,
+      );
+      throw err; // the tenant needs to know the letter wasn't delivered
+    }
+
+    await contract.save();
+    return contract;
+  }
 
   async sendSignedCopy(
     tenantId: string,
@@ -541,6 +579,39 @@ export class ContractService {
     businessName: string,
   ): Promise<ContractDocument> {
     const contract = await this.getById(tenantId, contractId);
+
+    if (contract.status === ContractStatus.ISSUED) {
+      const letterPdf = await this.pdfService.buildIssuedLetterPdf(
+        contract,
+        businessName,
+      );
+      try {
+        await this.emailService.sendIssuedDocument(
+          {
+            to: contract.signerEmail,
+            recipientName: contract.signerName,
+            documentName: contract.templateName,
+          },
+          letterPdf,
+        );
+      } catch (err) {
+        console.error(
+          `Failed to re-send issued document for contract ${contractId}:`,
+          err,
+        );
+        throw err;
+      }
+      contract.signedCopySentAt = new Date();
+      contract.interactions.push({
+        type: InteractionType.SIGNED_COPY_SENT,
+        occurredAt: contract.signedCopySentAt,
+        actor: 'tenant',
+        message: null,
+        tenantUserId: null,
+      });
+      await contract.save();
+      return contract;
+    }
 
     if (contract.status !== ContractStatus.COUNTERSIGNED) {
       throw new ConflictException(
@@ -595,6 +666,10 @@ export class ContractService {
     businessName: string,
   ): Promise<Buffer> {
     const contract = await this.getById(tenantId, contractId);
+
+    if (contract.status === ContractStatus.ISSUED) {
+      return this.pdfService.buildIssuedLetterPdf(contract, businessName);
+    }
 
     if (contract.status !== ContractStatus.COUNTERSIGNED) {
       throw new ConflictException(

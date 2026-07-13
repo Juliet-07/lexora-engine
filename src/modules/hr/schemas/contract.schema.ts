@@ -10,12 +10,9 @@ export enum ContractStatus {
   SIGNED = 'signed',
   COUNTERSIGNED = 'countersigned',
   DECLINED = 'declined',
+  ISSUED = 'issued',
 }
 
-// Every event in the contract's life — sent, viewed, comment
-// (suggested change/negotiation), tenant response, re-sent, signed,
-// declined. Append-only, never edited or removed — this is the
-// real negotiation/audit trail the original mock entirely lacked.
 export enum InteractionType {
   SENT = 'sent',
   VIEWED = 'viewed',
@@ -27,6 +24,7 @@ export enum InteractionType {
   COUNTERSIGNED = 'countersigned',
   SIGNED_COPY_SENT = 'signed_copy_sent',
   DECLINED = 'declined',
+  ISSUED = 'issued',
 }
 
 @Schema({ _id: false })
@@ -37,10 +35,6 @@ export class ContractInteraction {
   @Prop({ required: true, default: () => new Date() })
   occurredAt: Date;
 
-  // 'signer' or 'tenant' — not a User/Employee ref, since the
-  // signer may not have a platform account at all (a brand-new
-  // hire, pre-onboarding). Identified by name/email snapshotted on
-  // the contract itself instead.
   @Prop({ enum: ['signer', 'tenant'], required: true })
   actor: string;
 
@@ -131,6 +125,9 @@ export class Contract {
 
   @Prop({ enum: ContractStatus, default: ContractStatus.DRAFT, index: true })
   status: ContractStatus;
+
+  @Prop({ default: true })
+  requiresSignature: boolean;
 
   @Prop({ type: [ContractInteractionSchema], default: [] })
   interactions: ContractInteraction[];

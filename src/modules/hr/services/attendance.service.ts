@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -13,6 +14,7 @@ import {
   EmployeeAttendanceStatus,
   Employee,
   EmployeeDocument,
+  EmploymentStatus,
   LeaveRequest,
   LeaveRequestDocument,
 } from '../schemas';
@@ -42,6 +44,18 @@ export class AttendanceService {
       userId: new Types.ObjectId(userId),
     });
     if (!employee) throw new NotFoundException('Employee profile not found');
+
+    if (
+      [
+        EmploymentStatus.TERMINATED,
+        EmploymentStatus.RESIGNED,
+        EmploymentStatus.SUSPENDED,
+      ].includes(employee.employmentStatus)
+    ) {
+      throw new ForbiddenException(
+        'Your account is not currently active — you cannot clock in.',
+      );
+    }
 
     const today = this.startOfDay(new Date());
 
@@ -233,7 +247,13 @@ export class AttendanceService {
 
     const matchEmp: any = {
       tenantId: tId,
-      employmentStatus: { $nin: ['terminanted', 'resigned'] },
+      employmentStatus: {
+        $nin: [
+          EmploymentStatus.TERMINATED,
+          EmploymentStatus.RESIGNED,
+          EmploymentStatus.SUSPENDED,
+        ],
+      },
     };
     if (teamId) matchEmp.teamId = new Types.ObjectId(teamId);
     if (locationId) matchEmp.locationId = new Types.ObjectId(locationId);
@@ -342,20 +362,31 @@ export class AttendanceService {
     const weekStart = this.startOfWeek(new Date());
     const tId = new Types.ObjectId(tenantId);
 
-    let employeeIdFilter: Types.ObjectId[] | undefined;
-    if (teamId) {
-      const teamEmployees = await this.employeeModel
-        .find({ tenantId: tId, teamId: new Types.ObjectId(teamId) })
-        .select('_id')
-        .lean();
-      employeeIdFilter = teamEmployees.map((e) => e._id as Types.ObjectId);
-    }
+    const empQuery: any = {
+      tenantId: tId,
+      employmentStatus: {
+        $nin: [
+          EmploymentStatus.TERMINATED,
+          EmploymentStatus.RESIGNED,
+          EmploymentStatus.SUSPENDED,
+        ],
+      },
+    };
+    if (teamId) empQuery.teamId = new Types.ObjectId(teamId);
+
+    const activeEmployees = await this.employeeModel
+      .find(empQuery)
+      .select('_id')
+      .lean();
+    const employeeIdFilter = activeEmployees.map(
+      (e) => e._id as Types.ObjectId,
+    );
 
     const match: any = {
       tenantId: tId,
       date: { $gte: weekStart },
+      employeeId: { $in: employeeIdFilter },
     };
-    if (employeeIdFilter) match.employeeId = { $in: employeeIdFilter };
 
     const records = await this.attendanceModel.find(match).lean();
 

@@ -9,6 +9,7 @@ import { Model, Types } from 'mongoose';
 import {
   Employee,
   EmployeeDocument,
+  EmploymentStatus,
   PayrollRun,
   PayrollRunDocument,
   PayrollRunStatus,
@@ -65,7 +66,13 @@ export class PayrollRunService {
 
     const employeeQuery: any = {
       tenantId: tId,
-      employmentStatus: { $nin: ['terminated', 'resigned'] },
+      employmentStatus: {
+        $nin: [
+          EmploymentStatus.TERMINATED,
+          EmploymentStatus.RESIGNED,
+          EmploymentStatus.SUSPENDED,
+        ],
+      },
     };
     if (dto.employeeId) {
       employeeQuery._id = new Types.ObjectId(dto.employeeId);
@@ -201,7 +208,13 @@ export class PayrollRunService {
 
     const employeeQuery: any = {
       tenantId: run.tenantId,
-      employmentStatus: { $nin: ['terminated', 'resigned'] },
+      employmentStatus: {
+        $nin: [
+          EmploymentStatus.TERMINATED,
+          EmploymentStatus.RESIGNED,
+          EmploymentStatus.SUSPENDED,
+        ],
+      },
     };
     if (run.locationId) employeeQuery.locationId = run.locationId;
     const employees = await this.employeeModel.find(employeeQuery).lean();

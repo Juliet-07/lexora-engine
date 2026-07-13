@@ -55,6 +55,23 @@ export enum EmployeeRecordType {
   TERMINATION = 'termination',
 }
 
+export enum EducationLevel {
+  SECONDARY = 'secondary',
+  TVET_DIPLOMA = 'tvet_diploma',
+  BACHELORS = 'bachelors',
+  MASTERS = 'masters',
+  PHD = 'phd',
+}
+
+export enum OccupationalCategory {
+  MANAGERS = 'managers',
+  PROFESSIONALS = 'professionals',
+  TECHNICIANS = 'technicians',
+  CLERICAL = 'clerical',
+  SERVICE_SALES = 'service_sales',
+  ELEMENTARY = 'elementary',
+}
+
 @Schema({ _id: false })
 export class NextOfKin {
   @Prop({ default: null }) name: string | null;
@@ -278,6 +295,36 @@ export class Employee {
 
   @Prop({ type: Object, default: {} })
   metadata: Record<string, any>;
+
+  // ── Suspension ─────────────────────────────────────────────
+  @Prop({ default: null })
+  suspensionReason: string | null;
+
+  @Prop({ default: null })
+  suspensionStartDate: Date | null;
+
+  // Reactivation is lazy, not scheduled — checked at login time
+  // (see AuthService.login) rather than via a background job.
+  @Prop({ default: null })
+  suspensionEndDate: Date | null;
+
+  // The issued suspension letter, if one was generated through the
+  // Contracts system as part of suspending this person.
+  @Prop({ type: Types.ObjectId, ref: 'Contract', default: null })
+  suspensionLetterContractId: Types.ObjectId | null;
+
+  // ── MIFOTRA reporting fields — self-reported ────────────────
+  @Prop({ enum: EducationLevel, default: null })
+  educationLevel: EducationLevel | null;
+
+  @Prop({ enum: OccupationalCategory, default: null })
+  occupationalCategory: OccupationalCategory | null;
+
+  @Prop({ default: false })
+  hasDisability: boolean;
+
+  @Prop({ default: null })
+  disabilityNote: string | null;
 }
 
 export const EmployeeSchema = SchemaFactory.createForClass(Employee);

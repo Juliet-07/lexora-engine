@@ -27,6 +27,8 @@ import {
   LeaveService,
   EmployeeDocumentService,
   EmployeeRecordService,
+  HrOverviewService,
+  HrReportsService,
 } from '../services';
 import {
   CreateEmployeeDto,
@@ -39,6 +41,7 @@ import {
   UploadEmployeeDocumentDto,
   PromoteToHeadOfDepartmentDto,
   AddEmployeeRecordDto,
+  SuspendEmployeeDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -106,7 +109,23 @@ export class HrTenantController {
     private readonly attendanceService: AttendanceService,
     private readonly documentService: EmployeeDocumentService,
     private readonly recordService: EmployeeRecordService,
+    private readonly overviewService: HrOverviewService,
+    private readonly reportsService: HrReportsService,
   ) {}
+
+  // ── Overview ──────────────────────────────────────────────────
+
+  @Get('overview')
+  @ApiOperation({
+    summary:
+      'Org-wide HR pulse — per-department headcount, performance, attendance, and open roles',
+  })
+  getOverview(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.overviewService.getOverview(t || u);
+  }
 
   // ── Stats ──────────────────────────────────────────────────
 
@@ -325,6 +344,32 @@ export class HrTenantController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.employeeService.terminateEmployee(t || u, id, dto);
+  }
+
+  @Patch('employees/:id/suspend')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Suspend an employee — deactivates their login and marks them inactive until the end date',
+  })
+  suspendEmployee(
+    @Param('id') id: string,
+    @Body() dto: SuspendEmployeeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.employeeService.suspendEmployee(t || u, id, dto);
+  }
+
+  @Patch('employees/:id/reinstate')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'End a suspension early, before its end date' })
+  reinstateEmployee(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.employeeService.reinstateEmployee(t || u, id);
   }
 
   @Get('employees/:id/direct-reports')
@@ -582,5 +627,84 @@ export class HrTenantController {
     @Query('teamId') teamId?: string,
   ) {
     return this.attendanceService.getWeeklyTrends(t || u, teamId);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // REPORTS
+  // ═══════════════════════════════════════════════════════════
+  @Get('reports/demographics')
+  @ApiOperation({ summary: 'MIFOTRA-aligned workforce demographics report' })
+  getDemographics(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.reportsService.getDemographicsReport(t || u);
+  }
+
+  @Get('reports/payroll/periods')
+  @ApiOperation({
+    summary: 'List available payroll periods for the report picker',
+  })
+  getPayrollPeriods(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.reportsService.getPayrollPeriods(t || u);
+  }
+
+  @Get('reports/payroll')
+  @ApiQuery({ name: 'period', required: false })
+  @ApiOperation({
+    summary: 'Payroll totals and department breakdown for a period',
+  })
+  getPayroll(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Query('period') period?: string,
+  ) {
+    return this.reportsService.getPayrollReport(t || u, period);
+  }
+
+  @Get('reports/disputes')
+  @ApiOperation({
+    summary: 'Dispute case volume, outcomes, and resolution time',
+  })
+  getDisputes(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.reportsService.getDisputesReport(t || u);
+  }
+
+  @Get('reports/employee-records')
+  @ApiOperation({
+    summary:
+      'HR records (warnings, suspensions, terminations) by type and department',
+  })
+  getEmployeeRecords(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.reportsService.getEmployeeRecordsReport(t || u);
+  }
+
+  @Get('reports/requisitions')
+  @ApiOperation({
+    summary: 'Requisition volume, approval rate, and review time',
+  })
+  getRequisitions(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.reportsService.getRequisitionsReport(t || u);
+  }
+
+  @Get('reports/performance')
+  @ApiOperation({ summary: 'Rating band distribution and department scores' })
+  getPerformance(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.reportsService.getPerformanceReport(t || u);
   }
 }
