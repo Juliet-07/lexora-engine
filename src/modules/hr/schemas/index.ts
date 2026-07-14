@@ -8,6 +8,7 @@ export * from './employee.schema';
 export * from './framework';
 export * from './hr.schema';
 export * from './job-opening.schema';
+export * from './learning.schema';
 export * from './leave-policy.schema';
 export * from './leave-request.schema';
 export * from './offboarding-record.schema';

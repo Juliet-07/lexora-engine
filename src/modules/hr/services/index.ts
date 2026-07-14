@@ -1,5 +1,6 @@
 export * from './attendance.service';
 export * from './candidate.service';
+export * from './certificate-pdf.service';
 export * from './contract-pdf.service';
 export * from './contract-template.service';
 export * from './contract.service';
@@ -12,6 +13,7 @@ export * from './employee-record.service';
 export * from './employee.service';
 export * from './exchange-rate.service';
 export * from './job-opening.service';
+export * from './learning.service';
 export * from './leave.service';
 export * from './offboarding.service';
 export * from './overview.service';

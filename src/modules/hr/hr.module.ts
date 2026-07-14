@@ -42,6 +42,8 @@ import {
   JobOpeningService,
   HrOverviewService,
   HrReportsService,
+  LearningService,
+  CertificatePdfService,
 } from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailService } from '../../common/utils/mailing/email.service';
@@ -130,6 +132,10 @@ import {
   DisputeCaseSchema,
   JobOpening,
   JobOpeningSchema,
+  CourseEnrollment,
+  CourseEnrollmentSchema,
+  Course,
+  CourseSchema,
 } from './schemas';
 
 @Module({
@@ -183,6 +189,14 @@ import {
       {
         name: JobOpening.name,
         schema: JobOpeningSchema,
+      },
+      {
+        name: Course.name,
+        schema: CourseSchema,
+      },
+      {
+        name: CourseEnrollment.name,
+        schema: CourseEnrollmentSchema,
       },
     ]),
   ],
@@ -245,6 +259,8 @@ import {
     JobOpeningService,
     HrOverviewService,
     HrReportsService,
+    LearningService,
+    CertificatePdfService,
   ],
   exports: [
     EmployeeService,

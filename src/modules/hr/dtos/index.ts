@@ -3,6 +3,7 @@ export * from './dispute.dto';
 export * from './employee-onboarding.dto';
 export * from './hr.dto';
 export * from './job-opening.dto';
+export * from './learning.dto';
 export * from './leave.dto';
 export * from './payroll.dto';
 export * from './performance.dto';

@@ -152,6 +152,10 @@ import {
   JobOpeningFilledEmailData,
   jobOpeningFilledTemplate,
 } from './templates/job-opening-filled.template';
+import {
+  NewCourseEmailData,
+  newCourseTemplate,
+} from './templates/new-course.template';
 
 @Injectable()
 export class EmailService {
@@ -646,6 +650,16 @@ export class EmailService {
     data: JobOpeningFilledEmailData,
   ): Promise<void> {
     const { subject, html } = jobOpeningFilledTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendNewCourseNotice(data: NewCourseEmailData): Promise<void> {
+    const { subject, html } = newCourseTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

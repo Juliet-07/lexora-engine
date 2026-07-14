@@ -35,6 +35,7 @@ import {
   EmployeeLoanService,
   ProbationService,
   DisputeService,
+  LearningService,
 } from '../services';
 import {
   CompleteOnboardingDto,
@@ -55,6 +56,7 @@ import {
   InvestigateDisputeDto,
   AcknowledgeDisputeDto,
   RespondToDisputeDto,
+  SubmitAssessmentDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -64,6 +66,10 @@ import { existsSync, mkdirSync } from 'fs';
 import { diskStorage } from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import { Response } from 'express';
+import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+import { InjectModel } from '@nestjs/mongoose';
+import { User, UserDocument } from 'src/modules/auth/schemas';
+import { Model } from 'mongoose';
 
 // =================================================================
 // EMPLOYEE SELF-SERVICE CONTROLLER
@@ -164,6 +170,7 @@ const employeeDocumentFileFilter = (
 @Controller('employee')
 export class HrEmployeeController {
   constructor(
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly employeeService: EmployeeService,
     private readonly leaveService: LeaveService,
     private readonly attendanceService: AttendanceService,
@@ -176,6 +183,7 @@ export class HrEmployeeController {
     private readonly loanService: EmployeeLoanService,
     private readonly probationService: ProbationService,
     private readonly disputeService: DisputeService,
+    private readonly learningService: LearningService,
   ) {}
 
   // ===============================================================
@@ -1083,5 +1091,125 @@ export class HrEmployeeController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.disputeService.attachDocument(t || u, caseId, u, file);
+  }
+
+  // ===============================================================
+  // LEARNING
+  // ===============================================================
+  @Get('learning/courses')
+  @ApiOperation({ summary: 'List all courses available to me' })
+  async getCourses(@CurrentUser('sub') userId: string) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.learningService.getCoursesForEmployee(
+      (employee as any).tenantId.toString(),
+      (employee as any)._id.toString(),
+    );
+  }
+
+  @Get('learning/courses/:id')
+  @ApiOperation({ summary: 'Get one course (no answer keys) plus my progress' })
+  async getCourse(@Param('id') id: string, @CurrentUser('sub') userId: string) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.learningService.getCourseForEmployee(
+      (employee as any).tenantId.toString(),
+      (employee as any)._id.toString(),
+      id,
+    );
+  }
+
+  @Post('learning/courses/:id/start')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mark a course as started' })
+  async startCourse(
+    @Param('id') id: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.learningService.startCourse(
+      (employee as any).tenantId.toString(),
+      (employee as any)._id.toString(),
+      `${(employee as any).firstName} ${(employee as any).lastName}`,
+      id,
+    );
+  }
+
+  @Patch('learning/courses/:id/progress')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Record content-viewing progress (0-100)' })
+  async updateProgress(
+    @Param('id') id: string,
+    @Body() dto: { progress: number; positionSeconds?: number },
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.learningService.updateProgress(
+      (employee as any).tenantId.toString(),
+      (employee as any)._id.toString(),
+      `${(employee as any).firstName} ${(employee as any).lastName}`,
+      id,
+      dto.progress,
+    );
+  }
+
+  @Get('learning/certificates')
+  @ApiOperation({ summary: 'All certificates I have earned' })
+  async getMyCertificates(@CurrentUser('sub') userId: string) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.learningService.getMyCertificates(
+      (employee as any).tenantId.toString(),
+      (employee as any)._id.toString(),
+    );
+  }
+
+  @Post('learning/courses/:id/submit')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Submit assessment answers — graded server-side' })
+  async submitAssessment(
+    @Param('id') id: string,
+    @Body() dto: SubmitAssessmentDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.learningService.submitAssessment(
+      (employee as any).tenantId.toString(),
+      (employee as any)._id.toString(),
+      `${(employee as any).firstName} ${(employee as any).lastName}`,
+      id,
+      dto,
+    );
+  }
+
+  @Get('learning/my-enrollments')
+  @ApiOperation({ summary: 'My learning progress across all courses' })
+  async getMyEnrollments(@CurrentUser('sub') userId: string) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.learningService.getMyEnrollments(
+      (employee as any).tenantId.toString(),
+      (employee as any)._id.toString(),
+    );
+  }
+
+  @Get('learning/courses/:id/certificate')
+  @ApiOperation({ summary: 'Download my certificate of completion as PDF' })
+  async downloadCertificate(
+    @Param('id') id: string,
+    @CurrentUser('sub') userId: string,
+    @Res() res: Response,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    const tenantId = (employee as any).tenantId.toString();
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const buffer = await this.learningService.getCertificatePdf(
+      tenantId,
+      (employee as any)._id.toString(),
+      id,
+      businessName,
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="certificate-${id}.pdf"`,
+      'Content-Length': buffer.length,
+    });
+    res.send(buffer);
   }
 }

@@ -29,6 +29,7 @@ import {
   EmployeeRecordService,
   HrOverviewService,
   HrReportsService,
+  LearningService,
 } from '../services';
 import {
   CreateEmployeeDto,
@@ -42,6 +43,8 @@ import {
   PromoteToHeadOfDepartmentDto,
   AddEmployeeRecordDto,
   SuspendEmployeeDto,
+  CreateCourseDto,
+  UpdateCourseDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -52,12 +55,10 @@ import { existsSync, mkdirSync } from 'fs';
 import { diskStorage } from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import { EmployeeHierarchyRole } from '../schemas';
-
-// ── Document storage — SAME folder as the employee self-service
-// controller's employeeDocumentStorage ('uploads/employee/documents'),
-// since both upload entry points write into the SAME logical
-// document collection. Same inline-config pattern used throughout
-// this codebase — no shared/centralized multer config file exists. ──
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { User, UserDocument } from 'src/modules/auth/schemas';
+import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 
 const employeeDocumentStorage = diskStorage({
   destination: (_req, _file, cb) => {
@@ -98,12 +99,42 @@ const employeeDocumentFileFilter = (
   }
 };
 
+const courseFileStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(process.cwd(), 'uploads', 'learning', 'courses');
+    if (!existsSync(uploadPath)) mkdirSync(uploadPath, { recursive: true });
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) => {
+    cb(null, `${uuidv4()}${extname(file.originalname)}`);
+  },
+});
+
+const courseFileFilter = (_req: any, file: Express.Multer.File, cb: any) => {
+  const allowed = [
+    'video/mp4',
+    'video/webm',
+    'video/quicktime',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/vnd.ms-powerpoint',
+  ];
+  if (allowed.includes(file.mimetype)) cb(null, true);
+  else
+    cb(
+      new BadRequestException(
+        'Only MP4/WebM video or PPT/PPTX files are accepted.',
+      ),
+      false,
+    );
+};
+
 @ApiTags('HR')
 @ApiBearerAuth('bearerAuth')
 @UserTypes(UserType.TENANT)
 @Controller('hr')
 export class HrTenantController {
   constructor(
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly employeeService: EmployeeService,
     private readonly leaveService: LeaveService,
     private readonly attendanceService: AttendanceService,
@@ -111,6 +142,7 @@ export class HrTenantController {
     private readonly recordService: EmployeeRecordService,
     private readonly overviewService: HrOverviewService,
     private readonly reportsService: HrReportsService,
+    private readonly learningService: LearningService,
   ) {}
 
   // ── Overview ──────────────────────────────────────────────────
@@ -627,6 +659,105 @@ export class HrTenantController {
     @Query('teamId') teamId?: string,
   ) {
     return this.attendanceService.getWeeklyTrends(t || u, teamId);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // LEARNING & DEV
+  // ═══════════════════════════════════════════════════════════
+  @Post('learning/courses')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: courseFileStorage,
+      fileFilter: courseFileFilter,
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Publish a new course — all active employees are emailed',
+  })
+  async createCourse(
+    @Body() dto: CreateCourseDto,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const businessName = await resolveBusinessName(this.userModel, t || u);
+    return this.learningService.createCourse(t || u, dto, file, businessName);
+  }
+
+  @Get('learning/courses')
+  @ApiOperation({
+    summary: 'List all courses (tenant view, includes answer keys)',
+  })
+  getAllCourses(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.learningService.getAllForTenant(t || u);
+  }
+
+  @Get('learning/courses/:id')
+  @ApiOperation({ summary: 'Get one course (tenant view)' })
+  getCourse(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.learningService.getOneForTenant(t || u, id);
+  }
+
+  @Patch('learning/courses/:id')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: courseFileStorage,
+      fileFilter: courseFileFilter,
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Update a course' })
+  updateCourse(
+    @Param('id') id: string,
+    @Body() dto: UpdateCourseDto,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.learningService.updateCourse(t || u, id, dto, file);
+  }
+
+  @Delete('learning/courses/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete a course and all its enrollment records' })
+  async deleteCourse(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    await this.learningService.deleteCourse(t || u, id);
+    return { success: true };
+  }
+
+  @Get('learning/courses/:id/stats')
+  @ApiOperation({ summary: 'Enrollment/completion stats for a course' })
+  getCourseStats(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.learningService.getCourseStats(t || u, id);
+  }
+
+  @Get('learning/courses/:id/leaderboard')
+  @ApiOperation({ summary: 'Top-performing employees for a course' })
+  getLeaderboard(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.learningService.getCourseLeaderboard(t || u, id);
   }
 
   // ═══════════════════════════════════════════════════════════
