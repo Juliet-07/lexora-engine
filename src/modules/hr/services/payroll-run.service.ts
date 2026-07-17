@@ -597,6 +597,7 @@ export class PayrollRunService {
       await this.loanService.getActiveLoanDeductionsForEmployee(
         (employee._id as any).toString(),
         run.tenantId.toString(),
+        run.periodEnd,
       );
 
     const result = this.calcService.calculate({

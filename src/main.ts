@@ -51,6 +51,8 @@ async function bootstrap() {
     join(process.cwd(), 'uploads', 'employee', 'certificates'),
     join(process.cwd(), 'uploads', 'employee', 'documents'),
     join(process.cwd(), 'uploads', 'disputes', 'documents'),
+    join(process.cwd(), 'uploads', 'learning', 'courses'),
+    join(process.cwd(), 'uploads', 'leave', 'documents'),
   ];
   for (const dir of uploadDirs) {
     if (!fs.existsSync(dir)) {
@@ -85,6 +87,7 @@ async function bootstrap() {
       .addTag('Tenant', 'Tenant Management System')
       .addTag('KYC / AML', 'KYC submission, risk scoring, screening')
       .addTag('HR', 'Employement Management, Payroll, Leave Management')
+      .addTag('CRM', 'Pipeline Management, Projects, Billing')
       .build();
 
     const document = SwaggerModule.createDocument(app, swaggerConfig);

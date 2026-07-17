@@ -426,6 +426,9 @@ export class EmployeeLoan {
   startDate: Date;
 
   @Prop({ default: null })
+  endDate: Date | null;
+
+  @Prop({ default: null })
   note: string | null;
 
   @Prop({ enum: LoanCreatedBy, required: true, default: LoanCreatedBy.TENANT })

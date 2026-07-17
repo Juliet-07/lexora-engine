@@ -76,9 +76,22 @@ export class EmployeeLoanService {
           'Monthly installment cannot exceed the principal amount.',
         );
       }
+      if (!dto.startDate || !dto.endDate) {
+        throw new BadRequestException(
+          'A deduction start and end date are required to approve a loan.',
+        );
+      }
+      const start = new Date(dto.startDate);
+      const end = new Date(dto.endDate);
+      if (end <= start) {
+        throw new BadRequestException(
+          'The deduction end date must be after the start date.',
+        );
+      }
       loan.status = LoanStatus.ACTIVE;
       loan.monthlyInstallment = dto.monthlyInstallment;
-      loan.startDate = new Date();
+      loan.startDate = start;
+      loan.endDate = end;
     } else {
       if (!dto.rejectionReason?.trim()) {
         throw new BadRequestException(
@@ -106,6 +119,7 @@ export class EmployeeLoanService {
   async getActiveLoanDeductionsForEmployee(
     employeeId: string,
     tenantId: string,
+    periodEnd: Date,
   ): Promise<{ loanId: string; label: string; amount: number }[]> {
     const loans = await this.loanModel.find({
       employeeId: new Types.ObjectId(employeeId),
@@ -113,11 +127,16 @@ export class EmployeeLoanService {
       status: LoanStatus.ACTIVE,
     });
 
-    return loans.map((loan) => ({
-      loanId: (loan._id as any).toString(),
-      label: loan.label,
-      amount: Math.min(loan.monthlyInstallment, loan.outstandingBalance),
-    }));
+    return loans
+      .filter((loan) => {
+        if (!loan.startDate || !loan.endDate) return true;
+        return periodEnd >= loan.startDate && periodEnd <= loan.endDate;
+      })
+      .map((loan) => ({
+        loanId: (loan._id as any).toString(),
+        label: loan.label,
+        amount: Math.min(loan.monthlyInstallment, loan.outstandingBalance),
+      }));
   }
 
   async applyLoanDeductions(

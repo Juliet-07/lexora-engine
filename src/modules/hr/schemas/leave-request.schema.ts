@@ -49,6 +49,26 @@ export class LeaveRequest {
 
   @Prop({ default: null })
   reviewNote: string | null;
+
+  @Prop({
+    type: [
+      {
+        name: String,
+        url: String,
+        mimeType: String,
+        size: Number,
+        uploadedAt: Date,
+      },
+    ],
+    default: [],
+  })
+  documents: {
+    name: string;
+    url: string;
+    mimeType: string;
+    size: number;
+    uploadedAt: Date;
+  }[];
 }
 
 export const LeaveRequestSchema = SchemaFactory.createForClass(LeaveRequest);

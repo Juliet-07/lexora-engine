@@ -164,6 +164,20 @@ const employeeDocumentFileFilter = (
   }
 };
 
+const leaveDocumentStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(process.cwd(), 'uploads', 'leave', 'documents');
+    if (!existsSync(uploadPath)) {
+      mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) => {
+    const ext = extname(file.originalname);
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
+
 @ApiTags('Employee Self-Service')
 @ApiBearerAuth('bearerAuth')
 @UserTypes(UserType.EMPLOYEE)
@@ -430,6 +444,48 @@ export class HrEmployeeController {
   @ApiOperation({ summary: 'Cancel a pending leave request' })
   cancelLeave(@Param('id') id: string, @CurrentUser('sub') userId: string) {
     return this.leaveService.cancelLeaveRequest(id, userId);
+  }
+
+  @Post('leave/:id/documents')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: leaveDocumentStorage,
+      fileFilter: employeeDocumentFileFilter,
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOperation({
+    summary:
+      'Attach a supporting document to a leave request (e.g. medical report)',
+  })
+  attachLeaveDocument(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.leaveService.attachLeaveDocument(id, userId, file);
+  }
+
+  @Delete('leave/:id/documents')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Remove a supporting document from a leave request',
+  })
+  removeLeaveDocument(
+    @Param('id') id: string,
+    @Body('fileUrl') fileUrl: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.leaveService.removeLeaveDocument(id, userId, fileUrl);
   }
 
   // ===============================================================

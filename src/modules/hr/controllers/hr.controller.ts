@@ -11,6 +11,7 @@ import {
   HttpStatus,
   UploadedFile,
   UseInterceptors,
+  UseFilters,
   BadRequestException,
 } from '@nestjs/common';
 import {
@@ -98,6 +99,8 @@ const employeeDocumentFileFilter = (
     );
   }
 };
+
+const MAX_COURSE_FILE_SIZE_BYTES = 500 * 1024 * 1024;
 
 const courseFileStorage = diskStorage({
   destination: (_req, _file, cb) => {
@@ -670,7 +673,7 @@ export class HrTenantController {
     FileInterceptor('file', {
       storage: courseFileStorage,
       fileFilter: courseFileFilter,
-      limits: { fileSize: 15 * 1024 * 1024 },
+      limits: { fileSize: MAX_COURSE_FILE_SIZE_BYTES },
     }),
   )
   @ApiConsumes('multipart/form-data')
@@ -713,7 +716,7 @@ export class HrTenantController {
     FileInterceptor('file', {
       storage: courseFileStorage,
       fileFilter: courseFileFilter,
-      limits: { fileSize: 15 * 1024 * 1024 },
+      limits: { fileSize: MAX_COURSE_FILE_SIZE_BYTES },
     }),
   )
   @ApiConsumes('multipart/form-data')

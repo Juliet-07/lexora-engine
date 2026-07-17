@@ -144,8 +144,6 @@ export class DecideLoanRequestDto {
   @IsIn(['approved', 'rejected'])
   decision: 'approved' | 'rejected';
 
-  // Required when decision === 'rejected' — enforced in the
-  // SERVICE, not here.
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -156,6 +154,22 @@ export class DecideLoanRequestDto {
   @IsNumber()
   @Min(1)
   monthlyInstallment?: number;
+
+  @ApiPropertyOptional({
+    example: '2026-08-01',
+    description: 'First payroll period deductions begin — required to approve',
+  })
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-10-31',
+    description: 'Deductions stop after this date — required to approve',
+  })
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════

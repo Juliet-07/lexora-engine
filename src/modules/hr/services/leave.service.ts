@@ -376,6 +376,60 @@ export class LeaveService {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // SUPPORTING DOCUMENTS
+  // ═══════════════════════════════════════════════════════════
+
+  async attachLeaveDocument(
+    requestId: string,
+    userId: string,
+    file: Express.Multer.File,
+  ): Promise<LeaveRequestDocument> {
+    const employee = await this.employeeModel.findOne({
+      userId: new Types.ObjectId(userId),
+    });
+    if (!employee) throw new NotFoundException('Employee profile not found');
+
+    const request = await this.leaveModel.findOne({
+      _id: requestId,
+      employeeId: employee._id,
+    });
+    if (!request) throw new NotFoundException('Leave request not found');
+
+    request.documents.push({
+      name: file.originalname,
+      url: `/uploads/leave/documents/${file.filename}`,
+      mimeType: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date(),
+    });
+    request.markModified('documents');
+    await request.save();
+    return request;
+  }
+
+  async removeLeaveDocument(
+    requestId: string,
+    userId: string,
+    fileUrl: string,
+  ): Promise<LeaveRequestDocument> {
+    const employee = await this.employeeModel.findOne({
+      userId: new Types.ObjectId(userId),
+    });
+    if (!employee) throw new NotFoundException('Employee profile not found');
+
+    const request = await this.leaveModel.findOne({
+      _id: requestId,
+      employeeId: employee._id,
+    });
+    if (!request) throw new NotFoundException('Leave request not found');
+
+    request.documents = request.documents.filter((d) => d.url !== fileUrl);
+    request.markModified('documents');
+    await request.save();
+    return request;
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // STATS
   // ═══════════════════════════════════════════════════════════
 

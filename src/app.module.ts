@@ -28,6 +28,7 @@ import { LoggingInterceptor } from 'src/common/interceptors/logging.interceptor'
 import { PaymentModule } from './modules/payment/payment.module';
 import { HrModule } from './modules/hr/hr.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { CrmModule } from './modules/crm/crm.module';
 
 @Module({
   imports: [
@@ -80,6 +81,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
     ClientModule,
     KycModule,
     HrModule,
+    CrmModule,
     PaymentModule,
   ],
   providers: [
