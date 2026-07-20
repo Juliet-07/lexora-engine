@@ -36,7 +36,7 @@ import { Response } from 'express';
 
 @ApiTags('Tenant')
 @ApiBearerAuth('bearerAuth')
-@UserTypes(UserType.TENANT)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
 @Controller('tenant')
 export class TenantController {
   constructor(
@@ -52,8 +52,11 @@ export class TenantController {
   @ApiOperation({
     summary: 'Tenant dashboard — team stats, subscription, recent activity',
   })
-  getDashboard(@CurrentUser('sub') tenantOwnerId: string) {
-    return this.service.getDashboard(tenantOwnerId);
+  getDashboard(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getDashboard(t || u);
   }
 
   // ═══════════════════════════════════════════════════════════

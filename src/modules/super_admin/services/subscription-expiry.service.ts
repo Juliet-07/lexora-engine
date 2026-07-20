@@ -27,14 +27,14 @@ export class SubscriptionExpiryService {
 
   // ═══════════════════════════════════════════════════════════
   // WARNING EMAILS — runs daily at 8am UTC
-  // Sends warnings at 7, 3, and 1 day before expiry
+  // Sends warnings at 3, and 1 day before expiry
   // ═══════════════════════════════════════════════════════════
 
   @Cron('0 8 * * *', { name: 'subscription-warning' })
   async sendExpiryWarnings() {
     this.logger.log('Running subscription expiry warning job...');
 
-    const warningDays = [7, 3, 1];
+    const warningDays = [3, 1];
     const now = new Date();
 
     for (const daysAhead of warningDays) {

@@ -44,6 +44,7 @@ export enum EmployeeHierarchyRole {
   REGULAR = 'regular',
   MANAGER = 'manager',
   HEAD_OF_DEPARTMENT = 'head_of_department',
+  OWNER = 'owner',
 }
 
 export enum EmployeeRecordType {

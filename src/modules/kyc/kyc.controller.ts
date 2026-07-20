@@ -19,7 +19,11 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { UserTypes, Roles, CurrentUser } from '../../common/decorators/index';
-import { UserType, TenantRole } from '../../common/interfaces/user-role.enum';
+import {
+  UserType,
+  TenantRole,
+  PlatformModuleKey,
+} from '../../common/interfaces/user-role.enum';
 import { PaginationDto } from '../../common/pagination.dto';
 
 import { RiskEngineService } from './services/risk-engine.service';
@@ -49,6 +53,7 @@ import {
 } from './dto/kyc.dto';
 import { StrStatus } from './schemas/str.schema';
 import { ReportsService } from './services/reports.service';
+import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
 
 const COMPLIANCE = [
   TenantRole.TENANT_OWNER,
@@ -59,6 +64,7 @@ const COMPLIANCE = [
 @ApiTags('KYC / AML')
 @ApiBearerAuth('bearerAuth')
 @UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.KYC)
 @Controller('kyc')
 export class KycController {
   constructor(

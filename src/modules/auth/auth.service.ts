@@ -21,6 +21,8 @@ import {
 import { JwtPayload } from './strategies/jwt.strategy';
 import {
   AccountStatus,
+  PlatformModuleKey,
+  STAFF_ROLE_MODULE_ACCESS,
   SuperAdminRole,
   UserType,
 } from 'src/common/interfaces/user-role.enum';
@@ -158,13 +160,37 @@ export class AuthService {
     }
 
     let hierarchyRole: string | null = null;
+    let employeeProfileId: string | null = null;
 
-    if (updatedUser.userType === UserType.EMPLOYEE) {
+    if (
+      updatedUser.userType === UserType.EMPLOYEE ||
+      updatedUser.userType === UserType.TENANT
+    ) {
       const employee = await this.employeeModel
         .findOne({ userId: updatedUser._id })
         .select('hierarchyRole')
         .lean();
       hierarchyRole = employee?.hierarchyRole ?? null;
+      employeeProfileId = employee
+        ? (employee._id as Types.ObjectId).toString()
+        : null;
+    }
+
+    // Resolved server-side, once, at login — the frontend never
+    // needs its own copy of "which role unlocks which module."
+    let accessibleModules: PlatformModuleKey[] = [];
+    if (updatedUser.userType === UserType.TENANT) {
+      accessibleModules = Object.values(PlatformModuleKey); // full access
+    } else if (updatedUser.userType === UserType.EMPLOYEE) {
+      const granted = new Set<PlatformModuleKey>();
+      for (const role of updatedUser.roles ?? []) {
+        const mods =
+          STAFF_ROLE_MODULE_ACCESS[
+            role as keyof typeof STAFF_ROLE_MODULE_ACCESS
+          ];
+        mods?.forEach((m) => granted.add(m));
+      }
+      accessibleModules = Array.from(granted);
     }
 
     return {
@@ -172,6 +198,8 @@ export class AuthService {
       tokens,
       ...(kycContext && { kycContext }),
       ...(hierarchyRole && { hierarchyRole }),
+      ...(employeeProfileId && { employeeProfileId }),
+      accessibleModules,
     };
   }
 

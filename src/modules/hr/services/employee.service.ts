@@ -13,6 +13,7 @@ import {
   EmployeeDocument,
   EmployeeHierarchyRole,
   EmploymentStatus,
+  EmploymentType,
 } from '../schemas/employee.schema';
 import {
   CreateEmployeeDto,
@@ -31,6 +32,7 @@ import {
 import {
   UserType,
   AccountStatus,
+  StaffRole,
 } from '../../../common/interfaces/user-role.enum';
 import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
@@ -280,6 +282,47 @@ export class EmployeeService {
       .lean() as any;
   }
 
+  async createOwnerEmployee(
+    tenantId: string,
+    userId: string,
+    firstName: string,
+    lastName: string,
+    email: string,
+  ): Promise<EmployeeDocument> {
+    const tId = new Types.ObjectId(tenantId);
+
+    const existing = await this.employeeModel.findOne({
+      userId: new Types.ObjectId(userId),
+    });
+    if (existing) return existing;
+
+    const count = await this.employeeModel.countDocuments({ tenantId: tId });
+    const employeeNumber = `EMP-${String(count + 1).padStart(4, '0')}`;
+
+    return this.employeeModel.create({
+      tenantId: tId,
+      teamId: null,
+      locationId: null,
+      userId: new Types.ObjectId(userId),
+      firstName,
+      lastName,
+      email: email.toLowerCase(),
+      employeeNumber,
+      jobTitle: 'Owner',
+      hierarchyRole: EmployeeHierarchyRole.OWNER,
+      reportsToManagerId: null,
+      reportsToTenantId: tId,
+      employmentType: EmploymentType.FULL_TIME,
+      employmentStatus: EmploymentStatus.ACTIVE,
+      startDate: new Date(),
+      salaryCurrency: 'USD',
+      salaryFrequency: 'monthly',
+      annualLeaveBalance: 21,
+      sickLeaveBalance: 10,
+      metadata: { createdBy: userId, isOwnerRecord: true },
+    });
+  }
+
   async createEmployee(
     dto: CreateEmployeeDto,
     tenantId: string,
@@ -408,7 +451,7 @@ export class EmployeeService {
       email: dto.email.toLowerCase(),
       password: hashedPassword,
       phone: dto.phone ?? null,
-      roles: [], // employees have no platform roles
+      roles: dto.staffRoles ?? [],
       status: AccountStatus.ACTIVE,
       tenantId: tId,
       mustChangePassword: true,
@@ -569,6 +612,32 @@ export class EmployeeService {
     return { message: 'Welcome email resent successfully.' };
   }
 
+  async updateStaffRoles(
+    tenantId: string,
+    employeeId: string,
+    staffRoles: StaffRole[],
+  ): Promise<{ employeeId: string; staffRoles: StaffRole[] }> {
+    const employee = await this.employeeModel.findOne({
+      _id: employeeId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!employee) throw new NotFoundException('Employee not found');
+    if (!employee.userId) {
+      throw new BadRequestException(
+        'This employee has no linked login account.',
+      );
+    }
+
+    await this.userModel.findByIdAndUpdate(employee.userId, {
+      roles: staffRoles,
+    });
+
+    return {
+      employeeId: (employee._id as Types.ObjectId).toString(),
+      staffRoles,
+    };
+  }
+
   // ═══════════════════════════════════════════════════════════
   // GET EMPLOYEES
   // ═══════════════════════════════════════════════════════════
@@ -609,7 +678,27 @@ export class EmployeeService {
       this.employeeModel.countDocuments(query),
     ]);
 
-    return paginate(items, total, page, limit);
+    const userIds = items
+      .map((e) => e.userId)
+      .filter((id): id is Types.ObjectId => !!id);
+    const usersWithRoles = userIds.length
+      ? await this.userModel
+          .find({ _id: { $in: userIds } })
+          .select('roles')
+          .lean()
+      : [];
+    const rolesByUserId = new Map(
+      usersWithRoles.map((u) => [
+        (u._id as Types.ObjectId).toString(),
+        u.roles ?? [],
+      ]),
+    );
+    const itemsWithRoles = items.map((e) => ({
+      ...e,
+      roles: e.userId ? (rolesByUserId.get(e.userId.toString()) ?? []) : [],
+    }));
+
+    return paginate(itemsWithRoles, total, page, limit);
   }
 
   async getEmployeeDirectory(tenantId: string): Promise<DirectoryEmployee[]> {
@@ -640,7 +729,7 @@ export class EmployeeService {
       .findOne({ _id: employeeId, tenantId: new Types.ObjectId(tenantId) })
       .populate('teamId', 'name description lead')
       .populate('locationId', 'name country city timezone')
-      .populate('userId', 'email status')
+      .populate('userId', 'email status roles')
       .populate('reportsToManagerId', 'firstName lastName jobTitle')
       .populate('reportsToTenantId', 'firstName lastName')
       .lean();

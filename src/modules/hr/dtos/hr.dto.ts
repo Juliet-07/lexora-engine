@@ -9,6 +9,7 @@ import {
   Min,
   IsMongoId,
   MinLength,
+  IsArray,
 } from 'class-validator';
 import {
   EmploymentType,
@@ -18,6 +19,7 @@ import {
   EmployeeHierarchyRole,
   EmployeeRecordType,
 } from '../schemas';
+import { StaffRole } from 'src/common/interfaces/user-role.enum';
 
 // ─────────────────────────────────────────────────────────────
 // EMPLOYEE DTOs
@@ -179,6 +181,18 @@ export class CreateEmployeeDto {
   @IsNumber()
   @Min(0)
   sickLeaveBalance?: number;
+
+  // ── Platform access ────────────────────────────────────────
+  @ApiPropertyOptional({
+    enum: StaffRole,
+    isArray: true,
+    description:
+      'Module-scoped platform roles to grant (e.g. risk_officer for GRC access). Leave empty for a regular employee with no elevated access.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsEnum(StaffRole, { each: true })
+  staffRoles?: StaffRole[];
 }
 
 export class UpdateEmployeeDto extends PartialType(CreateEmployeeDto) {
@@ -191,6 +205,17 @@ export class UpdateEmployeeDto extends PartialType(CreateEmployeeDto) {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+}
+
+export class UpdateEmployeeStaffRolesDto {
+  @ApiProperty({
+    enum: StaffRole,
+    isArray: true,
+    description: 'Full replacement list of staff roles for this employee.',
+  })
+  @IsArray()
+  @IsEnum(StaffRole, { each: true })
+  staffRoles: StaffRole[];
 }
 
 export class EmployeeFilterDto {

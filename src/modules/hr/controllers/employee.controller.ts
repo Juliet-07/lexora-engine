@@ -57,6 +57,7 @@ import {
   AcknowledgeDisputeDto,
   RespondToDisputeDto,
   SubmitAssessmentDto,
+  LogOwnerLoanDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -180,7 +181,7 @@ const leaveDocumentStorage = diskStorage({
 
 @ApiTags('Employee Self-Service')
 @ApiBearerAuth('bearerAuth')
-@UserTypes(UserType.EMPLOYEE)
+@UserTypes(UserType.EMPLOYEE, UserType.TENANT)
 @Controller('employee')
 export class HrEmployeeController {
   constructor(
@@ -630,6 +631,19 @@ export class HrEmployeeController {
       (employee as any)._id.toString(),
       dto,
     );
+  }
+
+  @Post('loans/log-owner')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Owner-only: log a loan directly, no approval step',
+  })
+  logOwnerLoan(
+    @Body() dto: LogOwnerLoanDto,
+    @CurrentUser('sub') userId: string,
+    @CurrentUser('tenantId') tenantId: string,
+  ) {
+    return this.loanService.logOwnerLoan(tenantId || userId, userId, dto);
   }
 
   // ===============================================================

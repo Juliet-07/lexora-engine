@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -11,14 +12,19 @@ import {
   EmployeeLoanDocument,
   LoanStatus,
   LoanCreatedBy,
+  EmployeeHierarchyRole,
+  Employee,
+  EmployeeDocument,
 } from '../schemas';
-import { RequestLoanDto, DecideLoanRequestDto } from '../dtos';
+import { RequestLoanDto, DecideLoanRequestDto, LogOwnerLoanDto } from '../dtos';
 
 @Injectable()
 export class EmployeeLoanService {
   constructor(
     @InjectModel(EmployeeLoan.name)
     private readonly loanModel: Model<EmployeeLoanDocument>,
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
   ) {}
 
   async getLoansForEmployee(
@@ -186,5 +192,54 @@ export class EmployeeLoanService {
       .find({ employeeId: new Types.ObjectId(employeeId) })
       .sort({ createdAt: -1 })
       .lean() as any;
+  }
+
+  async logOwnerLoan(
+    tenantId: string,
+    userId: string,
+    dto: LogOwnerLoanDto,
+  ): Promise<EmployeeLoanDocument> {
+    const employee = await this.employeeModel.findOne({
+      userId: new Types.ObjectId(userId),
+    });
+    if (!employee) throw new NotFoundException('Employee profile not found');
+    if (employee.hierarchyRole !== EmployeeHierarchyRole.OWNER) {
+      throw new ForbiddenException(
+        'Only the business owner can log a loan directly.',
+      );
+    }
+
+    if (dto.monthlyInstallment > dto.principalAmount) {
+      throw new BadRequestException(
+        'Monthly installment cannot exceed the principal amount.',
+      );
+    }
+    const start = new Date(dto.startDate);
+    const end = new Date(dto.endDate);
+    if (end <= start) {
+      throw new BadRequestException(
+        'The deduction end date must be after the start date.',
+      );
+    }
+
+    return this.loanModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      employeeId: employee._id,
+      label: dto.label,
+      principalAmount: dto.principalAmount,
+      currency: dto.currency ?? 'RWF',
+      monthlyInstallment: dto.monthlyInstallment,
+      outstandingBalance: dto.principalAmount,
+      status: LoanStatus.ACTIVE,
+      startDate: start,
+      endDate: end,
+      note: dto.note ?? null,
+      createdBy: 'tenant',
+      requestedReason: null,
+      decidedBy: employee.userId,
+      decidedAt: new Date(),
+      rejectionReason: null,
+      deductionHistory: [],
+    });
   }
 }

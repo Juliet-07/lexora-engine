@@ -15,6 +15,7 @@ import {
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailModule } from 'src/common/utils/mailing/email.module';
 import { SubscriptionExpiryService } from './services/subscription-expiry.service';
+import { Employee, EmployeeSchema } from '../hr/schemas';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { SubscriptionExpiryService } from './services/subscription-expiry.servic
       },
       { name: TenantSubscription.name, schema: TenantSubscriptionSchema },
       { name: RiskRules.name, schema: RiskRulesSchema },
+      { name: Employee.name, schema: EmployeeSchema },
     ]),
   ],
   controllers: [SuperAdminController],

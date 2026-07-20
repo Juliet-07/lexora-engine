@@ -84,9 +84,34 @@ export enum PlatformModuleKey {
   HR_PM = 'hr_pm',
 }
 
+// ── Staff roles — module-scoped access, assignable to EMPLOYEE-typed
+// accounts by the tenant at creation or afterward. One person can
+// hold multiple staff roles simultaneously (User.roles is a plain
+// array with no uniqueness constraint).
+export enum StaffRole {
+  RISK_OFFICER = 'risk_officer',
+  GRC_COMPLIANCE_OFFICER = 'grc_compliance_officer',
+  AML_COMPLIANCE_OFFICER = 'aml_compliance_officer',
+  HR_MANAGER = 'hr_manager',
+  CRM_MANAGER = 'crm_manager',
+}
+
+// Which platform module(s) each staff role unlocks. A root Tenant
+// account (userType TENANT) always has full access and is never
+// checked against this map.
+export const STAFF_ROLE_MODULE_ACCESS: Record<StaffRole, PlatformModuleKey[]> =
+  {
+    [StaffRole.RISK_OFFICER]: [PlatformModuleKey.GRC],
+    [StaffRole.GRC_COMPLIANCE_OFFICER]: [PlatformModuleKey.GRC],
+    [StaffRole.AML_COMPLIANCE_OFFICER]: [PlatformModuleKey.KYC],
+    [StaffRole.HR_MANAGER]: [PlatformModuleKey.HR_PM],
+    [StaffRole.CRM_MANAGER]: [PlatformModuleKey.CRM],
+  };
+
 // ── All roles in a single array (for validation) ─────────────
 export const ALL_ROLES = [
   ...Object.values(SuperAdminRole),
   ...Object.values(TenantRole),
   ...Object.values(ClientRole),
+  ...Object.values(StaffRole),
 ];

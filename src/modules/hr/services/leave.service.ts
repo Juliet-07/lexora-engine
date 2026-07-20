@@ -18,7 +18,11 @@ import {
   LeaveType,
   DEFAULT_POLICY,
 } from '../schemas/leave-policy.schema';
-import { Employee, EmployeeDocument } from '../schemas/employee.schema';
+import {
+  Employee,
+  EmployeeDocument,
+  EmployeeHierarchyRole,
+} from '../schemas/employee.schema';
 import { HrLocation, HrLocationDocument } from '../schemas';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
 import {
@@ -192,6 +196,10 @@ export class LeaveService {
     const days = this.calcWorkingDays(start, end);
     if (days < 1) {
       throw new BadRequestException('Leave must be at least 1 working day');
+    }
+
+    if (employee.hierarchyRole === EmployeeHierarchyRole.OWNER) {
+      return this.logOwnerLeave(employee, dto, days);
     }
 
     // Check for overlapping leave
@@ -458,6 +466,32 @@ export class LeaveService {
     return { byStatus, byType, pending, recentApproved };
   }
 
+  async getEmployeeLeaveBalance(employeeId: string, tenantId: string) {
+    const employee = await this.employeeModel
+      .findOne({ _id: employeeId, tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+    if (!employee) throw new NotFoundException('Employee not found');
+
+    const policy = await this.getPolicyForEmployee(employee);
+    const balances = this.buildBalanceSummary(employee, policy);
+
+    return {
+      balances,
+      locationId: employee.locationId?.toString() ?? null,
+    };
+  }
+
+  async getEmployeeLeaveHistory(employeeId: string, tenantId: string) {
+    return this.leaveModel
+      .find({
+        employeeId: new Types.ObjectId(employeeId),
+        tenantId: new Types.ObjectId(tenantId),
+      })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .lean();
+  }
+
   // ═══════════════════════════════════════════════════════════
   // PRIVATE HELPERS
   // ═══════════════════════════════════════════════════════════
@@ -668,29 +702,37 @@ export class LeaveService {
     }
   }
 
-  async getEmployeeLeaveBalance(employeeId: string, tenantId: string) {
-    const employee = await this.employeeModel
-      .findOne({ _id: employeeId, tenantId: new Types.ObjectId(tenantId) })
-      .lean();
-    if (!employee) throw new NotFoundException('Employee not found');
+  private async logOwnerLeave(
+    employee: EmployeeDocument,
+    dto: CreateLeaveRequestDto,
+    days: number,
+  ): Promise<LeaveRequestDocument> {
+    const request = await this.leaveModel.create({
+      employeeId: employee._id,
+      tenantId: employee.tenantId,
+      type: dto.type,
+      startDate: new Date(dto.startDate),
+      endDate: new Date(dto.endDate),
+      days,
+      reason: dto.reason,
+      status: LeaveStatus.APPROVED,
+      reviewedBy: employee.userId,
+      reviewedAt: new Date(),
+      reviewNote: 'Logged directly by business owner — no approval required.',
+    });
 
-    const policy = await this.getPolicyForEmployee(employee);
-    const balances = this.buildBalanceSummary(employee, policy);
+    const balanceField =
+      dto.type === LeaveType.ANNUAL
+        ? 'annualLeaveBalance'
+        : dto.type === LeaveType.SICK
+          ? 'sickLeaveBalance'
+          : null;
+    if (balanceField) {
+      await this.employeeModel.findByIdAndUpdate(employee._id, {
+        $inc: { [balanceField]: -days },
+      });
+    }
 
-    return {
-      balances,
-      locationId: employee.locationId?.toString() ?? null,
-    };
-  }
-
-  async getEmployeeLeaveHistory(employeeId: string, tenantId: string) {
-    return this.leaveModel
-      .find({
-        employeeId: new Types.ObjectId(employeeId),
-        tenantId: new Types.ObjectId(tenantId),
-      })
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .lean();
+    return request;
   }
 }

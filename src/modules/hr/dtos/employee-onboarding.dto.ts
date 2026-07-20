@@ -11,6 +11,7 @@ import {
   ValidateNested,
   IsEmail,
   Min,
+  IsDateString,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { OnboardingDocType } from '../schemas';
@@ -244,4 +245,38 @@ export class RequestLoanDto {
   @ApiProperty({ description: 'Why the employee needs this loan' })
   @IsString()
   reason: string;
+}
+
+export class LogOwnerLoanDto {
+  @ApiProperty()
+  @IsString()
+  label: string;
+
+  @ApiProperty()
+  @IsNumber()
+  @Min(1)
+  principalAmount: number;
+
+  @ApiPropertyOptional({ default: 'RWF' })
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @ApiProperty()
+  @IsNumber()
+  @Min(1)
+  monthlyInstallment: number;
+
+  @ApiProperty()
+  @IsDateString()
+  startDate: string;
+
+  @ApiProperty()
+  @IsDateString()
+  endDate: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  note?: string;
 }

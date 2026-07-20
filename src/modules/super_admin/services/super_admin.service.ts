@@ -44,6 +44,13 @@ import {
 } from '../../../common/interfaces/user-role.enum';
 import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
+import {
+  Employee,
+  EmployeeDocument,
+  EmployeeHierarchyRole,
+  EmploymentStatus,
+  EmploymentType,
+} from 'src/modules/hr/schemas';
 
 @Injectable()
 export class SuperAdminService {
@@ -57,6 +64,8 @@ export class SuperAdminService {
     private readonly subscriptionModel: Model<TenantSubscriptionDocument>,
     @InjectModel(RiskRules.name)
     private readonly riskRulesModel: Model<RiskRulesDocument>,
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
     private readonly mailService: EmailService,
   ) {}
 
@@ -191,6 +200,14 @@ export class SuperAdminService {
       tenant._id.toString(),
       dto.plan || SubscriptionPlan.FREE,
       createdBy,
+    );
+
+    await this.createOwnerEmployeeRecord(
+      tenant._id as Types.ObjectId,
+      tenant._id as Types.ObjectId,
+      tenant.firstName,
+      tenant.lastName,
+      tenant.email,
     );
 
     // Send credentials by email
@@ -1108,7 +1125,7 @@ export class SuperAdminService {
     }
 
     const trialEndsAt = new Date();
-    trialEndsAt.setDate(trialEndsAt.getDate() + 14); // 14-day trial
+    trialEndsAt.setDate(trialEndsAt.getDate() + 7); // 7-day trial
 
     // For paid plans, no trial - just a standard period
     const isPaidPlan = plan != SubscriptionPlan.FREE;
@@ -1127,6 +1144,40 @@ export class SuperAdminService {
       currentPeriodStart: new Date(),
       currentPeriodEnd: periodEnd,
       assignedBy: new Types.ObjectId(assignedBy),
+    });
+  }
+
+  private async createOwnerEmployeeRecord(
+    tenantId: Types.ObjectId,
+    userId: Types.ObjectId,
+    firstName: string,
+    lastName: string,
+    email: string,
+  ): Promise<void> {
+    const count = await this.employeeModel.countDocuments({ tenantId });
+    const employeeNumber = `EMP-${String(count + 1).padStart(4, '0')}`;
+
+    await this.employeeModel.create({
+      tenantId,
+      teamId: null,
+      locationId: null,
+      userId,
+      firstName,
+      lastName,
+      email: email.toLowerCase(),
+      employeeNumber,
+      jobTitle: 'Owner',
+      hierarchyRole: EmployeeHierarchyRole.OWNER,
+      reportsToManagerId: null,
+      reportsToTenantId: tenantId,
+      employmentType: EmploymentType.FULL_TIME,
+      employmentStatus: EmploymentStatus.ACTIVE,
+      startDate: new Date(),
+      salaryCurrency: 'RWF',
+      salaryFrequency: 'monthly',
+      annualLeaveBalance: 21,
+      sickLeaveBalance: 10,
+      metadata: { isOwnerRecord: true },
     });
   }
 }

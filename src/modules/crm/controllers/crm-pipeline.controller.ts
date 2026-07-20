@@ -24,12 +24,17 @@ import {
   MoveClientStageDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
-import { UserType } from 'src/common/interfaces/user-role.enum';
+import {
+  PlatformModuleKey,
+  UserType,
+} from 'src/common/interfaces/user-role.enum';
 import { ClientPipelineStage } from '../schemas';
+import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
 
 @ApiTags('CRM — Pipeline (Tenant)')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.CRM)
 @Controller('crm/leads')
 export class LeadController {
   constructor(private readonly leadService: LeadService) {}
@@ -134,6 +139,7 @@ export class LeadController {
 @ApiTags('CRM — Pipeline (Tenant)')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.CRM)
 @Controller('crm/clients')
 export class ClientPipelineController {
   constructor(private readonly clientPipelineService: ClientPipelineService) {}

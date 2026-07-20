@@ -46,9 +46,13 @@ import {
   SuspendEmployeeDto,
   CreateCourseDto,
   UpdateCourseDto,
+  UpdateEmployeeStaffRolesDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
-import { UserType } from '../../../common/interfaces/user-role.enum';
+import {
+  PlatformModuleKey,
+  UserType,
+} from '../../../common/interfaces/user-role.enum';
 import { PaginationDto } from '../../../common/pagination.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { extname, join } from 'path';
@@ -60,6 +64,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User, UserDocument } from 'src/modules/auth/schemas';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
 
 const employeeDocumentStorage = diskStorage({
   destination: (_req, _file, cb) => {
@@ -134,6 +139,7 @@ const courseFileFilter = (_req: any, file: Express.Multer.File, cb: any) => {
 @ApiTags('HR')
 @ApiBearerAuth('bearerAuth')
 @UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.HR_PM)
 @Controller('hr')
 export class HrTenantController {
   constructor(
@@ -335,6 +341,21 @@ export class HrTenantController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.employeeService.updateEmployee(id, t || u, dto);
+  }
+
+  @Patch('employees/:id/staff-roles')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Grant or revoke module-scoped platform roles for an employee (e.g. risk_officer → GRC access)',
+  })
+  updateStaffRoles(
+    @Param('id') id: string,
+    @Body() dto: UpdateEmployeeStaffRolesDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.employeeService.updateStaffRoles(t || u, id, dto.staffRoles);
   }
 
   @Get('employees/:id/detail')
