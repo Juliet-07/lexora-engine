@@ -29,6 +29,7 @@ import { PaymentModule } from './modules/payment/payment.module';
 import { HrModule } from './modules/hr/hr.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { CrmModule } from './modules/crm/crm.module';
+import { GrcModule } from './modules/grc/grc.module';
 
 @Module({
   imports: [
@@ -82,6 +83,7 @@ import { CrmModule } from './modules/crm/crm.module';
     KycModule,
     HrModule,
     CrmModule,
+    GrcModule,
     PaymentModule,
   ],
   providers: [

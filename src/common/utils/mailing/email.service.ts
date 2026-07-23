@@ -156,6 +156,38 @@ import {
   NewCourseEmailData,
   newCourseTemplate,
 } from './templates/new-course.template';
+import {
+  BoardMemberAppointedEmailData,
+  boardMemberAppointedTemplate,
+} from './templates/board-member-appointed.template';
+import {
+  CommitteeMemberAddedEmailData,
+  committeeMemberAddedTemplate,
+} from './templates/committee-member-added.template';
+import {
+  CommitteeTaskAddedEmailData,
+  committeeTaskAddedTemplate,
+} from './templates/committee-task-added.template';
+import {
+  CommitteeChairAssignedEmailData,
+  committeeChairAssignedTemplate,
+} from './templates/committee-chair-assgned.template';
+import {
+  MeetingDispatchEmailData,
+  meetingDispatchTemplate,
+} from './templates/meeting-dispatch.template';
+import {
+  MeetingMinutesEmailData,
+  meetingMinutesTemplate,
+} from './templates/meeting-minutes.template';
+import {
+  MeetingPostponedEmailData,
+  meetingPostponedTemplate,
+} from './templates/meeting-postponed.template';
+import {
+  MeetingAckReminderEmailData,
+  meetingAckReminderTemplate,
+} from './templates/meeting-ack-reminder.template';
 
 @Injectable()
 export class EmailService {
@@ -660,6 +692,104 @@ export class EmailService {
 
   async sendNewCourseNotice(data: NewCourseEmailData): Promise<void> {
     const { subject, html } = newCourseTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendBoardMemberAppointed(
+    data: BoardMemberAppointedEmailData,
+  ): Promise<void> {
+    const { subject, html } = boardMemberAppointedTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendCommitteeChairAssigned(
+    data: CommitteeChairAssignedEmailData,
+  ): Promise<void> {
+    const { subject, html } = committeeChairAssignedTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendCommitteeMemberAdded(
+    data: CommitteeMemberAddedEmailData,
+  ): Promise<void> {
+    const { subject, html } = committeeMemberAddedTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendCommitteeTaskAdded(
+    data: CommitteeTaskAddedEmailData,
+  ): Promise<void> {
+    const { subject, html } = committeeTaskAddedTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendMeetingDispatch(
+    data: MeetingDispatchEmailData,
+    attachments: { filename: string; path: string }[] = [],
+  ): Promise<void> {
+    const { subject, html } = meetingDispatchTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+      attachments,
+    });
+  }
+
+  async sendMeetingMinutes(
+    data: MeetingMinutesEmailData,
+    attachments: { filename: string; content: Buffer }[] = [],
+  ): Promise<void> {
+    const { subject, html } = meetingMinutesTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+      attachments,
+    });
+  }
+
+  async sendMeetingPostponed(data: MeetingPostponedEmailData): Promise<void> {
+    const { subject, html } = meetingPostponedTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendMeetingAckReminder(
+    data: MeetingAckReminderEmailData,
+  ): Promise<void> {
+    const { subject, html } = meetingAckReminderTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,
