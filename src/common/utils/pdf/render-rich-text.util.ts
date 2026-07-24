@@ -128,9 +128,18 @@ function renderInlineParagraph(
 ): void {
   const runs: { text: string; style: TextStyle }[] = [];
   collectInlineRuns(el, style, runs);
-  if (runs.every((r) => !r.text.trim()) && !prefix) return;
+  const hasText = runs.some((r) => r.text.trim());
+  if (!hasText && !prefix) return;
 
   doc.fontSize(fontSize);
+
+  if (prefix && !hasText) {
+    doc
+      .font('Helvetica')
+      .text(prefix, { continued: false, indent: 20, align: style.align });
+    doc.moveDown(fontSize > 11 ? 0.3 : 0.5);
+    return;
+  }
   if (prefix) {
     doc
       .font('Helvetica')

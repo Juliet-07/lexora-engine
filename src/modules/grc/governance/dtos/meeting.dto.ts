@@ -87,3 +87,11 @@ export class UpdateMinutesDto {
 export class PostponeMeetingDto {
   @ApiProperty() @IsString() reason: string;
 }
+
+export class SubmitMinutesReviewDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiProperty({ enum: ['approved', 'changes-requested'] })
+  @IsEnum(['approved', 'changes-requested'])
+  decision: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() comment?: string;
+}

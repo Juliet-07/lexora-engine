@@ -188,6 +188,10 @@ import {
   MeetingAckReminderEmailData,
   meetingAckReminderTemplate,
 } from './templates/meeting-ack-reminder.template';
+import {
+  ResolutionCirculatedEmailData,
+  resolutionCirculatedTemplate,
+} from './templates/resolution-circulated.template';
 
 @Injectable()
 export class EmailService {
@@ -790,6 +794,18 @@ export class EmailService {
     data: MeetingAckReminderEmailData,
   ): Promise<void> {
     const { subject, html } = meetingAckReminderTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendResolutionCirculated(
+    data: ResolutionCirculatedEmailData,
+  ): Promise<void> {
+    const { subject, html } = resolutionCirculatedTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

@@ -20,6 +20,7 @@ import {
   UpdateMinutesDto,
   RecordAttendanceDto,
   SubmitAckDto,
+  SubmitMinutesReviewDto,
 } from '../dtos/index.dto';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { join } from 'path';
@@ -27,7 +28,11 @@ import { BoardMemberService } from './board-member.service';
 import { CommitteeService } from './committee.service';
 import { randomBytes } from 'crypto';
 import { renderRichText } from 'src/common/utils/pdf/render-rich-text.util';
-import PDFDocument from 'pdfkit';
+import * as PDFKitImport from 'pdfkit';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
+
+const PDFDocument = ((PDFKitImport as any).default ??
+  PDFKitImport) as typeof import('pdfkit');
 
 @Injectable()
 export class MeetingService {
@@ -270,6 +275,13 @@ export class MeetingService {
     }
 
     const pdfBuffer = await this.generateMinutesPdf(meeting, businessName);
+
+    const dir = join(process.cwd(), 'uploads', 'grc', 'meetings', 'minutes');
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const filename = `${meeting._id}-${Date.now()}.pdf`;
+    writeFileSync(join(dir, filename), pdfBuffer);
+    meeting.minutesPdfUrl = `/uploads/grc/meetings/minutes/${filename}`;
+
     const attachments = [
       { filename: `${meeting.title} — Minutes.pdf`, content: pdfBuffer },
     ];
@@ -287,6 +299,16 @@ export class MeetingService {
       recipients.push({ name: meeting.chair, email: chairEmail });
     }
 
+    const reviewLinkByEmail = new Map<string, string>();
+    for (const r of recipients) {
+      const token = this.ensureMinutesReviewToken(meeting, r.email, r.name);
+      reviewLinkByEmail.set(
+        r.email.toLowerCase(),
+        `${process.env.TENANT_APP_URL}/minutes-review/${token}`,
+      );
+    }
+    await meeting.save();
+
     await Promise.all(
       recipients.map((r) =>
         this.emailService
@@ -295,7 +317,7 @@ export class MeetingService {
               to: r.email,
               attendeeName: r.name,
               meetingTitle: meeting.title,
-              minutes: meeting.minutes!,
+              reviewLink: reviewLinkByEmail.get(r.email.toLowerCase())!,
               businessName,
             },
             attachments,
@@ -495,6 +517,67 @@ export class MeetingService {
     return { success: true };
   }
 
+  // ── Public — minutes review, no auth ─────────────────────────
+
+  async getMinutesReviewSnapshot(token: string) {
+    const meeting = await this.meetingModel
+      .findOne({ 'minutesReviewTokens.token': token })
+      .lean();
+    if (!meeting) throw new NotFoundException('This review link is invalid.');
+    const tokenEntry = (meeting.minutesReviewTokens as any[]).find(
+      (t) => t.token === token,
+    );
+
+    const priorApproval = (meeting.minutesReviews as any[]).find(
+      (r) =>
+        r.attendeeEmail === tokenEntry.attendeeEmail &&
+        r.decision === 'approved',
+    );
+
+    return {
+      title: meeting.title,
+      type: meeting.type,
+      date: meeting.date,
+      chair: meeting.chair,
+      pdfUrl: meeting.minutesPdfUrl,
+      prefillName: tokenEntry.attendeeName,
+      alreadyApproved: !!priorApproval,
+      approvedAt: priorApproval?.submittedAt ?? null,
+    };
+  }
+
+  async submitMinutesReview(token: string, dto: SubmitMinutesReviewDto) {
+    const meeting = await this.meetingModel.findOne({
+      'minutesReviewTokens.token': token,
+    });
+    if (!meeting) throw new NotFoundException('This review link is invalid.');
+    const tokenEntry = meeting.minutesReviewTokens.find(
+      (t) => t.token === token,
+    );
+    if (!tokenEntry)
+      throw new NotFoundException('This review link is invalid.');
+
+    const alreadyApproved = meeting.minutesReviews.some(
+      (r) =>
+        r.attendeeEmail === tokenEntry.attendeeEmail &&
+        r.decision === 'approved',
+    );
+    if (alreadyApproved) {
+      throw new BadRequestException('You have already approved these minutes.');
+    }
+
+    meeting.minutesReviews.push({
+      attendeeEmail: tokenEntry.attendeeEmail,
+      attendeeName: dto.name || tokenEntry.attendeeName,
+      decision: dto.decision,
+      comment: dto.comment ?? '',
+      submittedAt: new Date(),
+    } as any);
+    meeting.markModified('minutesReviews');
+    await meeting.save();
+    return { success: true };
+  }
+
   private computeLocation(dto: {
     mode: MeetingMode;
     venue?: string;
@@ -570,6 +653,26 @@ export class MeetingService {
 
       doc.end();
     });
+  }
+
+  private ensureMinutesReviewToken(
+    meeting: GovernanceMeetingDocument,
+    email: string,
+    name: string,
+  ): string {
+    const existing = meeting.minutesReviewTokens.find(
+      (t) => t.attendeeEmail.toLowerCase() === email.toLowerCase(),
+    );
+    if (existing) return existing.token;
+    const token = randomBytes(24).toString('hex');
+    meeting.minutesReviewTokens.push({
+      token,
+      attendeeEmail: email.toLowerCase(),
+      attendeeName: name,
+      createdAt: new Date(),
+    } as any);
+    meeting.markModified('minutesReviewTokens');
+    return token;
   }
 
   private renderAutoHeader(

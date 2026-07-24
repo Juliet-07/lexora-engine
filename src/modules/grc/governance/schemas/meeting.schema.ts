@@ -96,6 +96,27 @@ export class BoardPackDocument {
 export const BoardPackDocumentSchema =
   SchemaFactory.createForClass(BoardPackDocument);
 
+@Schema({ _id: false })
+export class MinutesReviewToken {
+  @Prop({ required: true }) token: string;
+  @Prop({ required: true, lowercase: true }) attendeeEmail: string;
+  @Prop({ required: true }) attendeeName: string;
+  @Prop({ required: true, default: () => new Date() }) createdAt: Date;
+}
+export const MinutesReviewTokenSchema =
+  SchemaFactory.createForClass(MinutesReviewToken);
+
+@Schema({ _id: false })
+export class MinutesReview {
+  @Prop({ required: true, lowercase: true }) attendeeEmail: string;
+  @Prop({ required: true }) attendeeName: string;
+  @Prop({ required: true, enum: ['approved', 'changes-requested'] })
+  decision: string;
+  @Prop({ default: '' }) comment: string;
+  @Prop({ required: true, default: () => new Date() }) submittedAt: Date;
+}
+export const MinutesReviewSchema = SchemaFactory.createForClass(MinutesReview);
+
 @Schema({ timestamps: true, collection: 'grc_governance_meetings' })
 export class GovernanceMeeting {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -181,6 +202,12 @@ export class GovernanceMeeting {
 
   @Prop({ default: null })
   postponedAt: Date | null;
+
+  @Prop({ default: null }) minutesPdfUrl: string | null;
+  @Prop({ type: [MinutesReviewTokenSchema], default: [] })
+  minutesReviewTokens: MinutesReviewToken[];
+  @Prop({ type: [MinutesReviewSchema], default: [] })
+  minutesReviews: MinutesReview[];
 }
 export const GovernanceMeetingSchema =
   SchemaFactory.createForClass(GovernanceMeeting);

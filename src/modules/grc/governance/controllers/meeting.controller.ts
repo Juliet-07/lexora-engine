@@ -33,6 +33,7 @@ import {
   RecordAttendanceDto,
   SubmitAckDto,
   PostponeMeetingDto,
+  SubmitMinutesReviewDto,
 } from '../dtos/index.dto';
 import { CurrentUser, Public, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -303,5 +304,20 @@ export class MeetingController {
   @ApiOperation({ summary: 'Public — submit a board pack acknowledgement' })
   submitAck(@Param('token') token: string, @Body() dto: SubmitAckDto) {
     return this.meetingService.submitAck(token, dto);
+  }
+
+  @Public()
+  @Get('minutes-review/:token')
+  getMinutesReviewSnapshot(@Param('token') token: string) {
+    return this.meetingService.getMinutesReviewSnapshot(token);
+  }
+
+  @Public()
+  @Post('minutes-review/:token')
+  submitMinutesReview(
+    @Param('token') token: string,
+    @Body() dto: SubmitMinutesReviewDto,
+  ) {
+    return this.meetingService.submitMinutesReview(token, dto);
   }
 }

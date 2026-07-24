@@ -9,6 +9,8 @@ import {
   BoardMemberSchema,
   GovernanceCode,
   GovernanceCodeSchema,
+  Resolution,
+  ResolutionSchema,
 } from './schemas';
 import {
   MeetingService,
@@ -16,6 +18,7 @@ import {
   BoardMemberService,
   GovernanceCodeService,
   MeetingAckReminderService,
+  ResolutionService,
 } from './services';
 import {
   MeetingController,
@@ -25,6 +28,7 @@ import {
 } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas';
 import { EmailService } from 'src/common/utils/mailing/email.service';
+import { ResolutionController } from './controllers/resolution.controller';
 
 @Module({
   imports: [
@@ -34,6 +38,7 @@ import { EmailService } from 'src/common/utils/mailing/email.service';
       { name: BoardMember.name, schema: BoardMemberSchema },
       { name: GovernanceCode.name, schema: GovernanceCodeSchema },
       { name: User.name, schema: UserSchema },
+      { name: Resolution.name, schema: ResolutionSchema },
     ]),
   ],
   providers: [
@@ -43,12 +48,14 @@ import { EmailService } from 'src/common/utils/mailing/email.service';
     GovernanceCodeService,
     EmailService,
     MeetingAckReminderService,
+    ResolutionService,
   ],
   controllers: [
     MeetingController,
     CommitteeController,
     BoardMemberController,
     GovernanceCodeController,
+    ResolutionController,
   ],
   exports: [
     MeetingService,
