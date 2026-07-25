@@ -1,0 +1,93 @@
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import {
+  Risk,
+  RiskSchema,
+  RiskAppetiteVersion,
+  RiskAppetiteVersionSchema,
+  Control,
+  ControlSchema,
+  ControlTest,
+  ControlTestSchema,
+  Deficiency,
+  DeficiencySchema,
+  TreatmentPlan,
+  TreatmentPlanSchema,
+  Incident,
+  IncidentSchema,
+  Vendor,
+  VendorSchema,
+  BcpPlan,
+  BcpPlanSchema,
+  BcpTest,
+  BcpTestSchema,
+  RtoRpo,
+  RtoRpoSchema,
+  CrisisContact,
+  CrisisContactSchema,
+} from './schemas';
+import {
+  RiskService,
+  RiskAppetiteService,
+  ControlService,
+  TreatmentPlanService,
+  IncidentService,
+  VendorService,
+  BcpService,
+} from './services';
+import {
+  RiskController,
+  RiskAppetiteController,
+  ControlController,
+  TreatmentPlanController,
+  IncidentController,
+  VendorController,
+  BcpController,
+} from './controllers';
+
+@Module({
+  imports: [
+    MongooseModule.forFeature([
+      { name: Risk.name, schema: RiskSchema },
+      { name: RiskAppetiteVersion.name, schema: RiskAppetiteVersionSchema },
+      { name: Control.name, schema: ControlSchema },
+      { name: ControlTest.name, schema: ControlTestSchema },
+      { name: Deficiency.name, schema: DeficiencySchema },
+      { name: TreatmentPlan.name, schema: TreatmentPlanSchema },
+      { name: Incident.name, schema: IncidentSchema },
+      { name: Vendor.name, schema: VendorSchema },
+      { name: BcpPlan.name, schema: BcpPlanSchema },
+      { name: BcpTest.name, schema: BcpTestSchema },
+      { name: RtoRpo.name, schema: RtoRpoSchema },
+      { name: CrisisContact.name, schema: CrisisContactSchema },
+    ]),
+  ],
+  providers: [
+    RiskService,
+    RiskAppetiteService,
+    ControlService,
+    TreatmentPlanService,
+    IncidentService,
+    VendorService,
+    BcpService,
+  ],
+  controllers: [
+    RiskController,
+    RiskAppetiteController,
+    ControlController,
+    TreatmentPlanController,
+    IncidentController,
+    VendorController,
+    BcpController,
+  ],
+  exports: [
+    RiskService,
+    RiskAppetiteService,
+    ControlService,
+    TreatmentPlanService,
+    IncidentService,
+    VendorService,
+    BcpService,
+  ],
+})
+export class RiskModule {}
