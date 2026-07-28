@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -11,6 +11,7 @@ import { EmailService } from '../../../common/utils/mailing/email.service';
 import {
   AccountStatus,
   SubscriptionStatus,
+  UserType,
 } from '../../../common/interfaces/user-role.enum';
 
 @Injectable()
@@ -146,10 +147,7 @@ export class SubscriptionExpiryService {
       });
 
       // 3. Deactivate all clients under this tenant
-      await this.userModel.updateMany(
-        { tenantId: new Types.ObjectId(tenantId.toString()) },
-        { status: AccountStatus.INACTIVE },
-      );
+      await this.cascadeDeactivateTenantUsers(tenantId);
 
       // 4. Send expiry notification email
       const tenant = await this.userModel
@@ -209,6 +207,7 @@ export class SubscriptionExpiryService {
       status: AccountStatus.ACTIVE,
     });
 
+    await this.cascadeReactivateTenantUsers(tenantId);
     // Send reactivation email
     const tenant = await this.userModel
       .findById(tenantId)
@@ -231,5 +230,40 @@ export class SubscriptionExpiryService {
       success: true,
       message: 'Subscription reactivated. Tenant can now log in.',
     };
+  }
+
+  async cascadeDeactivateTenantUsers(
+    tenantId: string | Types.ObjectId,
+  ): Promise<void> {
+    const tId = new Types.ObjectId(tenantId.toString());
+    await this.userModel.updateMany(
+      {
+        tenantId: tId,
+        userType: { $in: [UserType.EMPLOYEE, UserType.CLIENT] },
+        status: AccountStatus.ACTIVE,
+      },
+      {
+        $set: {
+          status: AccountStatus.INACTIVE,
+          'metadata.deactivatedByTenantCascade': true,
+        },
+      },
+    );
+  }
+
+  async cascadeReactivateTenantUsers(
+    tenantId: string | Types.ObjectId,
+  ): Promise<void> {
+    const tId = new Types.ObjectId(tenantId.toString());
+    await this.userModel.updateMany(
+      {
+        tenantId: tId,
+        'metadata.deactivatedByTenantCascade': true,
+      },
+      {
+        $set: { status: AccountStatus.ACTIVE },
+        $unset: { 'metadata.deactivatedByTenantCascade': '' },
+      },
+    );
   }
 }

@@ -44,6 +44,7 @@ import {
 } from '../../../common/interfaces/user-role.enum';
 import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
+import { SubscriptionExpiryService } from './subscription-expiry.service';
 import {
   Employee,
   EmployeeDocument,
@@ -67,6 +68,7 @@ export class SuperAdminService {
     @InjectModel(Employee.name)
     private readonly employeeModel: Model<EmployeeDocument>,
     private readonly mailService: EmailService,
+    private readonly subscriptionExpiryService: SubscriptionExpiryService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -1007,17 +1009,15 @@ export class SuperAdminService {
     if (!sub) throw new NotFoundException('Tenant subscription not found');
 
     const isActive = dto.status === SubscriptionStatus.ACTIVE;
-    await this.userModel.updateMany(
-      {
-        userType: UserType.EMPLOYEE,
-        tenantId: new Types.ObjectId(tenantId),
-      },
-      {
-        $set: {
-          status: isActive ? AccountStatus.ACTIVE : AccountStatus.INACTIVE,
-        },
-      },
-    );
+    if (isActive) {
+      await this.subscriptionExpiryService.cascadeReactivateTenantUsers(
+        tenantId,
+      );
+    } else {
+      await this.subscriptionExpiryService.cascadeDeactivateTenantUsers(
+        tenantId,
+      );
+    }
     return sub;
   }
 
