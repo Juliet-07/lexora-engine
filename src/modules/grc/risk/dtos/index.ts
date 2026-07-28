@@ -1,5 +1,6 @@
 export * from './bcp.dto';
 export * from './control.dto';
+export * from './emerging-risk.dto';
 export * from './incident.dto';
 export * from './risk-appetite.dto';
 export * from './risk.dto';

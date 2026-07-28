@@ -25,6 +25,8 @@ import {
   RtoRpoSchema,
   CrisisContact,
   CrisisContactSchema,
+  EmergingRisk,
+  EmergingRiskSchema,
 } from './schemas';
 import {
   RiskService,
@@ -34,6 +36,9 @@ import {
   IncidentService,
   VendorService,
   BcpService,
+  EmergingRiskService,
+  TestPlanService,
+  DeficiencyService,
 } from './services';
 import {
   RiskController,
@@ -43,6 +48,7 @@ import {
   IncidentController,
   VendorController,
   BcpController,
+  EmergingRiskController,
 } from './controllers';
 
 @Module({
@@ -60,6 +66,7 @@ import {
       { name: BcpTest.name, schema: BcpTestSchema },
       { name: RtoRpo.name, schema: RtoRpoSchema },
       { name: CrisisContact.name, schema: CrisisContactSchema },
+      { name: EmergingRisk.name, schema: EmergingRiskSchema },
     ]),
   ],
   providers: [
@@ -70,6 +77,9 @@ import {
     IncidentService,
     VendorService,
     BcpService,
+    EmergingRiskService,
+    TestPlanService,
+    DeficiencyService,
   ],
   controllers: [
     RiskController,
@@ -79,6 +89,7 @@ import {
     IncidentController,
     VendorController,
     BcpController,
+    EmergingRiskController,
   ],
   exports: [
     RiskService,
