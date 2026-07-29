@@ -192,6 +192,14 @@ import {
   ResolutionCirculatedEmailData,
   resolutionCirculatedTemplate,
 } from './templates/resolution-circulated.template';
+import {
+  ComplianceDeadlineReminderEmailData,
+  complianceDeadlineReminderTemplate,
+} from './templates/compliance-deadline-reminder.template';
+import {
+  PolicyAcknowledgmentEmailData,
+  policyAcknowledgmentTemplate,
+} from './templates/policy-acknowledgment.template';
 
 @Injectable()
 export class EmailService {
@@ -806,6 +814,30 @@ export class EmailService {
     data: ResolutionCirculatedEmailData,
   ): Promise<void> {
     const { subject, html } = resolutionCirculatedTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendComplianceDeadlineReminder(
+    data: ComplianceDeadlineReminderEmailData,
+  ): Promise<void> {
+    const { subject, html } = complianceDeadlineReminderTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendPolicyForAcknowledgment(
+    data: PolicyAcknowledgmentEmailData,
+  ): Promise<void> {
+    const { subject, html } = policyAcknowledgmentTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,
