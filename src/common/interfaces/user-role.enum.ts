@@ -82,6 +82,7 @@ export enum PlatformModuleKey {
   GRC = 'grc',
   CRM = 'crm',
   HR_PM = 'hr_pm',
+  DEALS = 'deals',
 }
 
 // ── Staff roles — module-scoped access, assignable to EMPLOYEE-typed
