@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import {
   IsString,
   IsOptional,
@@ -6,8 +6,11 @@ import {
   IsNumber,
   IsDateString,
   IsIn,
+  ValidateNested,
+  IsEmail,
+  IsBoolean,
 } from 'class-validator';
-import { DealType } from '../schemas';
+import { DealPartySide, DealType } from '../schemas';
 import {
   DEAL_STAGES,
   DealStatus,
@@ -17,6 +20,7 @@ import {
   CPType,
   CPStatus,
 } from '../schemas';
+import { Type } from 'class-transformer';
 
 export class CreateDealDto {
   @ApiProperty() @IsString() name: string;
@@ -30,6 +34,10 @@ export class CreateDealDto {
   @ApiPropertyOptional() @IsOptional() @IsDateString() longstopDate?: string;
 }
 
+export class CreateFolderDto {
+  @ApiProperty() @IsString() name: string;
+}
+
 export class SetStageDto {
   @ApiProperty({ enum: DEAL_STAGES }) @IsIn(DEAL_STAGES) stage: string;
 }
@@ -39,7 +47,6 @@ export class SetStatusDto {
 }
 
 export class UpdateTermSheetDto {
-  @ApiPropertyOptional() @IsOptional() @IsString() parties?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() structure?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() consideration?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() conditions?: string;
@@ -120,4 +127,35 @@ export class UpdateSigningDetailsDto {
 export class AddPostCompletionDto {
   @ApiProperty() @IsString() item: string;
   @ApiProperty() @IsDateString() dueDate: string;
+}
+
+export class DealPartyPermissionsDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() dataRoom?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() contractReview?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() offerReview?: boolean;
+}
+
+export class AddPartyDto {
+  @ApiProperty({ enum: DealPartySide })
+  @IsEnum(DealPartySide)
+  side: DealPartySide;
+  @ApiProperty() @IsString() title: string;
+  @ApiProperty() @IsString() name: string;
+  @ApiProperty() @IsEmail() email: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() phone?: string;
+  @ApiPropertyOptional({ type: DealPartyPermissionsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DealPartyPermissionsDto)
+  permissions?: DealPartyPermissionsDto;
+}
+
+export class UpdatePartyDto extends PartialType(AddPartyDto) {}
+
+export class SubmitReviewDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiProperty({ enum: ['Approved', 'Changes Requested'] })
+  @IsIn(['Approved', 'Changes Requested'])
+  decision: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() comment?: string;
 }

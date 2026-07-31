@@ -58,7 +58,6 @@ export enum ChecklistStatus {
 
 @Schema({ _id: false })
 export class TermSheet {
-  @Prop({ default: '' }) parties: string;
   @Prop({ default: '' }) structure: string;
   @Prop({ default: '' }) consideration: string;
   @Prop({ default: '' }) conditions: string;
@@ -84,7 +83,16 @@ export class DataRoomFile {
 export const DataRoomFileSchema = SchemaFactory.createForClass(DataRoomFile);
 
 @Schema({ _id: false })
+export class DataRoomFolder {
+  @Prop({ required: true }) name: string;
+}
+export const DataRoomFolderSchema =
+  SchemaFactory.createForClass(DataRoomFolder);
+
+@Schema({ _id: false })
 export class DataRoom {
+  @Prop({ type: [DataRoomFolderSchema], default: [] })
+  folders: DataRoomFolder[];
   @Prop({ type: [DataRoomFileSchema], default: [] }) files: DataRoomFile[];
 }
 export const DataRoomSchema = SchemaFactory.createForClass(DataRoom);
@@ -179,6 +187,65 @@ export class PostCompletionItem {
 export const PostCompletionItemSchema =
   SchemaFactory.createForClass(PostCompletionItem);
 
+export enum DealPartySide {
+  BUYER = 'Buyer',
+  SELLER = 'Seller',
+}
+
+@Schema({ _id: false })
+export class DealPartyPermissions {
+  @Prop({ default: false }) dataRoom: boolean;
+  @Prop({ default: false }) contractReview: boolean;
+  @Prop({ default: false }) offerReview: boolean;
+}
+export const DealPartyPermissionsSchema =
+  SchemaFactory.createForClass(DealPartyPermissions);
+
+@Schema({ _id: false })
+export class DealParty {
+  @Prop({ enum: DealPartySide, required: true }) side: DealPartySide;
+  @Prop({ required: true }) title: string;
+  @Prop({ required: true }) name: string;
+  @Prop({ required: true, lowercase: true }) email: string;
+  @Prop({ default: '' }) phone: string;
+  @Prop({ type: DealPartyPermissionsSchema, default: () => ({}) })
+  permissions: DealPartyPermissions;
+}
+export const DealPartySchema = SchemaFactory.createForClass(DealParty);
+
+export enum ReviewDecision {
+  APPROVED = 'Approved',
+  CHANGES_REQUESTED = 'Changes Requested',
+}
+
+@Schema({ _id: false })
+export class ReviewToken {
+  @Prop({ required: true }) token: string;
+  @Prop({ required: true, lowercase: true }) partyEmail: string;
+  @Prop({ required: true }) partyName: string;
+  @Prop({ required: true, default: () => new Date() }) sentAt: Date;
+}
+export const ReviewTokenSchema = SchemaFactory.createForClass(ReviewToken);
+
+@Schema({ _id: false })
+export class ReviewResponse {
+  @Prop({ required: true, lowercase: true }) partyEmail: string;
+  @Prop({ required: true }) partyName: string;
+  @Prop({ enum: ReviewDecision, required: true }) decision: ReviewDecision;
+  @Prop({ default: '' }) comment: string;
+  @Prop({ required: true, default: () => new Date() }) respondedAt: Date;
+}
+export const ReviewResponseSchema =
+  SchemaFactory.createForClass(ReviewResponse);
+
+@Schema({ _id: false })
+export class ReviewLoop {
+  @Prop({ type: [ReviewTokenSchema], default: [] }) tokens: ReviewToken[];
+  @Prop({ type: [ReviewResponseSchema], default: [] })
+  responses: ReviewResponse[];
+}
+export const ReviewLoopSchema = SchemaFactory.createForClass(ReviewLoop);
+
 @Schema({ _id: false })
 export class ConflictCheck {
   @Prop({ default: true }) cleared: boolean;
@@ -199,6 +266,12 @@ export class Deal {
   @Prop({ enum: DealStatus, default: DealStatus.ACTIVE }) status: DealStatus;
   @Prop({ default: 'Unassigned' }) leadPartner: string;
   @Prop({ type: [String], default: [] }) team: string[];
+  @Prop({ type: [DealPartySchema], default: [] }) parties: DealParty[];
+  @Prop({ type: ReviewLoopSchema, default: () => ({}) })
+  contractReviewLoop: ReviewLoop;
+  @Prop({ default: null }) contractPdfUrl: string | null;
+  @Prop({ type: ReviewLoopSchema, default: () => ({}) })
+  offerReviewLoop: ReviewLoop;
   @Prop({ required: true, default: 0 }) value: number;
   @Prop({ default: 'USD' }) currency: string;
   @Prop({ default: 'Rwanda' }) jurisdiction: string;

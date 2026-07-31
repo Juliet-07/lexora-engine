@@ -31,7 +31,16 @@ import {
   AddSignatoryDto,
   UpdateSigningDetailsDto,
   AddPostCompletionDto,
+  UpdatePartyDto,
+  AddPartyDto,
+  SubmitReviewDto,
 } from '../dtos';
+import { writeFileSync, mkdirSync, existsSync } from 'fs';
+import { join } from 'path';
+import { EmailService } from 'src/common/utils/mailing/email.service';
+import { randomBytes } from 'crypto';
+import * as PDFKitImport from 'pdfkit';
+const PDFDocument = ((PDFKitImport as any).default ?? PDFKitImport) as any;
 
 @Injectable()
 export class DealService {
@@ -39,6 +48,7 @@ export class DealService {
     @InjectModel(Deal.name) private readonly model: Model<DealDocument>,
     @InjectModel(Clause.name)
     private readonly clauseModel: Model<ClauseDocument>,
+    private readonly emailService: EmailService,
   ) {}
 
   // ── Pure computed helpers — single source of truth, never
@@ -99,6 +109,85 @@ export class DealService {
       targetClose,
       longstopDate,
     });
+  }
+
+  async addParty(tenantId: string, id: string, dto: AddPartyDto) {
+    const deal = await this.getRawDoc(tenantId, id);
+    deal.parties.push({
+      side: dto.side,
+      title: dto.title,
+      name: dto.name,
+      email: dto.email.toLowerCase(),
+      phone: dto.phone ?? '',
+      permissions: {
+        dataRoom: dto.permissions?.dataRoom ?? false,
+        contractReview: dto.permissions?.contractReview ?? false,
+        offerReview: dto.permissions?.offerReview ?? false,
+      },
+    } as any);
+    deal.markModified('parties');
+    await deal.save();
+    return deal;
+  }
+
+  async updateParty(
+    tenantId: string,
+    id: string,
+    index: number,
+    dto: UpdatePartyDto,
+  ) {
+    const deal = await this.getRawDoc(tenantId, id);
+    const p = deal.parties[index];
+    if (!p) throw new NotFoundException('Party not found');
+    if (dto.side !== undefined) p.side = dto.side;
+    if (dto.title !== undefined) p.title = dto.title;
+    if (dto.name !== undefined) p.name = dto.name;
+    if (dto.email !== undefined) p.email = dto.email.toLowerCase();
+    if (dto.phone !== undefined) p.phone = dto.phone;
+    if (dto.permissions) Object.assign(p.permissions, dto.permissions);
+    deal.markModified('parties');
+    await deal.save();
+    return deal;
+  }
+
+  async removeParty(tenantId: string, id: string, index: number) {
+    const deal = await this.getRawDoc(tenantId, id);
+    if (!deal.parties[index]) throw new NotFoundException('Party not found');
+    deal.parties.splice(index, 1);
+    deal.markModified('parties');
+    await deal.save();
+    return deal;
+  }
+
+  async addFolder(tenantId: string, id: string, dto: { name: string }) {
+    const deal = await this.getRawDoc(tenantId, id);
+    deal.dataRoom.folders.push({ name: dto.name } as any);
+    deal.markModified('dataRoom');
+    await deal.save();
+    return deal;
+  }
+
+  async removeFolder(tenantId: string, id: string, index: number) {
+    const deal = await this.getRawDoc(tenantId, id);
+    const folder = deal.dataRoom.folders[index];
+    if (!folder) throw new NotFoundException('Folder not found');
+    deal.dataRoom.folders.splice(index, 1);
+    deal.dataRoom.files = deal.dataRoom.files.filter(
+      (f) => f.folder !== folder.name,
+    ) as any;
+    deal.markModified('dataRoom');
+    await deal.save();
+    return deal;
+  }
+
+  async removeDataRoomFile(tenantId: string, id: string, index: number) {
+    const deal = await this.getRawDoc(tenantId, id);
+    if (!deal.dataRoom.files[index])
+      throw new NotFoundException('File not found');
+    deal.dataRoom.files.splice(index, 1);
+    deal.markModified('dataRoom');
+    await deal.save();
+    return deal;
   }
 
   async getAll(tenantId: string) {
@@ -450,5 +539,305 @@ export class DealService {
     deal.markModified('postCompletion');
     await deal.save();
     return deal;
+  }
+
+  async sendDataRoomEmail(
+    tenantId: string,
+    id: string,
+    partyIndex: number,
+    businessName: string,
+  ) {
+    const deal = await this.getRawDoc(tenantId, id);
+    const party = deal.parties[partyIndex];
+    if (!party) throw new NotFoundException('Party not found');
+    if (!party.permissions.dataRoom) {
+      throw new BadRequestException(
+        'This party does not have data room access enabled.',
+      );
+    }
+    if (deal.dataRoom.files.length === 0) {
+      throw new BadRequestException('No files in the data room to send yet.');
+    }
+
+    const zipBuffer = await this.buildDataRoomZip(deal);
+    await this.emailService.sendDataRoomDelivery(
+      {
+        to: party.email,
+        recipientName: party.name,
+        dealName: deal.name,
+        businessName,
+      },
+      [{ filename: `${deal.name} - Data Room.zip`, content: zipBuffer }],
+    );
+
+    return { success: true, sentTo: party.email };
+  }
+
+  async sendForReview(
+    tenantId: string,
+    id: string,
+    kind: 'contract' | 'offer',
+    businessName: string,
+  ) {
+    const deal = await this.getRawDoc(tenantId, id);
+    const loopField =
+      kind === 'contract' ? 'contractReviewLoop' : 'offerReviewLoop';
+    const permKey = kind === 'contract' ? 'contractReview' : 'offerReview';
+    const loop = deal[loopField];
+
+    const eligible = deal.parties.filter((p) => p.permissions[permKey]);
+    if (eligible.length === 0) {
+      throw new BadRequestException(
+        `No party has ${kind} review access enabled.`,
+      );
+    }
+
+    if (kind === 'contract') {
+      const pdfBuffer = await this.generateContractPdf(deal, businessName);
+      const dir = join(process.cwd(), 'uploads', 'deals', 'contract-review');
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      const filename = `${deal._id}-${Date.now()}.pdf`;
+      writeFileSync(join(dir, filename), pdfBuffer);
+      deal.contractPdfUrl = `/uploads/deals/contract-review/${filename}`;
+    }
+
+    const sent: string[] = [];
+    for (const party of eligible) {
+      let entry = loop.tokens.find((t) => t.partyEmail === party.email);
+      if (!entry) {
+        entry = {
+          token: randomBytes(24).toString('hex'),
+          partyEmail: party.email,
+          partyName: party.name,
+          sentAt: new Date(),
+        } as any;
+        loop.tokens.push(entry as any);
+      } else {
+        entry.sentAt = new Date();
+      }
+      const link = `${process.env.TENANT_APP_URL}/deal-review/${kind}/${entry.token}`;
+      await this.emailService
+        .sendDealReviewInvite({
+          to: party.email,
+          recipientName: party.name,
+          dealName: deal.name,
+          kind,
+          reviewLink: link,
+          businessName,
+        })
+        .catch(() => {});
+      sent.push(party.email);
+    }
+    deal.markModified(loopField);
+    await deal.save();
+    return { sent };
+  }
+
+  async getReviewSnapshot(kind: 'contract' | 'offer', token: string) {
+    const loopField =
+      kind === 'contract' ? 'contractReviewLoop' : 'offerReviewLoop';
+    const deal = await this.model
+      .findOne({ [`${loopField}.tokens.token`]: token })
+      .lean();
+    if (!deal) throw new NotFoundException('This review link is invalid.');
+    const loop: any = (deal as any)[loopField];
+    const tokenEntry = loop.tokens.find((t: any) => t.token === token);
+    const already = loop.responses.find(
+      (r: any) => r.partyEmail === tokenEntry.partyEmail,
+    );
+
+    if (kind === 'contract') {
+      return {
+        dealName: deal.name,
+        pdfUrl: (deal as any).contractPdfUrl ?? null,
+        prefillName: tokenEntry.partyName,
+        alreadyResponded: !!already,
+        previousDecision: already?.decision ?? null,
+      };
+    }
+    return {
+      dealName: deal.name,
+      termSheet: deal.termSheet,
+      prefillName: tokenEntry.partyName,
+      alreadyResponded: !!already,
+      previousDecision: already?.decision ?? null,
+    };
+  }
+
+  async submitReview(
+    kind: 'contract' | 'offer',
+    token: string,
+    dto: SubmitReviewDto,
+  ) {
+    const loopField =
+      kind === 'contract' ? 'contractReviewLoop' : 'offerReviewLoop';
+    const deal = await this.model.findOne({
+      [`${loopField}.tokens.token`]: token,
+    });
+    if (!deal) throw new NotFoundException('This review link is invalid.');
+    const loop: any = (deal as any)[loopField];
+    const tokenEntry = loop.tokens.find((t: any) => t.token === token);
+    if (!tokenEntry)
+      throw new NotFoundException('This review link is invalid.');
+
+    // Once approved, that's final — matches every other ack flow this
+    // session. "Changes Requested" never locks, so the same link
+    // keeps working across re-sends until they eventually approve.
+    if (
+      loop.responses.some(
+        (r: any) =>
+          r.partyEmail === tokenEntry.partyEmail && r.decision === 'Approved',
+      )
+    ) {
+      throw new BadRequestException('You have already approved this.');
+    }
+
+    loop.responses.push({
+      partyEmail: tokenEntry.partyEmail,
+      partyName: dto.name || tokenEntry.partyName,
+      decision: dto.decision,
+      comment: dto.comment ?? '',
+      respondedAt: new Date(),
+    });
+    deal.markModified(loopField);
+    await deal.save();
+    return { success: true };
+  }
+
+  // PRIVATE HELPERS
+  private async buildDataRoomZip(deal: DealDocument): Promise<Buffer> {
+    const { ZipArchive } = require('archiver');
+    return new Promise((resolve, reject) => {
+      const archive = new ZipArchive({ zlib: { level: 9 } });
+      const chunks: Buffer[] = [];
+      archive.on('data', (chunk) => chunks.push(chunk));
+      archive.on('end', () => resolve(Buffer.concat(chunks)));
+      archive.on('error', reject);
+
+      for (const file of deal.dataRoom.files) {
+        if (!file.fileUrl) continue;
+        const diskPath = join(process.cwd(), file.fileUrl);
+        if (existsSync(diskPath)) {
+          archive.file(diskPath, { name: `${file.folder}/${file.name}` });
+        }
+      }
+      archive.finalize();
+    });
+  }
+
+  private renderBody(deal: DealDocument, body: string): string {
+    return body.replace(/\[([A-Z_]+)\]/g, (_, k) =>
+      deal.contract.variables[k] ? deal.contract.variables[k] : `[${k}]`,
+    );
+  }
+
+  private renderBodyLean(deal: any, body: string): string {
+    return body.replace(/\[([A-Z_]+)\]/g, (_: any, k: string) =>
+      deal.contract.variables[k] ? deal.contract.variables[k] : `[${k}]`,
+    );
+  }
+
+  private generateContractPdf(
+    deal: DealDocument,
+    businessName: string,
+  ): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 50 });
+      const chunks: Buffer[] = [];
+      doc.on('data', (c: Buffer) => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      doc
+        .fontSize(18)
+        .font('Helvetica-Bold')
+        .text(deal.name, { align: 'center' });
+      doc.moveDown(0.3);
+      doc
+        .fontSize(10)
+        .font('Helvetica')
+        .fillColor('#666666')
+        .text(
+          `${businessName} · Generated ${new Date().toLocaleDateString()}`,
+          { align: 'center' },
+        );
+      doc.moveDown(0.3);
+      doc
+        .fontSize(11)
+        .fillColor('#000000')
+        .text(`${deal.client} vs ${deal.counterparty}`, { align: 'center' });
+      doc.moveDown(1.5);
+
+      doc.fontSize(14).font('Helvetica-Bold').text('Parties to this Agreement');
+      doc.moveDown(0.5);
+      for (const side of ['Buyer', 'Seller'] as const) {
+        const sideParties = deal.parties.filter((p) => p.side === side);
+        doc.fontSize(12).font('Helvetica-Bold').text(`${side} Side`);
+        if (sideParties.length === 0) {
+          doc
+            .fontSize(10)
+            .font('Helvetica-Oblique')
+            .text('No parties recorded.');
+        } else {
+          sideParties.forEach((p) => {
+            doc
+              .fontSize(10)
+              .font('Helvetica')
+              .text(`${p.name} — ${p.title}${p.email ? ` (${p.email})` : ''}`);
+          });
+        }
+        doc.moveDown(0.5);
+      }
+      doc.moveDown(1);
+
+      doc.fontSize(14).font('Helvetica-Bold').text('Term Sheet');
+      doc.moveDown(0.5);
+      const tsFields: [string, string][] = [
+        ['Structure', deal.termSheet.structure],
+        ['Consideration', deal.termSheet.consideration],
+        ['Conditions', deal.termSheet.conditions],
+        ['Exclusivity', deal.termSheet.exclusivity],
+        ['Confidentiality', deal.termSheet.confidentiality],
+        ['Timeline', deal.termSheet.timeline],
+      ];
+      tsFields.forEach(([label, value]) => {
+        doc.fontSize(11).font('Helvetica-Bold').text(`${label}:`);
+        doc
+          .fontSize(10)
+          .font('Helvetica')
+          .text(value || '—');
+        doc.moveDown(0.4);
+      });
+      doc.moveDown(1);
+
+      doc.fontSize(14).font('Helvetica-Bold').text('Contract');
+      doc.moveDown(0.5);
+      if (deal.contract.sections.length === 0) {
+        doc
+          .fontSize(10)
+          .font('Helvetica-Oblique')
+          .text('No contract sections have been drafted yet.');
+      } else {
+        deal.contract.sections.forEach((s) => {
+          doc.fontSize(12).font('Helvetica-Bold').text(s.title);
+          doc
+            .fontSize(10)
+            .font('Helvetica')
+            .text(this.renderBody(deal, s.body));
+          doc.moveDown(0.6);
+        });
+      }
+
+      doc.end();
+    });
+  }
+
+  async getContractPdf(
+    tenantId: string,
+    id: string,
+    businessName: string,
+  ): Promise<Buffer> {
+    const deal = await this.getRawDoc(tenantId, id);
+    return this.generateContractPdf(deal, businessName);
   }
 }

@@ -15,6 +15,7 @@ import {
   PrecedentController,
 } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas';
+import { EmailService } from 'src/common/utils/mailing/email.service';
 
 @Module({
   imports: [
@@ -25,7 +26,7 @@ import { User, UserSchema } from 'src/modules/auth/schemas';
       { name: User.name, schema: UserSchema },
     ]),
   ],
-  providers: [ClauseService, PrecedentService, DealService],
+  providers: [ClauseService, PrecedentService, DealService, EmailService],
   controllers: [ClauseController, PrecedentController, DealController],
   exports: [ClauseService, PrecedentService, DealService],
 })

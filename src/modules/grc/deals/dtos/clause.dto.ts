@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsOptional, IsEnum } from 'class-validator';
-import { ClauseCategory } from '../schemas';
+import { ClauseCategory, DealType } from '../schemas';
 
 export class CreateClauseDto {
   @ApiProperty() @IsString() title: string;
@@ -19,4 +19,14 @@ export class UpdateClauseDto {
   category?: ClauseCategory;
   @ApiPropertyOptional() @IsOptional() @IsString() jurisdiction?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() body?: string;
+}
+
+export class CreatePrecedentDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiProperty({ enum: DealType }) @IsEnum(DealType) type: DealType;
+  @ApiPropertyOptional() @IsOptional() @IsString() jurisdiction?: string;
+}
+
+export class UpdatePrecedentContentDto {
+  @ApiProperty() @IsString() content: string;
 }

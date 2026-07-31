@@ -14,6 +14,15 @@ export enum ClauseCategory {
   GOVERNANCE = 'Governance',
 }
 
+export enum DealType {
+  MA = 'M&A',
+  JV = 'JV',
+  RESTRUCTURE = 'Restructure',
+  CAPITAL_RAISE = 'Capital Raise',
+  DISPOSAL = 'Disposal',
+  SPIN_OFF = 'Spin-off',
+}
+
 @Schema({ timestamps: true, collection: 'deals_clauses' })
 export class Clause {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -30,25 +39,6 @@ export const ClauseSchema = SchemaFactory.createForClass(Clause);
 
 export type PrecedentDocument = Precedent & Document;
 
-export enum DealType {
-  MA = 'M&A',
-  JV = 'JV',
-  RESTRUCTURE = 'Restructure',
-  CAPITAL_RAISE = 'Capital Raise',
-  DISPOSAL = 'Disposal',
-  SPIN_OFF = 'Spin-off',
-}
-
-@Schema({ _id: false })
-export class PrecedentSection {
-  @Prop({ type: Types.ObjectId, ref: 'Clause', default: null })
-  clauseId: Types.ObjectId | null;
-  @Prop({ required: true }) title: string;
-  @Prop({ required: true }) body: string;
-}
-export const PrecedentSectionSchema =
-  SchemaFactory.createForClass(PrecedentSection);
-
 @Schema({ timestamps: true, collection: 'deals_precedents' })
 export class Precedent {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -57,7 +47,12 @@ export class Precedent {
   @Prop({ required: true, trim: true }) name: string;
   @Prop({ enum: DealType, required: true }) type: DealType;
   @Prop({ default: 'Rwanda' }) jurisdiction: string;
-  @Prop({ type: [PrecedentSectionSchema], default: [] })
-  sections: PrecedentSection[];
+
+  @Prop({ required: true }) fileName: string;
+  @Prop({ default: null }) fileUrl: string | null;
+  @Prop({ default: null }) mimeType: string | null;
+  @Prop({ default: 0 }) size: number;
+
+  @Prop({ required: true }) content: string;
 }
 export const PrecedentSchema = SchemaFactory.createForClass(Precedent);

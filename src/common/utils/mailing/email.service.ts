@@ -200,6 +200,14 @@ import {
   PolicyAcknowledgmentEmailData,
   policyAcknowledgmentTemplate,
 } from './templates/policy-acknowledgment.template';
+import {
+  DataRoomDeliveryEmailData,
+  dataRoomDeliveryTemplate,
+} from './templates/data-room-delivery.template';
+import {
+  DealReviewInviteEmailData,
+  dealReviewInviteTemplate,
+} from './templates/deal-review-invite.template';
 
 @Injectable()
 export class EmailService {
@@ -838,6 +846,30 @@ export class EmailService {
     data: PolicyAcknowledgmentEmailData,
   ): Promise<void> {
     const { subject, html } = policyAcknowledgmentTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendDataRoomDelivery(
+    data: DataRoomDeliveryEmailData,
+    attachments: { filename: string; content: Buffer }[],
+  ): Promise<void> {
+    const { subject, html } = dataRoomDeliveryTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+      attachments,
+    });
+  }
+
+  async sendDealReviewInvite(data: DealReviewInviteEmailData): Promise<void> {
+    const { subject, html } = dealReviewInviteTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

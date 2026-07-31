@@ -9,9 +9,11 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  Res,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiConsumes } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
@@ -36,14 +38,19 @@ import {
   AddSignatoryDto,
   UpdateSigningDetailsDto,
   AddPostCompletionDto,
+  CreateFolderDto,
+  AddPartyDto,
+  UpdatePartyDto,
+  SubmitReviewDto,
 } from '../dtos';
-import { CurrentUser, UserTypes } from 'src/common/decorators';
+import { CurrentUser, Public, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
 import {
   UserType,
   PlatformModuleKey,
 } from 'src/common/interfaces/user-role.enum';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 
 const dataRoomStorage = diskStorage({
   destination: (_req, _file, cb) => {
@@ -110,6 +117,54 @@ export class DealController {
     return this.service.setStatus(t || u, id, dto);
   }
 
+  @Post(':id/parties')
+  addParty(
+    @Param('id') id: string,
+    @Body() dto: AddPartyDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addParty(t || u, id, dto);
+  }
+
+  @Patch(':id/parties/:index')
+  updateParty(
+    @Param('id') id: string,
+    @Param('index') index: string,
+    @Body() dto: UpdatePartyDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateParty(t || u, id, Number(index), dto);
+  }
+
+  @Delete(':id/parties/:index')
+  removeParty(
+    @Param('id') id: string,
+    @Param('index') index: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.removeParty(t || u, id, Number(index));
+  }
+
+  @Post(':id/data-room/send/:partyIndex')
+  async sendDataRoomEmail(
+    @Param('id') id: string,
+    @Param('partyIndex') partyIndex: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    return this.service.sendDataRoomEmail(
+      tenantId,
+      id,
+      Number(partyIndex),
+      businessName,
+    );
+  }
+
   // ── Term Sheet ───────────────────────────────────────────────
   @Patch(':id/term-sheet')
   updateTermSheet(
@@ -153,6 +208,36 @@ export class DealController {
     );
   }
 
+  @Post(':id/data-room/folders')
+  addFolder(
+    @Param('id') id: string,
+    @Body() dto: CreateFolderDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addFolder(t || u, id, dto);
+  }
+
+  @Delete(':id/data-room/folders/:index')
+  removeFolder(
+    @Param('id') id: string,
+    @Param('index') index: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.removeFolder(t || u, id, Number(index));
+  }
+
+  @Delete(':id/data-room/files/:index')
+  removeDataRoomFile(
+    @Param('id') id: string,
+    @Param('index') index: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.removeDataRoomFile(t || u, id, Number(index));
+  }
+
   // ── Due Diligence ────────────────────────────────────────────
   @Post(':id/dd')
   addDDItem(
@@ -184,6 +269,27 @@ export class DealController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.addContractSection(t || u, id, dto);
+  }
+
+  @Get(':id/contract/pdf')
+  async downloadContractPdf(
+    @Param('id') id: string,
+    @Res() res: Response,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const buffer = await this.service.getContractPdf(
+      tenantId,
+      id,
+      businessName,
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="Contract.pdf"',
+    });
+    res.send(buffer);
   }
 
   @Delete(':id/contract/sections/:index')
@@ -341,5 +447,36 @@ export class DealController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.togglePostCompletion(t || u, id, Number(index));
+  }
+
+  @Post(':id/review/:kind/send')
+  async sendForReview(
+    @Param('id') id: string,
+    @Param('kind') kind: 'contract' | 'offer',
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    return this.service.sendForReview(tenantId, id, kind, businessName);
+  }
+
+  @Public()
+  @Get('review/:kind/:token')
+  getReviewSnapshot(
+    @Param('kind') kind: 'contract' | 'offer',
+    @Param('token') token: string,
+  ) {
+    return this.service.getReviewSnapshot(kind, token);
+  }
+
+  @Public()
+  @Post('review/:kind/:token')
+  submitReview(
+    @Param('kind') kind: 'contract' | 'offer',
+    @Param('token') token: string,
+    @Body() dto: SubmitReviewDto,
+  ) {
+    return this.service.submitReview(kind, token, dto);
   }
 }
