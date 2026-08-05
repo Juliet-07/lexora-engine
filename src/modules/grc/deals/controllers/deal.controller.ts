@@ -46,6 +46,7 @@ import {
   SubmitReviewDto,
   AddContractSectionFromPrecedentDto,
   AddRedlineDto,
+  UpdateCommercialTermsDto,
 } from '../dtos';
 import { CurrentUser, Public, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -639,5 +640,15 @@ export class DealController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.togglePostCompletion(t || u, id, Number(index));
+  }
+
+  @Patch(':id/commercial-terms')
+  updateCommercialTerms(
+    @Param('id') id: string,
+    @Body() dto: UpdateCommercialTermsDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateCommercialTerms(t || u, id, dto);
   }
 }

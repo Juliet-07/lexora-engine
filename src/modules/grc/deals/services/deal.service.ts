@@ -43,6 +43,7 @@ import {
   SubmitReviewDto,
   AddContractSectionFromPrecedentDto,
   AddRedlineDto,
+  UpdateCommercialTermsDto,
 } from '../dtos';
 import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -1193,5 +1194,17 @@ export class DealService {
     const deal = await this.getRawDoc(tenantId, dealId);
     const contract = this.getContractOrThrow(deal, contractId);
     return this.generateContractPdf(deal, contract, businessName);
+  }
+
+  async updateCommercialTerms(
+    tenantId: string,
+    id: string,
+    dto: UpdateCommercialTermsDto,
+  ) {
+    const deal = await this.getRawDoc(tenantId, id);
+    if (dto.feeRate !== undefined) deal.feeRate = dto.feeRate;
+    if (dto.feeRecovered !== undefined) deal.feeRecovered = dto.feeRecovered;
+    await deal.save();
+    return deal;
   }
 }

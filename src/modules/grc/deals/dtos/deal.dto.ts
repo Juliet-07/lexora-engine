@@ -176,3 +176,8 @@ export class AddRedlineDto {
   @ApiProperty() @IsInt() lineIndex: number;
   @ApiProperty() @IsString() comment: string;
 }
+
+export class UpdateCommercialTermsDto {
+  @ApiPropertyOptional() @IsOptional() @IsNumber() feeRate?: number;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() feeRecovered?: number;
+}

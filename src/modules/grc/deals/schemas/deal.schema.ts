@@ -298,6 +298,8 @@ export class Deal {
   offerReviewLoop: ReviewLoop;
   @Prop({ required: true, default: 0 }) value: number;
   @Prop({ default: 'USD' }) currency: string;
+  @Prop({ default: null }) feeRate: number | null;
+  @Prop({ default: 0 }) feeRecovered: number;
   @Prop({ default: 'Rwanda' }) jurisdiction: string;
   @Prop({ required: true }) startDate: Date;
   @Prop({ required: true }) targetClose: Date;
