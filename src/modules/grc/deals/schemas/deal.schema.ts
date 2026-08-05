@@ -119,24 +119,32 @@ export const ContractCommentSchema =
   SchemaFactory.createForClass(ContractComment);
 
 @Schema({ _id: false })
+export class Redline {
+  @Prop({ required: true }) lineIndex: number;
+  @Prop({ required: true }) quotedText: string;
+  @Prop({ required: true }) comment: string;
+  @Prop({ required: true }) authorName: string;
+  @Prop({ required: true, lowercase: true }) authorEmail: string;
+  @Prop({ enum: ['internal', 'external'], required: true }) source: string;
+  @Prop({ required: true, default: () => new Date() }) createdAt: Date;
+}
+export const RedlineSchema = SchemaFactory.createForClass(Redline);
+
+@Schema({ _id: false })
 export class ContractSection {
   @Prop({ type: Types.ObjectId, ref: 'Clause', default: null })
   clauseId: Types.ObjectId | null;
+  @Prop({ type: Types.ObjectId, ref: 'Precedent', default: null })
+  precedentId: Types.ObjectId | null;
   @Prop({ required: true }) title: string;
   @Prop({ required: true }) body: string;
   @Prop({ type: [ContractCommentSchema], default: [] })
   comments: ContractComment[];
+  @Prop({ type: [RedlineSchema], default: [] })
+  redlines: Redline[];
 }
 export const ContractSectionSchema =
   SchemaFactory.createForClass(ContractSection);
-
-@Schema({ _id: false })
-export class ContractBlock {
-  @Prop({ type: [ContractSectionSchema], default: [] })
-  sections: ContractSection[];
-  @Prop({ type: Object, default: {} }) variables: Record<string, string>;
-}
-export const ContractBlockSchema = SchemaFactory.createForClass(ContractBlock);
 
 @Schema({ _id: false })
 export class CP {
@@ -246,6 +254,18 @@ export class ReviewLoop {
 }
 export const ReviewLoopSchema = SchemaFactory.createForClass(ReviewLoop);
 
+@Schema({ timestamps: true })
+export class Contract {
+  @Prop({ required: true, trim: true }) name: string;
+  @Prop({ type: [ContractSectionSchema], default: [] })
+  sections: ContractSection[];
+  @Prop({ type: Object, default: {} }) variables: Record<string, string>;
+  @Prop({ type: ReviewLoopSchema, default: () => ({}) }) reviewLoop: ReviewLoop;
+  @Prop({ default: null }) pdfUrl: string | null;
+}
+export const ContractSchema = SchemaFactory.createForClass(Contract);
+export type ContractDocument = Contract & Document;
+
 @Schema({ _id: false })
 export class ConflictCheck {
   @Prop({ default: true }) cleared: boolean;
@@ -260,6 +280,8 @@ export class Deal {
 
   @Prop({ required: true, trim: true }) name: string;
   @Prop({ required: true }) client: string;
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null, index: true })
+  clientId: Types.ObjectId | null;
   @Prop({ default: 'TBD' }) counterparty: string;
   @Prop({ enum: DealType, required: true }) type: DealType;
   @Prop({ enum: DEAL_STAGES, default: 'Origination' }) stage: DealStage;
@@ -267,9 +289,11 @@ export class Deal {
   @Prop({ default: 'Unassigned' }) leadPartner: string;
   @Prop({ type: [String], default: [] }) team: string[];
   @Prop({ type: [DealPartySchema], default: [] }) parties: DealParty[];
-  @Prop({ type: ReviewLoopSchema, default: () => ({}) })
-  contractReviewLoop: ReviewLoop;
-  @Prop({ default: null }) contractPdfUrl: string | null;
+  // @Prop({ type: ReviewLoopSchema, default: () => ({}) })
+  // contractReviewLoop: ReviewLoop;
+  // @Prop({ default: null }) contractPdfUrl: string | null;
+  // @Prop({ type: ReviewLoopSchema, default: () => ({}) })
+  // offerReviewLoop: ReviewLoop;
   @Prop({ type: ReviewLoopSchema, default: () => ({}) })
   offerReviewLoop: ReviewLoop;
   @Prop({ required: true, default: 0 }) value: number;
@@ -282,8 +306,8 @@ export class Deal {
   @Prop({ type: TermSheetSchema, default: () => ({}) }) termSheet: TermSheet;
   @Prop({ type: DataRoomSchema, default: () => ({}) }) dataRoom: DataRoom;
   @Prop({ type: [DDItemSchema], default: [] }) dd: DDItem[];
-  @Prop({ type: ContractBlockSchema, default: () => ({}) })
-  contract: ContractBlock;
+  @Prop({ type: [ContractSchema], default: [] })
+  contracts: Types.DocumentArray<Contract>;
   @Prop({ type: [CPSchema], default: [] }) cps: CP[];
   @Prop({ type: SigningBlockSchema, default: () => ({}) })
   signing: SigningBlock;

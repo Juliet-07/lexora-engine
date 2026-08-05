@@ -6,6 +6,8 @@ import {
   Deal,
   DealSchema,
   Precedent,
+  PrecedentFolder,
+  PrecedentFolderSchema,
   PrecedentSchema,
 } from './schemas';
 import { ClauseService, DealService, PrecedentService } from './services';
@@ -22,6 +24,7 @@ import { EmailService } from 'src/common/utils/mailing/email.service';
     MongooseModule.forFeature([
       { name: Clause.name, schema: ClauseSchema },
       { name: Precedent.name, schema: PrecedentSchema },
+      { name: PrecedentFolder.name, schema: PrecedentFolderSchema },
       { name: Deal.name, schema: DealSchema },
       { name: User.name, schema: UserSchema },
     ]),

@@ -9,6 +9,7 @@ import {
   ValidateNested,
   IsEmail,
   IsBoolean,
+  IsInt,
 } from 'class-validator';
 import { DealPartySide, DealType } from '../schemas';
 import {
@@ -24,7 +25,7 @@ import { Type } from 'class-transformer';
 
 export class CreateDealDto {
   @ApiProperty() @IsString() name: string;
-  @ApiProperty() @IsString() client: string;
+  @ApiProperty() @IsString() clientId: string;
   @ApiPropertyOptional() @IsOptional() @IsString() counterparty?: string;
   @ApiProperty({ enum: DealType }) @IsEnum(DealType) type: DealType;
   @ApiPropertyOptional() @IsOptional() @IsString() leadPartner?: string;
@@ -158,4 +159,20 @@ export class SubmitReviewDto {
   @IsIn(['Approved', 'Changes Requested'])
   decision: string;
   @ApiPropertyOptional() @IsOptional() @IsString() comment?: string;
+}
+
+export class CreateContractDto {
+  @ApiProperty() @IsString() name: string;
+}
+export class RenameContractDto {
+  @ApiProperty() @IsString() name: string;
+}
+
+export class AddContractSectionFromPrecedentDto {
+  @ApiProperty() @IsString() precedentId: string;
+}
+
+export class AddRedlineDto {
+  @ApiProperty() @IsInt() lineIndex: number;
+  @ApiProperty() @IsString() comment: string;
 }

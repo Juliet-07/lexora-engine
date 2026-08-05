@@ -13,7 +13,12 @@ import {
   CPType,
   CPStatus,
 } from '../schemas';
-import { Clause, ClauseDocument } from '../schemas';
+import {
+  Clause,
+  ClauseDocument,
+  Precedent,
+  PrecedentDocument,
+} from '../schemas';
 import {
   CreateDealDto,
   SetStageDto,
@@ -21,6 +26,8 @@ import {
   UpdateTermSheetDto,
   AddDDItemDto,
   UpdateDDItemDto,
+  CreateContractDto,
+  RenameContractDto,
   AddContractSectionDto,
   UpdateContractSectionBodyDto,
   AddContractCommentDto,
@@ -34,12 +41,16 @@ import {
   UpdatePartyDto,
   AddPartyDto,
   SubmitReviewDto,
+  AddContractSectionFromPrecedentDto,
+  AddRedlineDto,
 } from '../dtos';
 import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { randomBytes } from 'crypto';
 import * as PDFKitImport from 'pdfkit';
+import { User, UserDocument } from 'src/modules/auth/schemas';
+import { htmlToParagraphs } from 'src/common/utils/html-to-paragraphs.util';
 const PDFDocument = ((PDFKitImport as any).default ?? PDFKitImport) as any;
 
 @Injectable()
@@ -48,6 +59,9 @@ export class DealService {
     @InjectModel(Deal.name) private readonly model: Model<DealDocument>,
     @InjectModel(Clause.name)
     private readonly clauseModel: Model<ClauseDocument>,
+    @InjectModel(Precedent.name)
+    private readonly precedentModel: Model<PrecedentDocument>,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly emailService: EmailService,
   ) {}
 
@@ -79,12 +93,28 @@ export class DealService {
       ...deal,
       ddProgress: this.ddProgress(deal),
       cpsProgress: this.cpsProgress(deal),
+      contracts: (deal.contracts ?? []).map((c: any) => ({
+        ...c,
+        sections: (c.sections ?? []).map((s: any) => ({
+          ...s,
+          lines: htmlToParagraphs(s.body),
+        })),
+      })),
     };
   }
 
   // ── Core ─────────────────────────────────────────────────────
 
   async create(tenantId: string, dto: CreateDealDto) {
+    const client = await this.userModel
+      .findOne({ _id: dto.clientId, tenantId: new Types.ObjectId(tenantId) })
+      .select('firstName lastName businessName')
+      .lean();
+    if (!client) throw new NotFoundException('Client not found');
+    const clientName =
+      (client as any).businessName ||
+      `${(client as any).firstName ?? ''} ${(client as any).lastName ?? ''}`.trim();
+
     const startDate = new Date();
     const targetClose = dto.targetClose
       ? new Date(dto.targetClose)
@@ -95,7 +125,8 @@ export class DealService {
     return this.model.create({
       tenantId: new Types.ObjectId(tenantId),
       name: dto.name,
-      client: dto.client,
+      clientId: client._id,
+      client: clientName,
       counterparty: dto.counterparty ?? 'TBD',
       type: dto.type,
       stage: 'Origination',
@@ -308,62 +339,138 @@ export class DealService {
     return deal;
   }
 
-  // ── Contract ─────────────────────────────────────────────────
+  // ── Contracts (multiple per deal) ───────────────────────────
+
+  private getContractOrThrow(deal: DealDocument, contractId: string) {
+    const contract = deal.contracts.id(contractId);
+    if (!contract) throw new NotFoundException('Contract not found');
+    return contract;
+  }
+
+  async createContract(
+    tenantId: string,
+    dealId: string,
+    dto: CreateContractDto,
+  ) {
+    const deal = await this.getRawDoc(tenantId, dealId);
+    deal.contracts.push({
+      name: dto.name,
+      sections: [],
+      variables: {},
+      reviewLoop: { tokens: [], responses: [] },
+      pdfUrl: null,
+    } as any);
+    await deal.save();
+    return deal;
+  }
+
+  async renameContract(
+    tenantId: string,
+    dealId: string,
+    contractId: string,
+    dto: RenameContractDto,
+  ) {
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    contract.name = dto.name;
+    await deal.save();
+    return deal;
+  }
+
+  async deleteContract(tenantId: string, dealId: string, contractId: string) {
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    contract.deleteOne();
+    await deal.save();
+    return deal;
+  }
 
   async addContractSection(
     tenantId: string,
-    id: string,
+    dealId: string,
+    contractId: string,
     dto: AddContractSectionDto,
   ) {
-    const deal = await this.getRawDoc(tenantId, id);
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
     const clause = await this.clauseModel
       .findOne({ _id: dto.clauseId, tenantId: new Types.ObjectId(tenantId) })
       .lean();
     if (!clause) throw new NotFoundException('Clause not found');
-    deal.contract.sections.push({
+    contract.sections.push({
       clauseId: clause._id,
       title: clause.title,
       body: clause.body,
       comments: [],
     } as any);
-    deal.markModified('contract');
     await deal.save();
     return deal;
   }
 
-  async removeContractSection(tenantId: string, id: string, index: number) {
-    const deal = await this.getRawDoc(tenantId, id);
-    if (!deal.contract.sections[index])
+  async addContractSectionFromPrecedent(
+    tenantId: string,
+    dealId: string,
+    contractId: string,
+    dto: AddContractSectionFromPrecedentDto,
+  ) {
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    const precedent = await this.precedentModel
+      .findOne({ _id: dto.precedentId, tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+    if (!precedent) throw new NotFoundException('Precedent not found');
+    contract.sections.push({
+      clauseId: null,
+      precedentId: precedent._id,
+      title: precedent.name,
+      body: precedent.content,
+      comments: [],
+    } as any);
+    await deal.save();
+    return deal;
+  }
+
+  async removeContractSection(
+    tenantId: string,
+    dealId: string,
+    contractId: string,
+    index: number,
+  ) {
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    if (!contract.sections[index])
       throw new NotFoundException('Section not found');
-    deal.contract.sections.splice(index, 1);
-    deal.markModified('contract');
+    contract.sections.splice(index, 1);
     await deal.save();
     return deal;
   }
 
   async updateContractSectionBody(
     tenantId: string,
-    id: string,
+    dealId: string,
+    contractId: string,
     index: number,
     dto: UpdateContractSectionBodyDto,
   ) {
-    const deal = await this.getRawDoc(tenantId, id);
-    const section = deal.contract.sections[index];
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    const section = contract.sections[index];
     if (!section) throw new NotFoundException('Section not found');
     section.body = dto.body;
-    deal.markModified('contract');
     await deal.save();
     return deal;
   }
 
   async addContractComment(
     tenantId: string,
-    id: string,
+    dealId: string,
+    contractId: string,
     index: number,
     dto: AddContractCommentDto,
   ) {
-    const deal = await this.getRawDoc(tenantId, id);
-    const section = deal.contract.sections[index];
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    const section = contract.sections[index];
     if (!section) throw new NotFoundException('Section not found');
     section.comments.push({
       author: dto.author,
@@ -371,35 +478,101 @@ export class DealService {
       resolved: false,
       createdAt: new Date(),
     } as any);
-    deal.markModified('contract');
     await deal.save();
     return deal;
   }
 
   async toggleContractComment(
     tenantId: string,
-    id: string,
+    dealId: string,
+    contractId: string,
     sectionIndex: number,
     commentIndex: number,
   ) {
-    const deal = await this.getRawDoc(tenantId, id);
-    const comment =
-      deal.contract.sections[sectionIndex]?.comments[commentIndex];
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    const comment = contract.sections[sectionIndex]?.comments[commentIndex];
     if (!comment) throw new NotFoundException('Comment not found');
     comment.resolved = !comment.resolved;
-    deal.markModified('contract');
+    await deal.save();
+    return deal;
+  }
+
+  // ── Redlines ─────────────────────────────────────────────────
+
+  async addRedline(
+    tenantId: string,
+    dealId: string,
+    contractId: string,
+    sectionIndex: number,
+    dto: AddRedlineDto,
+    authorName: string,
+    authorEmail: string,
+  ) {
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    const section = contract.sections[sectionIndex];
+    if (!section) throw new NotFoundException('Section not found');
+    const lines = htmlToParagraphs(section.body);
+    const quotedText = lines[dto.lineIndex] ?? '';
+    section.redlines.push({
+      lineIndex: dto.lineIndex,
+      quotedText,
+      comment: dto.comment,
+      authorName,
+      authorEmail: authorEmail.toLowerCase(),
+      source: 'internal',
+      createdAt: new Date(),
+    } as any);
+    await deal.save();
+    return deal;
+  }
+
+  // Public — identity resolved from the review token, exactly like
+  // submitContractReview, never trusted from the request body.
+  async addExternalRedline(
+    token: string,
+    sectionIndex: number,
+    dto: AddRedlineDto,
+  ) {
+    const deal = await this.model.findOne({
+      'contracts.reviewLoop.tokens.token': token,
+    });
+    if (!deal) throw new NotFoundException('This review link is invalid.');
+    const contract = deal.contracts.find((c) =>
+      c.reviewLoop.tokens.some((t) => t.token === token),
+    );
+    if (!contract) throw new NotFoundException('This review link is invalid.');
+    const tokenEntry = contract.reviewLoop.tokens.find(
+      (t) => t.token === token,
+    );
+    const section = contract.sections[sectionIndex];
+    if (!section) throw new NotFoundException('Section not found');
+    const lines = htmlToParagraphs(section.body);
+    const quotedText = lines[dto.lineIndex] ?? '';
+    section.redlines.push({
+      lineIndex: dto.lineIndex,
+      quotedText,
+      comment: dto.comment,
+      authorName: tokenEntry.partyName,
+      authorEmail: tokenEntry.partyEmail,
+      source: 'external',
+      createdAt: new Date(),
+    } as any);
     await deal.save();
     return deal;
   }
 
   async setContractVariable(
     tenantId: string,
-    id: string,
+    dealId: string,
+    contractId: string,
     dto: SetContractVariableDto,
   ) {
-    const deal = await this.getRawDoc(tenantId, id);
-    deal.contract.variables[dto.key] = dto.value;
-    deal.markModified('contract');
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    contract.variables[dto.key] = dto.value;
+    contract.markModified('variables');
     await deal.save();
     return deal;
   }
@@ -541,6 +714,8 @@ export class DealService {
     return deal;
   }
 
+  // ── Data room delivery ──────────────────────────────────────
+
   async sendDataRoomEmail(
     tenantId: string,
     id: string,
@@ -573,37 +748,24 @@ export class DealService {
     return { success: true, sentTo: party.email };
   }
 
-  async sendForReview(
+  // ── Offer (Term Sheet) review — deal-level ──────────────────
+
+  async sendOfferForReview(
     tenantId: string,
-    id: string,
-    kind: 'contract' | 'offer',
+    dealId: string,
     businessName: string,
   ) {
-    const deal = await this.getRawDoc(tenantId, id);
-    const loopField =
-      kind === 'contract' ? 'contractReviewLoop' : 'offerReviewLoop';
-    const permKey = kind === 'contract' ? 'contractReview' : 'offerReview';
-    const loop = deal[loopField];
-
-    const eligible = deal.parties.filter((p) => p.permissions[permKey]);
-    if (eligible.length === 0) {
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const eligible = deal.parties.filter((p) => p.permissions.offerReview);
+    if (eligible.length === 0)
       throw new BadRequestException(
-        `No party has ${kind} review access enabled.`,
+        'No party has offer review access enabled.',
       );
-    }
-
-    if (kind === 'contract') {
-      const pdfBuffer = await this.generateContractPdf(deal, businessName);
-      const dir = join(process.cwd(), 'uploads', 'deals', 'contract-review');
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      const filename = `${deal._id}-${Date.now()}.pdf`;
-      writeFileSync(join(dir, filename), pdfBuffer);
-      deal.contractPdfUrl = `/uploads/deals/contract-review/${filename}`;
-    }
-
     const sent: string[] = [];
     for (const party of eligible) {
-      let entry = loop.tokens.find((t) => t.partyEmail === party.email);
+      let entry = deal.offerReviewLoop.tokens.find(
+        (t) => t.partyEmail === party.email,
+      );
       if (!entry) {
         entry = {
           token: randomBytes(24).toString('hex'),
@@ -611,50 +773,38 @@ export class DealService {
           partyName: party.name,
           sentAt: new Date(),
         } as any;
-        loop.tokens.push(entry as any);
+        deal.offerReviewLoop.tokens.push(entry as any);
       } else {
         entry.sentAt = new Date();
       }
-      const link = `${process.env.TENANT_APP_URL}/deal-review/${kind}/${entry.token}`;
+      const link = `${process.env.TENANT_APP_URL}/deal-review/offer/${entry.token}`;
       await this.emailService
         .sendDealReviewInvite({
           to: party.email,
           recipientName: party.name,
           dealName: deal.name,
-          kind,
+          kind: 'offer',
           reviewLink: link,
           businessName,
         })
         .catch(() => {});
       sent.push(party.email);
     }
-    deal.markModified(loopField);
+    deal.markModified('offerReviewLoop');
     await deal.save();
     return { sent };
   }
 
-  async getReviewSnapshot(kind: 'contract' | 'offer', token: string) {
-    const loopField =
-      kind === 'contract' ? 'contractReviewLoop' : 'offerReviewLoop';
+  async getOfferReviewSnapshot(token: string) {
     const deal = await this.model
-      .findOne({ [`${loopField}.tokens.token`]: token })
+      .findOne({ 'offerReviewLoop.tokens.token': token })
       .lean();
     if (!deal) throw new NotFoundException('This review link is invalid.');
-    const loop: any = (deal as any)[loopField];
+    const loop: any = (deal as any).offerReviewLoop;
     const tokenEntry = loop.tokens.find((t: any) => t.token === token);
     const already = loop.responses.find(
       (r: any) => r.partyEmail === tokenEntry.partyEmail,
     );
-
-    if (kind === 'contract') {
-      return {
-        dealName: deal.name,
-        pdfUrl: (deal as any).contractPdfUrl ?? null,
-        prefillName: tokenEntry.partyName,
-        alreadyResponded: !!already,
-        previousDecision: already?.decision ?? null,
-      };
-    }
     return {
       dealName: deal.name,
       termSheet: deal.termSheet,
@@ -664,47 +814,160 @@ export class DealService {
     };
   }
 
-  async submitReview(
-    kind: 'contract' | 'offer',
-    token: string,
-    dto: SubmitReviewDto,
-  ) {
-    const loopField =
-      kind === 'contract' ? 'contractReviewLoop' : 'offerReviewLoop';
+  async submitOfferReview(token: string, dto: SubmitReviewDto) {
     const deal = await this.model.findOne({
-      [`${loopField}.tokens.token`]: token,
+      'offerReviewLoop.tokens.token': token,
     });
     if (!deal) throw new NotFoundException('This review link is invalid.');
-    const loop: any = (deal as any)[loopField];
-    const tokenEntry = loop.tokens.find((t: any) => t.token === token);
+    const tokenEntry = deal.offerReviewLoop.tokens.find(
+      (t) => t.token === token,
+    );
     if (!tokenEntry)
       throw new NotFoundException('This review link is invalid.');
-
-    // Once approved, that's final — matches every other ack flow this
-    // session. "Changes Requested" never locks, so the same link
-    // keeps working across re-sends until they eventually approve.
     if (
-      loop.responses.some(
-        (r: any) =>
+      deal.offerReviewLoop.responses.some(
+        (r) =>
           r.partyEmail === tokenEntry.partyEmail && r.decision === 'Approved',
       )
     ) {
       throw new BadRequestException('You have already approved this.');
     }
-
-    loop.responses.push({
+    deal.offerReviewLoop.responses.push({
       partyEmail: tokenEntry.partyEmail,
       partyName: dto.name || tokenEntry.partyName,
       decision: dto.decision,
       comment: dto.comment ?? '',
       respondedAt: new Date(),
-    });
-    deal.markModified(loopField);
+    } as any);
+    deal.markModified('offerReviewLoop');
     await deal.save();
     return { success: true };
   }
 
-  // PRIVATE HELPERS
+  // ── Contract review — per-contract ──────────────────────────
+
+  async sendContractForReview(
+    tenantId: string,
+    dealId: string,
+    contractId: string,
+    businessName: string,
+  ) {
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    const eligible = deal.parties.filter((p) => p.permissions.contractReview);
+    if (eligible.length === 0)
+      throw new BadRequestException(
+        'No party has contract review access enabled.',
+      );
+
+    const pdfBuffer = await this.generateContractPdf(
+      deal,
+      contract,
+      businessName,
+    );
+    const dir = join(process.cwd(), 'uploads', 'deals', 'contract-review');
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const filename = `${deal._id}-${contract._id}-${Date.now()}.pdf`;
+    writeFileSync(join(dir, filename), pdfBuffer);
+    contract.pdfUrl = `/uploads/deals/contract-review/${filename}`;
+
+    const sent: string[] = [];
+    for (const party of eligible) {
+      let entry = contract.reviewLoop.tokens.find(
+        (t) => t.partyEmail === party.email,
+      );
+      if (!entry) {
+        entry = {
+          token: randomBytes(24).toString('hex'),
+          partyEmail: party.email,
+          partyName: party.name,
+          sentAt: new Date(),
+        } as any;
+        contract.reviewLoop.tokens.push(entry as any);
+      } else {
+        entry.sentAt = new Date();
+      }
+      const link = `${process.env.TENANT_APP_URL}/deal-review/contract/${entry.token}`;
+      await this.emailService
+        .sendDealReviewInvite({
+          to: party.email,
+          recipientName: party.name,
+          dealName: `${deal.name} — ${contract.name}`,
+          kind: 'contract',
+          reviewLink: link,
+          businessName,
+        })
+        .catch(() => {});
+      sent.push(party.email);
+    }
+    await deal.save();
+    return { sent };
+  }
+
+  async getContractReviewSnapshot(token: string) {
+    const deal = await this.model
+      .findOne({ 'contracts.reviewLoop.tokens.token': token })
+      .lean();
+    if (!deal) throw new NotFoundException('This review link is invalid.');
+    const contract = (deal as any).contracts.find((c: any) =>
+      c.reviewLoop.tokens.some((t: any) => t.token === token),
+    );
+    if (!contract) throw new NotFoundException('This review link is invalid.');
+    const tokenEntry = contract.reviewLoop.tokens.find(
+      (t: any) => t.token === token,
+    );
+    const already = contract.reviewLoop.responses.find(
+      (r: any) => r.partyEmail === tokenEntry.partyEmail,
+    );
+    return {
+      dealName: deal.name,
+      contractName: contract.name,
+      pdfUrl: contract.pdfUrl ?? null,
+      prefillName: tokenEntry.partyName,
+      alreadyResponded: !!already,
+      previousDecision: already?.decision ?? null,
+      sections: contract.sections.map((s: any, i: number) => ({
+        index: i,
+        title: s.title,
+        lines: htmlToParagraphs(s.body),
+        redlines: s.redlines ?? [],
+      })),
+    };
+  }
+
+  async submitContractReview(token: string, dto: SubmitReviewDto) {
+    const deal = await this.model.findOne({
+      'contracts.reviewLoop.tokens.token': token,
+    });
+    if (!deal) throw new NotFoundException('This review link is invalid.');
+    const contract = deal.contracts.find((c) =>
+      c.reviewLoop.tokens.some((t) => t.token === token),
+    );
+    if (!contract) throw new NotFoundException('This review link is invalid.');
+    const tokenEntry = contract.reviewLoop.tokens.find(
+      (t) => t.token === token,
+    );
+    if (
+      contract.reviewLoop.responses.some(
+        (r) =>
+          r.partyEmail === tokenEntry.partyEmail && r.decision === 'Approved',
+      )
+    ) {
+      throw new BadRequestException('You have already approved this.');
+    }
+    contract.reviewLoop.responses.push({
+      partyEmail: tokenEntry.partyEmail,
+      partyName: dto.name || tokenEntry.partyName,
+      decision: dto.decision,
+      comment: dto.comment ?? '',
+      respondedAt: new Date(),
+    } as any);
+    await deal.save();
+    return { success: true };
+  }
+
+  // ── PRIVATE HELPERS ──────────────────────────────────────────
+
   private async buildDataRoomZip(deal: DealDocument): Promise<Buffer> {
     const { ZipArchive } = require('archiver');
     return new Promise((resolve, reject) => {
@@ -725,20 +988,18 @@ export class DealService {
     });
   }
 
-  private renderBody(deal: DealDocument, body: string): string {
+  private renderBody(
+    contract: { variables: Record<string, string> },
+    body: string,
+  ): string {
     return body.replace(/\[([A-Z_]+)\]/g, (_, k) =>
-      deal.contract.variables[k] ? deal.contract.variables[k] : `[${k}]`,
-    );
-  }
-
-  private renderBodyLean(deal: any, body: string): string {
-    return body.replace(/\[([A-Z_]+)\]/g, (_: any, k: string) =>
-      deal.contract.variables[k] ? deal.contract.variables[k] : `[${k}]`,
+      contract.variables[k] ? contract.variables[k] : `[${k}]`,
     );
   }
 
   private generateContractPdf(
     deal: DealDocument,
+    contract: any,
     businessName: string,
   ): Promise<Buffer> {
     return new Promise((resolve, reject) => {
@@ -751,11 +1012,16 @@ export class DealService {
       doc
         .fontSize(18)
         .font('Helvetica-Bold')
+        .text(contract.name, { align: 'center' });
+      doc.moveDown(0.2);
+      doc
+        .fontSize(11)
+        .font('Helvetica')
+        .fillColor('#666666')
         .text(deal.name, { align: 'center' });
       doc.moveDown(0.3);
       doc
         .fontSize(10)
-        .font('Helvetica')
         .fillColor('#666666')
         .text(
           `${businessName} · Generated ${new Date().toLocaleDateString()}`,
@@ -810,21 +1076,24 @@ export class DealService {
       });
       doc.moveDown(1);
 
-      doc.fontSize(14).font('Helvetica-Bold').text('Contract');
+      doc.fontSize(14).font('Helvetica-Bold').text(contract.name);
       doc.moveDown(0.5);
-      if (deal.contract.sections.length === 0) {
+      if (contract.sections.length === 0) {
         doc
           .fontSize(10)
           .font('Helvetica-Oblique')
-          .text('No contract sections have been drafted yet.');
+          .text('No sections have been drafted yet.');
       } else {
-        deal.contract.sections.forEach((s) => {
+        contract.sections.forEach((s: any) => {
           doc.fontSize(12).font('Helvetica-Bold').text(s.title);
-          doc
-            .fontSize(10)
-            .font('Helvetica')
-            .text(this.renderBody(deal, s.body));
-          doc.moveDown(0.6);
+          const paragraphs = htmlToParagraphs(
+            this.renderBody(contract, s.body),
+          );
+          paragraphs.forEach((p) => {
+            doc.fontSize(10).font('Helvetica').text(p);
+            doc.moveDown(0.2);
+          });
+          doc.moveDown(0.4);
         });
       }
 
@@ -832,12 +1101,97 @@ export class DealService {
     });
   }
 
-  async getContractPdf(
-    tenantId: string,
-    id: string,
+  private generateRedlinedContractPdf(
+    deal: DealDocument,
+    contract: any,
     businessName: string,
   ): Promise<Buffer> {
-    const deal = await this.getRawDoc(tenantId, id);
-    return this.generateContractPdf(deal, businessName);
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 50 });
+      const chunks: Buffer[] = [];
+      doc.on('data', (c: Buffer) => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      doc
+        .fontSize(18)
+        .font('Helvetica-Bold')
+        .text(`${contract.name} — Redlined`, { align: 'center' });
+      doc.moveDown(0.2);
+      doc
+        .fontSize(11)
+        .font('Helvetica')
+        .fillColor('#666666')
+        .text(deal.name, { align: 'center' });
+      doc.moveDown(0.3);
+      doc
+        .fontSize(10)
+        .fillColor('#666666')
+        .text(
+          `${businessName} · Generated ${new Date().toLocaleDateString()}`,
+          { align: 'center' },
+        );
+      doc.moveDown(1.5);
+
+      if (contract.sections.length === 0) {
+        doc
+          .fontSize(10)
+          .font('Helvetica-Oblique')
+          .fillColor('#000000')
+          .text('No sections have been drafted yet.');
+      } else {
+        contract.sections.forEach((s: any) => {
+          doc
+            .fontSize(12)
+            .font('Helvetica-Bold')
+            .fillColor('#000000')
+            .text(s.title);
+          doc.moveDown(0.3);
+          const lines = htmlToParagraphs(this.renderBody(contract, s.body));
+          lines.forEach((line: string, lineIndex: number) => {
+            doc.fontSize(10).font('Helvetica').fillColor('#000000').text(line);
+            const redlinesHere = (s.redlines ?? []).filter(
+              (r: any) => r.lineIndex === lineIndex,
+            );
+            redlinesHere.forEach((r: any) => {
+              doc.moveDown(0.1);
+              doc
+                .fontSize(9)
+                .font('Helvetica-Oblique')
+                .fillColor('#b91c1c')
+                .text(
+                  `  ↳ [${r.source === 'external' ? 'External' : 'Internal'} — ${r.authorName}, ${new Date(r.createdAt).toLocaleDateString()}]: ${r.comment}`,
+                );
+            });
+            doc.moveDown(0.3);
+          });
+          doc.moveDown(0.5);
+        });
+      }
+
+      doc.end();
+    });
+  }
+
+  async getRedlinedContractPdf(
+    tenantId: string,
+    dealId: string,
+    contractId: string,
+    businessName: string,
+  ): Promise<Buffer> {
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    return this.generateRedlinedContractPdf(deal, contract, businessName);
+  }
+
+  async getContractPdf(
+    tenantId: string,
+    dealId: string,
+    contractId: string,
+    businessName: string,
+  ): Promise<Buffer> {
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    return this.generateContractPdf(deal, contract, businessName);
   }
 }

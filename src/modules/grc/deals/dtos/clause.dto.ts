@@ -21,10 +21,15 @@ export class UpdateClauseDto {
   @ApiPropertyOptional() @IsOptional() @IsString() body?: string;
 }
 
+export class CreatePrecedentFolderDto {
+  @ApiProperty() @IsString() name: string;
+}
+
 export class CreatePrecedentDto {
   @ApiProperty() @IsString() name: string;
   @ApiProperty({ enum: DealType }) @IsEnum(DealType) type: DealType;
   @ApiPropertyOptional() @IsOptional() @IsString() jurisdiction?: string;
+  @ApiProperty() @IsString() folderId: string;
 }
 
 export class UpdatePrecedentContentDto {

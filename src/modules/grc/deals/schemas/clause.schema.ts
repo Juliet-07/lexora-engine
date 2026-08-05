@@ -38,6 +38,16 @@ export class Clause {
 export const ClauseSchema = SchemaFactory.createForClass(Clause);
 
 export type PrecedentDocument = Precedent & Document;
+export type PrecedentFolderDocument = PrecedentFolder & Document;
+
+@Schema({ timestamps: true, collection: 'deals_precedent_folders' })
+export class PrecedentFolder {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+  @Prop({ required: true, trim: true }) name: string;
+}
+export const PrecedentFolderSchema =
+  SchemaFactory.createForClass(PrecedentFolder);
 
 @Schema({ timestamps: true, collection: 'deals_precedents' })
 export class Precedent {
@@ -47,7 +57,13 @@ export class Precedent {
   @Prop({ required: true, trim: true }) name: string;
   @Prop({ enum: DealType, required: true }) type: DealType;
   @Prop({ default: 'Rwanda' }) jurisdiction: string;
-
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'PrecedentFolder',
+    required: true,
+    index: true,
+  })
+  folderId: Types.ObjectId;
   @Prop({ required: true }) fileName: string;
   @Prop({ default: null }) fileUrl: string | null;
   @Prop({ default: null }) mimeType: string | null;

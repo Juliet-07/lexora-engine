@@ -2,7 +2,12 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as mammoth from 'mammoth';
-import { Precedent, PrecedentDocument } from '../schemas';
+import {
+  Precedent,
+  PrecedentDocument,
+  PrecedentFolder,
+  PrecedentFolderDocument,
+} from '../schemas';
 import { CreatePrecedentDto, UpdatePrecedentContentDto } from '../dtos';
 
 @Injectable()
@@ -10,6 +15,8 @@ export class PrecedentService {
   constructor(
     @InjectModel(Precedent.name)
     private readonly model: Model<PrecedentDocument>,
+    @InjectModel(PrecedentFolder.name)
+    private readonly folderModel: Model<PrecedentFolderDocument>,
   ) {}
 
   private async extractHtml(diskPath: string): Promise<string> {
@@ -17,14 +24,47 @@ export class PrecedentService {
     return result.value;
   }
 
+  async createFolder(tenantId: string, dto: { name: string }) {
+    return this.folderModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      name: dto.name,
+    });
+  }
+
+  async getFolders(tenantId: string) {
+    return this.folderModel
+      .find({ tenantId: new Types.ObjectId(tenantId) })
+      .sort({ name: 1 })
+      .lean();
+  }
+
+  async deleteFolder(tenantId: string, folderId: string) {
+    const tId = new Types.ObjectId(tenantId);
+    const folder = await this.folderModel.findOne({
+      _id: folderId,
+      tenantId: tId,
+    });
+    if (!folder) throw new NotFoundException('Folder not found');
+    await this.model.deleteMany({ tenantId: tId, folderId: folder._id });
+    await this.folderModel.deleteOne({ _id: folder._id });
+    return { success: true };
+  }
+
   async create(
     tenantId: string,
     dto: CreatePrecedentDto,
     file: Express.Multer.File,
   ) {
+    const tId = new Types.ObjectId(tenantId);
+    const folder = await this.folderModel
+      .findOne({ _id: dto.folderId, tenantId: tId })
+      .lean();
+    if (!folder) throw new NotFoundException('Folder not found');
+
     const content = await this.extractHtml(file.path);
     return this.model.create({
-      tenantId: new Types.ObjectId(tenantId),
+      tenantId: tId,
+      folderId: folder._id,
       name: dto.name,
       type: dto.type,
       jurisdiction: dto.jurisdiction ?? 'Rwanda',

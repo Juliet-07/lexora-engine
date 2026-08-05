@@ -17,7 +17,11 @@ import { extname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { PrecedentService } from '../services';
-import { CreatePrecedentDto, UpdatePrecedentContentDto } from '../dtos';
+import {
+  CreatePrecedentDto,
+  CreatePrecedentFolderDto,
+  UpdatePrecedentContentDto,
+} from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
 import {
@@ -56,6 +60,23 @@ const docxFilter = (_req: any, file: Express.Multer.File, cb: any) => {
 @Controller('deals/precedents')
 export class PrecedentController {
   constructor(private readonly service: PrecedentService) {}
+
+  @Post('folders')
+  createFolder(
+    @Body() dto: CreatePrecedentFolderDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.createFolder(t || u, dto);
+  }
+
+  @Get('folders')
+  getFolders(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getFolders(t || u);
+  }
 
   @Post()
   @UseInterceptors(
@@ -127,5 +148,14 @@ export class PrecedentController {
   ) {
     await this.service.delete(t || u, id);
     return { success: true };
+  }
+
+  @Delete('folders/:id')
+  deleteFolder(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.deleteFolder(t || u, id);
   }
 }

@@ -28,6 +28,8 @@ import {
   UpdateTermSheetDto,
   AddDDItemDto,
   UpdateDDItemDto,
+  CreateContractDto,
+  RenameContractDto,
   AddContractSectionDto,
   UpdateContractSectionBodyDto,
   AddContractCommentDto,
@@ -42,6 +44,8 @@ import {
   AddPartyDto,
   UpdatePartyDto,
   SubmitReviewDto,
+  AddContractSectionFromPrecedentDto,
+  AddRedlineDto,
 } from '../dtos';
 import { CurrentUser, Public, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -117,6 +121,7 @@ export class DealController {
     return this.service.setStatus(t || u, id, dto);
   }
 
+  // ── Parties ──────────────────────────────────────────────────
   @Post(':id/parties')
   addParty(
     @Param('id') id: string,
@@ -148,23 +153,6 @@ export class DealController {
     return this.service.removeParty(t || u, id, Number(index));
   }
 
-  @Post(':id/data-room/send/:partyIndex')
-  async sendDataRoomEmail(
-    @Param('id') id: string,
-    @Param('partyIndex') partyIndex: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    const tenantId = t || u;
-    const businessName = await resolveBusinessName(this.userModel, tenantId);
-    return this.service.sendDataRoomEmail(
-      tenantId,
-      id,
-      Number(partyIndex),
-      businessName,
-    );
-  }
-
   // ── Term Sheet ───────────────────────────────────────────────
   @Patch(':id/term-sheet')
   updateTermSheet(
@@ -174,6 +162,32 @@ export class DealController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.updateTermSheet(t || u, id, dto);
+  }
+
+  @Post(':id/review/offer/send')
+  async sendOfferForReview(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    return this.service.sendOfferForReview(tenantId, id, businessName);
+  }
+
+  @Public()
+  @Get('review/offer/:token')
+  getOfferReviewSnapshot(@Param('token') token: string) {
+    return this.service.getOfferReviewSnapshot(token);
+  }
+
+  @Public()
+  @Post('review/offer/:token')
+  submitOfferReview(
+    @Param('token') token: string,
+    @Body() dto: SubmitReviewDto,
+  ) {
+    return this.service.submitOfferReview(token, dto);
   }
 
   // ── Data Room ────────────────────────────────────────────────
@@ -238,6 +252,23 @@ export class DealController {
     return this.service.removeDataRoomFile(t || u, id, Number(index));
   }
 
+  @Post(':id/data-room/send/:partyIndex')
+  async sendDataRoomEmail(
+    @Param('id') id: string,
+    @Param('partyIndex') partyIndex: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    return this.service.sendDataRoomEmail(
+      tenantId,
+      id,
+      Number(partyIndex),
+      businessName,
+    );
+  }
+
   // ── Due Diligence ────────────────────────────────────────────
   @Post(':id/dd')
   addDDItem(
@@ -260,20 +291,201 @@ export class DealController {
     return this.service.updateDDItem(t || u, id, Number(index), dto);
   }
 
-  // ── Contract ─────────────────────────────────────────────────
-  @Post(':id/contract/sections')
+  // ── Contracts ────────────────────────────────────────────────
+  @Post(':id/contracts')
+  createContract(
+    @Param('id') id: string,
+    @Body() dto: CreateContractDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.createContract(t || u, id, dto);
+  }
+
+  @Patch(':id/contracts/:contractId')
+  renameContract(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @Body() dto: RenameContractDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.renameContract(t || u, id, contractId, dto);
+  }
+
+  @Delete(':id/contracts/:contractId')
+  deleteContract(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.deleteContract(t || u, id, contractId);
+  }
+
+  @Post(':id/contracts/:contractId/sections')
   addContractSection(
     @Param('id') id: string,
+    @Param('contractId') contractId: string,
     @Body() dto: AddContractSectionDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.addContractSection(t || u, id, dto);
+    return this.service.addContractSection(t || u, id, contractId, dto);
   }
 
-  @Get(':id/contract/pdf')
+  @Post(':id/contracts/:contractId/sections/from-precedent')
+  addContractSectionFromPrecedent(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @Body() dto: AddContractSectionFromPrecedentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addContractSectionFromPrecedent(
+      t || u,
+      id,
+      contractId,
+      dto,
+    );
+  }
+
+  @Delete(':id/contracts/:contractId/sections/:index')
+  removeContractSection(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @Param('index') index: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.removeContractSection(
+      t || u,
+      id,
+      contractId,
+      Number(index),
+    );
+  }
+
+  @Patch(':id/contracts/:contractId/sections/:index')
+  updateContractSectionBody(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @Param('index') index: string,
+    @Body() dto: UpdateContractSectionBodyDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateContractSectionBody(
+      t || u,
+      id,
+      contractId,
+      Number(index),
+      dto,
+    );
+  }
+
+  @Post(':id/contracts/:contractId/sections/:index/comments')
+  addContractComment(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @Param('index') index: string,
+    @Body() dto: AddContractCommentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addContractComment(
+      t || u,
+      id,
+      contractId,
+      Number(index),
+      dto,
+    );
+  }
+
+  @Patch(':id/contracts/:contractId/sections/:index/comments/:cIndex/toggle')
+  toggleContractComment(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @Param('index') index: string,
+    @Param('cIndex') cIndex: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.toggleContractComment(
+      t || u,
+      id,
+      contractId,
+      Number(index),
+      Number(cIndex),
+    );
+  }
+
+  @Post(':id/contracts/:contractId/sections/:index/redlines')
+  async addRedline(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @Param('index') index: string,
+    @Body() dto: AddRedlineDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const me = await this.userModel
+      .findById(u)
+      .select('firstName lastName email')
+      .lean();
+    const authorName =
+      `${me?.firstName ?? ''} ${me?.lastName ?? ''}`.trim() || 'You';
+    const authorEmail = (me as any)?.email ?? '';
+    return this.service.addRedline(
+      tenantId,
+      id,
+      contractId,
+      Number(index),
+      dto,
+      authorName,
+      authorEmail,
+    );
+  }
+
+  @Get(':id/contracts/:contractId/pdf/redlined')
+  async downloadRedlinedContractPdf(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @Res() res: Response,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const buffer = await this.service.getRedlinedContractPdf(
+      tenantId,
+      id,
+      contractId,
+      businessName,
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="Contract - Redlined.pdf"',
+    });
+    res.send(buffer);
+  }
+
+  @Patch(':id/contracts/:contractId/variables')
+  setContractVariable(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @Body() dto: SetContractVariableDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.setContractVariable(t || u, id, contractId, dto);
+  }
+
+  @Get(':id/contracts/:contractId/pdf')
   async downloadContractPdf(
     @Param('id') id: string,
+    @Param('contractId') contractId: string,
     @Res() res: Response,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
@@ -283,6 +495,7 @@ export class DealController {
     const buffer = await this.service.getContractPdf(
       tenantId,
       id,
+      contractId,
       businessName,
     );
     res.set({
@@ -292,67 +505,46 @@ export class DealController {
     res.send(buffer);
   }
 
-  @Delete(':id/contract/sections/:index')
-  removeContractSection(
+  @Post(':id/contracts/:contractId/review/send')
+  async sendContractForReview(
     @Param('id') id: string,
-    @Param('index') index: string,
+    @Param('contractId') contractId: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.removeContractSection(t || u, id, Number(index));
-  }
-
-  @Patch(':id/contract/sections/:index')
-  updateContractSectionBody(
-    @Param('id') id: string,
-    @Param('index') index: string,
-    @Body() dto: UpdateContractSectionBodyDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.updateContractSectionBody(
-      t || u,
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    return this.service.sendContractForReview(
+      tenantId,
       id,
-      Number(index),
-      dto,
+      contractId,
+      businessName,
     );
   }
 
-  @Post(':id/contract/sections/:index/comments')
-  addContractComment(
-    @Param('id') id: string,
-    @Param('index') index: string,
-    @Body() dto: AddContractCommentDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.addContractComment(t || u, id, Number(index), dto);
+  @Public()
+  @Get('review/contract/:token')
+  getContractReviewSnapshot(@Param('token') token: string) {
+    return this.service.getContractReviewSnapshot(token);
   }
 
-  @Patch(':id/contract/sections/:index/comments/:cIndex/toggle')
-  toggleContractComment(
-    @Param('id') id: string,
-    @Param('index') index: string,
-    @Param('cIndex') cIndex: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
+  @Public()
+  @Post('review/contract/:token')
+  submitContractReview(
+    @Param('token') token: string,
+    @Body() dto: SubmitReviewDto,
   ) {
-    return this.service.toggleContractComment(
-      t || u,
-      id,
-      Number(index),
-      Number(cIndex),
-    );
+    return this.service.submitContractReview(token, dto);
   }
 
-  @Patch(':id/contract/variables')
-  setContractVariable(
-    @Param('id') id: string,
-    @Body() dto: SetContractVariableDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
+  @Public()
+  @Post('review/contract/:token/sections/:index/redlines')
+  addExternalRedline(
+    @Param('token') token: string,
+    @Param('index') index: string,
+    @Body() dto: AddRedlineDto,
   ) {
-    return this.service.setContractVariable(t || u, id, dto);
+    return this.service.addExternalRedline(token, Number(index), dto);
   }
 
   // ── CPs ──────────────────────────────────────────────────────
@@ -447,36 +639,5 @@ export class DealController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.togglePostCompletion(t || u, id, Number(index));
-  }
-
-  @Post(':id/review/:kind/send')
-  async sendForReview(
-    @Param('id') id: string,
-    @Param('kind') kind: 'contract' | 'offer',
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    const tenantId = t || u;
-    const businessName = await resolveBusinessName(this.userModel, tenantId);
-    return this.service.sendForReview(tenantId, id, kind, businessName);
-  }
-
-  @Public()
-  @Get('review/:kind/:token')
-  getReviewSnapshot(
-    @Param('kind') kind: 'contract' | 'offer',
-    @Param('token') token: string,
-  ) {
-    return this.service.getReviewSnapshot(kind, token);
-  }
-
-  @Public()
-  @Post('review/:kind/:token')
-  submitReview(
-    @Param('kind') kind: 'contract' | 'offer',
-    @Param('token') token: string,
-    @Body() dto: SubmitReviewDto,
-  ) {
-    return this.service.submitReview(kind, token, dto);
   }
 }
