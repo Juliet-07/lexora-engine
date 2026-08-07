@@ -99,6 +99,9 @@ import {
     IncidentService,
     VendorService,
     BcpService,
+    EmergingRiskService,
+    TestPlanService,
+    DeficiencyService,
   ],
 })
 export class RiskModule {}

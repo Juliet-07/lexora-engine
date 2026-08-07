@@ -62,6 +62,7 @@ import { ResolutionController } from './controllers/resolution.controller';
     CommitteeService,
     BoardMemberService,
     GovernanceCodeService,
+    ResolutionService,
   ],
 })
 export class GovernanceModule {}

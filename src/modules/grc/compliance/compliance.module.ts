@@ -62,6 +62,12 @@ import { GovernanceModule } from '../governance/governance.module';
     AuditController,
     RegulatoryChangeController,
   ],
-  exports: [ComplianceObligationService],
+  exports: [
+    ComplianceObligationService,
+    PolicyService,
+    CertificationService,
+    AuditService,
+    RegulatoryChangeService,
+  ],
 })
 export class ComplianceModule {}

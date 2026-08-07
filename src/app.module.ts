@@ -30,6 +30,7 @@ import { HrModule } from './modules/hr/hr.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { CrmModule } from './modules/crm/crm.module';
 import { GrcModule } from './modules/grc/grc.module';
+import { KnowledgeBaseModule } from './modules/knowledge-base/knowledge-base.module';
 
 @Module({
   imports: [
@@ -85,6 +86,7 @@ import { GrcModule } from './modules/grc/grc.module';
     CrmModule,
     GrcModule,
     PaymentModule,
+    KnowledgeBaseModule,
   ],
   providers: [
     Reflector,
