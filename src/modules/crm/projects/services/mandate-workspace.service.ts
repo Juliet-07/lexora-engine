@@ -5,6 +5,9 @@ import {
   MandateMessage,
   MandateMessageDocument,
   MessageDirection,
+  MandateEmployeeMessage,
+  MandateEmployeeMessageDocument,
+  EmployeeMessageDirection,
   MandateNote,
   MandateNoteDocument,
   MandateDocumentEntry,
@@ -13,13 +16,19 @@ import {
   DEFAULT_MANDATE_FOLDERS,
 } from '../schemas';
 import { MandateService } from './mandate.service';
-import { CreateMessageDto, CreateNoteDto } from '../dtos';
+import {
+  CreateMessageDto,
+  CreateEmployeeMessageDto,
+  CreateNoteDto,
+} from '../dtos';
 
 @Injectable()
 export class MandateWorkspaceService {
   constructor(
     @InjectModel(MandateMessage.name)
     private readonly messageModel: Model<MandateMessageDocument>,
+    @InjectModel(MandateEmployeeMessage.name)
+    private readonly employeeMessageModel: Model<MandateEmployeeMessageDocument>,
     @InjectModel(MandateNote.name)
     private readonly noteModel: Model<MandateNoteDocument>,
     @InjectModel(MandateDocumentEntry.name)
@@ -39,11 +48,55 @@ export class MandateWorkspaceService {
       .lean();
   }
 
-  async addMessage(tenantId: string, mandateId: string, dto: CreateMessageDto) {
+  async addMessage(
+    tenantId: string,
+    mandateId: string,
+    direction: MessageDirection,
+    dto: CreateMessageDto,
+  ) {
     const created = await this.messageModel.create({
       tenantId: new Types.ObjectId(tenantId),
       mandateId: new Types.ObjectId(mandateId),
-      direction: MessageDirection.TENANT,
+      direction,
+      author: dto.author,
+      body: dto.body,
+    });
+    return created.toObject();
+  }
+
+  // ── Messages (tenant ↔ a specific employee) ─────────────────────
+  // Same shape as the client thread above, but scoped to one
+  // employee per mandate rather than the client. `direction` is
+  // passed in by the caller (controller decides tenant vs employee),
+  // never taken from client input.
+
+  async getEmployeeMessages(
+    tenantId: string,
+    mandateId: string,
+    employeeUserId: string,
+  ) {
+    return this.employeeMessageModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+        employeeUserId: new Types.ObjectId(employeeUserId),
+      })
+      .sort({ createdAt: 1 })
+      .lean();
+  }
+
+  async addEmployeeMessage(
+    tenantId: string,
+    mandateId: string,
+    employeeUserId: string,
+    direction: EmployeeMessageDirection,
+    dto: CreateEmployeeMessageDto,
+  ) {
+    const created = await this.employeeMessageModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      mandateId: new Types.ObjectId(mandateId),
+      employeeUserId: new Types.ObjectId(employeeUserId),
+      direction,
       author: dto.author,
       body: dto.body,
     });
@@ -139,6 +192,7 @@ export class MandateWorkspaceService {
     folder: string,
     uploadedBy: string,
     file: Express.Multer.File,
+    fromClient = false,
   ) {
     const created = await this.documentModel.create({
       tenantId: new Types.ObjectId(tenantId),
@@ -149,6 +203,11 @@ export class MandateWorkspaceService {
       size: file.size,
       mimeType: file.mimetype,
       uploadedBy,
+      fromClient,
+      // A client upload lands as pending until the tenant accepts &
+      // files it — matches how the tenant-side "received from
+      // client" inbox already expects a document to arrive.
+      status: fromClient ? ClientDocStatus.PENDING : null,
     });
     return created.toObject();
   }

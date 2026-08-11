@@ -23,10 +23,12 @@ import {
 import { MandateWorkspaceService } from '../services';
 import {
   CreateMessageDto,
+  CreateEmployeeMessageDto,
   CreateNoteDto,
   CreateFolderDto,
   FileClientDocumentDto,
 } from '../dtos';
+import { EmployeeMessageDirection, MessageDirection } from '../schemas';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
   PlatformModuleKey,
@@ -72,7 +74,43 @@ export class MandateWorkspaceController {
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.addMessage(t || u, mandateId, dto);
+    return this.service.addMessage(
+      t || u,
+      mandateId,
+      MessageDirection.TENANT,
+      dto,
+    );
+  }
+
+  // ── Messages (tenant ↔ a specific employee) ─────────────────────
+
+  @Get('employee-messages/:employeeUserId')
+  @ApiOperation({ summary: 'Message thread with one employee on this mandate' })
+  getEmployeeMessages(
+    @Param('mandateId') mandateId: string,
+    @Param('employeeUserId') employeeUserId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getEmployeeMessages(t || u, mandateId, employeeUserId);
+  }
+
+  @Post('employee-messages/:employeeUserId')
+  @ApiOperation({ summary: 'Send a message to that employee' })
+  addEmployeeMessage(
+    @Param('mandateId') mandateId: string,
+    @Param('employeeUserId') employeeUserId: string,
+    @Body() dto: CreateEmployeeMessageDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addEmployeeMessage(
+      t || u,
+      mandateId,
+      employeeUserId,
+      EmployeeMessageDirection.TENANT,
+      dto,
+    );
   }
 
   // ── Notes ────────────────────────────────────────────────────

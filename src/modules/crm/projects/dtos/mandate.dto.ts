@@ -89,6 +89,11 @@ export class CreateMessageDto {
   @ApiProperty() @IsString() body: string;
 }
 
+export class CreateEmployeeMessageDto {
+  @ApiProperty() @IsString() author: string;
+  @ApiProperty() @IsString() body: string;
+}
+
 export class CreateNoteDto {
   @ApiProperty() @IsString() author: string;
   @ApiProperty() @IsString() body: string;

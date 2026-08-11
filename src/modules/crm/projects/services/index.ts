@@ -1,3 +1,4 @@
+export * from './client-projects.service';
 export * from './employee-projects.service';
 export * from './mandate-workspace.service';
 export * from './mandate.service';

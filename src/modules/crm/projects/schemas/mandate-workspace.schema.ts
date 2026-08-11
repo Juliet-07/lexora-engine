@@ -26,6 +26,42 @@ export class MandateMessage {
 export const MandateMessageSchema =
   SchemaFactory.createForClass(MandateMessage);
 
+// ── Messages (tenant ↔ a specific employee, per mandate) ─────────
+// Distinct from MandateMessage (that's tenant↔client) and from
+// CommentThread (shared team discussion, still mock). This is a
+// dedicated 1:1 thread between the tenant and one employee working
+// on the mandate — same shape as the client thread, different
+// audience. employeeUserId is the Employee document's own _id, same
+// convention as Task.assigneeUserId, so "who has a thread" and "who
+// has tasks" resolve the same way.
+
+export type MandateEmployeeMessageDocument = MandateEmployeeMessage & Document;
+
+export enum EmployeeMessageDirection {
+  TENANT = 'tenant',
+  EMPLOYEE = 'employee',
+}
+
+@Schema({ timestamps: true, collection: 'crm_mandate_employee_messages' })
+export class MandateEmployeeMessage {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'Mandate', required: true, index: true })
+  mandateId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, required: true, index: true })
+  employeeUserId: Types.ObjectId;
+
+  @Prop({ enum: EmployeeMessageDirection, required: true })
+  direction: EmployeeMessageDirection;
+  @Prop({ required: true }) author: string;
+  @Prop({ required: true }) body: string;
+}
+export const MandateEmployeeMessageSchema = SchemaFactory.createForClass(
+  MandateEmployeeMessage,
+);
+
 // ── Notes (internal only) ────────────────────────────────────────
 
 export type MandateNoteDocument = MandateNote & Document;

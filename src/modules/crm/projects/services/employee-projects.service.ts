@@ -7,8 +7,9 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Mandate, MandateDocument_, Task, TaskDocument_ } from '../schemas';
 import { Employee, EmployeeDocument } from 'src/modules/hr/schemas';
-import { UpdateMyTaskDto } from '../dtos';
+import { UpdateMyTaskDto, CreateEmployeeMessageDto } from '../dtos';
 import { MandateWorkspaceService } from './mandate-workspace.service';
+import { EmployeeMessageDirection } from '../schemas';
 
 @Injectable()
 export class MyProjectsService {
@@ -47,16 +48,26 @@ export class MyProjectsService {
     };
   }
 
-  // "My mandates" means either of two things, not just one: my
-  // team is formally assigned to the mandate, OR I personally have
-  // at least one task on it. The tenant can assign work either way —
-  // picking a team up front, or assigning specific tasks to specific
-  // people without ever setting the mandate's team — and an employee
-  // needs to see the mandate either way.
-  async getMyMandates(tenantId: string, userId: string) {
-    const employee = await this.resolveEmployee(tenantId, userId);
+  // "My mandates" means either of two things for a genuine employee,
+  // not just one: my team is formally assigned to the mandate, OR I
+  // personally have at least one task on it. A tenant-type caller
+  // (the account owner, possibly also linked to an Employee record)
+  // isn't subject to that restriction at all — they already have
+  // full visibility on the tenant side, so scoping "my mandates" to
+  // only their personal task/team links would just be a confusing,
+  // narrower view of data they can already see everything of.
+  async getMyMandates(tenantId: string, userId: string, userType: string) {
     const tId = new Types.ObjectId(tenantId);
 
+    if (userType === 'tenant') {
+      const rows = await this.mandateModel
+        .find({ tenantId: tId })
+        .sort({ createdAt: -1 })
+        .lean();
+      return rows.map((m) => this.normalizeMandate(m));
+    }
+
+    const employee = await this.resolveEmployee(tenantId, userId);
     const taskMandateIds = await this.taskModel.distinct('mandateId', {
       tenantId: tId,
       assigneeUserId: employee._id,
@@ -72,20 +83,34 @@ export class MyProjectsService {
     return rows.map((m) => this.normalizeMandate(m));
   }
 
-  // Same either/or logic as getMyMandates — team membership OR a
-  // real task on this specific mandate.
+  // Same distinction as getMyMandates — a tenant-type caller is
+  // never restricted to team/task membership, a genuine employee
+  // still is.
   private async getAuthorizedMandate(
     tenantId: string,
     userId: string,
     mandateId: string,
+    userType: string,
   ) {
-    const employee = await this.resolveEmployee(tenantId, userId);
     const tId = new Types.ObjectId(tenantId);
     const mandate = await this.mandateModel
       .findOne({ _id: mandateId, tenantId: tId })
       .lean();
     if (!mandate) throw new NotFoundException('Mandate not found');
 
+    if (userType === 'tenant') {
+      // Still resolve the employee record if one exists (needed by
+      // callers like messaging, which key a thread off employee._id),
+      // but never let its absence or lack of task/team link block
+      // access for the account owner.
+      const employee = await this.employeeModel.findOne({
+        tenantId: tId,
+        userId: new Types.ObjectId(userId),
+      });
+      return { employee, mandate };
+    }
+
+    const employee = await this.resolveEmployee(tenantId, userId);
     const onTeam =
       !!employee.teamId && String(mandate.teamId) === String(employee.teamId);
     const hasTask = onTeam
@@ -102,18 +127,29 @@ export class MyProjectsService {
     return { employee, mandate };
   }
 
-  async getMandateDetail(tenantId: string, userId: string, mandateId: string) {
+  async getMandateDetail(
+    tenantId: string,
+    userId: string,
+    mandateId: string,
+    userType: string,
+  ) {
     const { mandate } = await this.getAuthorizedMandate(
       tenantId,
       userId,
       mandateId,
+      userType,
     );
     return this.normalizeMandate(mandate);
   }
 
   // Every task on the mandate, any assignee — the "Board" view.
-  async getMandateTasks(tenantId: string, userId: string, mandateId: string) {
-    await this.getAuthorizedMandate(tenantId, userId, mandateId);
+  async getMandateTasks(
+    tenantId: string,
+    userId: string,
+    mandateId: string,
+    userType: string,
+  ) {
+    await this.getAuthorizedMandate(tenantId, userId, mandateId, userType);
     return this.taskModel
       .find({
         tenantId: new Types.ObjectId(tenantId),
@@ -130,9 +166,68 @@ export class MyProjectsService {
     tenantId: string,
     userId: string,
     mandateId: string,
+    userType: string,
   ) {
-    await this.getAuthorizedMandate(tenantId, userId, mandateId);
+    await this.getAuthorizedMandate(tenantId, userId, mandateId, userType);
     return this.workspaceService.getDocuments(tenantId, mandateId);
+  }
+
+  // Message thread with the tenant, for this mandate. Always the
+  // caller's own thread — employeeUserId is resolved server-side
+  // from their session, never taken from a request parameter, so
+  // there's no way to read or post into someone else's thread. A
+  // tenant-type caller with no linked employee record simply can't
+  // have a thread of their own — there's no "them" for it to belong
+  // to on this side of the conversation.
+  async getMyMessages(
+    tenantId: string,
+    userId: string,
+    mandateId: string,
+    userType: string,
+  ) {
+    const { employee } = await this.getAuthorizedMandate(
+      tenantId,
+      userId,
+      mandateId,
+      userType,
+    );
+    if (!employee) {
+      throw new NotFoundException(
+        'No employee record is linked to this account',
+      );
+    }
+    return this.workspaceService.getEmployeeMessages(
+      tenantId,
+      mandateId,
+      String(employee._id),
+    );
+  }
+
+  async sendMyMessage(
+    tenantId: string,
+    userId: string,
+    mandateId: string,
+    userType: string,
+    dto: CreateEmployeeMessageDto,
+  ) {
+    const { employee } = await this.getAuthorizedMandate(
+      tenantId,
+      userId,
+      mandateId,
+      userType,
+    );
+    if (!employee) {
+      throw new NotFoundException(
+        'No employee record is linked to this account',
+      );
+    }
+    return this.workspaceService.addEmployeeMessage(
+      tenantId,
+      mandateId,
+      String(employee._id),
+      EmployeeMessageDirection.EMPLOYEE,
+      dto,
+    );
   }
 
   // Just this employee's own tasks — across every mandate, or one

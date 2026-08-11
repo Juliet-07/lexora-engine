@@ -1,3 +1,4 @@
+export * from './client-projects.controller';
 export * from './employee-projects.controller';
 export * from './mandate-workspace.controller';
 export * from './mandate.controller';
