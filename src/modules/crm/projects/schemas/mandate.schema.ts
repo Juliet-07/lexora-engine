@@ -84,6 +84,27 @@ export const DEFAULT_CLOSURE_CHECKLIST = [
   'Client satisfaction survey sent',
 ];
 
+export enum MilestoneStatus {
+  PENDING = 'pending',
+  IN_PROGRESS = 'in_progress',
+  COMPLETED = 'completed',
+}
+
+// One canonical shape for a milestone the employee and client mocks
+// disagreed on: the client's data.ts used a 3-state status
+// (completed/in_progress/pending), the employee's MyProjects.tsx
+// used a boolean done flag. The 3-state version carries strictly
+// more information, so it's the real one — the employee view can
+// derive `done` as `status === "completed"` when it's wired up.
+@Schema({ timestamps: true })
+export class Milestone {
+  @Prop({ required: true, trim: true }) name: string;
+  @Prop({ enum: MilestoneStatus, default: MilestoneStatus.PENDING })
+  status: MilestoneStatus;
+  @Prop({ required: true }) date: Date;
+}
+export const MilestoneSchema = SchemaFactory.createForClass(Milestone);
+
 @Schema({ _id: false })
 export class ClosureChecklistItem {
   @Prop({ required: true }) label: string;
@@ -102,6 +123,7 @@ export class Mandate {
   @Prop({ required: true }) ref: string;
 
   @Prop({ required: true, trim: true }) name: string;
+  @Prop({ default: '' }) description: string;
 
   // Real KYC client — matches ClientSelect on the create form exactly.
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
@@ -115,11 +137,9 @@ export class Mandate {
 
   @Prop({ default: '' }) manager: string;
 
-  // Real HR team id when one's assigned — Tasks' assignee picker
-  // keys off this. Not populated anywhere (frontend already fetches
-  // team options separately via fetchTeams()), so no `ref` asserted
-  // here rather than guess at the exact HR team model name.
-  @Prop({ type: Types.ObjectId, default: null })
+  // Real HR team id when one's assigned — Tasks' assignee picker and
+  // the employee "my mandates" view both key off this.
+  @Prop({ type: Types.ObjectId, ref: 'HrTeam', default: null })
   teamId: Types.ObjectId | null;
   @Prop({ default: '' }) teamName: string;
   @Prop({ type: [String], default: [] }) team: string[];
@@ -142,6 +162,11 @@ export class Mandate {
 
   @Prop({ type: [ClosureChecklistItemSchema], default: [] })
   closureChecklist: Types.DocumentArray<ClosureChecklistItem>;
+
+  // Tenant-managed, read-only to the employee and client views once
+  // those are wired up.
+  @Prop({ type: [MilestoneSchema], default: [] })
+  milestones: Types.DocumentArray<Milestone>;
 
   // Folders created ahead of any document landing in them — matches
   // the confirmed prototype's addFolder() side-list. Combined with

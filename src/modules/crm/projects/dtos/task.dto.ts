@@ -43,3 +43,13 @@ export class UpdateTaskDto {
   @ApiPropertyOptional() @IsOptional() @IsNumber() loggedHrs?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() phase?: string;
 }
+
+// What an employee is allowed to change on their own task — status
+// and logged hours only, not reassignment, priority, or scope.
+export class UpdateMyTaskDto {
+  @ApiPropertyOptional({ enum: TaskStatus })
+  @IsOptional()
+  @IsEnum(TaskStatus)
+  status?: TaskStatus;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() loggedHrs?: number;
+}

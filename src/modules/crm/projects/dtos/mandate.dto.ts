@@ -13,6 +13,7 @@ import { MandateType, Rag, FeeStructure } from '../schemas';
 
 export class CreateMandateDto {
   @ApiProperty() @IsString() name: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
   @ApiProperty() @IsMongoId() clientUserId: string;
   @ApiProperty() @IsString() clientName: string;
   @ApiProperty({ enum: MandateType }) @IsEnum(MandateType) type: MandateType;
@@ -39,6 +40,7 @@ export class CreateMandateDto {
 
 export class UpdateMandateDto {
   @ApiPropertyOptional() @IsOptional() @IsString() name?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
   @ApiPropertyOptional({ enum: Rag }) @IsOptional() @IsEnum(Rag) rag?: Rag;
   @ApiPropertyOptional() @IsOptional() @IsString() manager?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() teamId?: string;
@@ -61,6 +63,20 @@ export class UpdateMandateDto {
 }
 
 export class ClearConflictCheckDto {}
+
+export class AddMilestoneDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiProperty() @IsDateString() date: string;
+}
+
+export class UpdateMilestoneDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() name?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() date?: string;
+  @ApiPropertyOptional({ enum: ['pending', 'in_progress', 'completed'] })
+  @IsOptional()
+  @IsEnum(['pending', 'in_progress', 'completed'])
+  status?: 'pending' | 'in_progress' | 'completed';
+}
 
 export class SetClosureItemDto {
   @ApiProperty() @IsBoolean() done: boolean;

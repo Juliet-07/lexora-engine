@@ -15,13 +15,16 @@ import {
 import {
   MandateService,
   MandateWorkspaceService,
+  MyProjectsService,
   TaskService,
 } from './services';
 import {
   MandateController,
   MandateWorkspaceController,
+  MyProjectsController,
   TaskController,
 } from './controllers';
+import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
 
 /**
  * The "Projects" sidebar section (Mandates, Tasks, Gantt & Planning,
@@ -38,10 +41,21 @@ import {
       { name: MandateNote.name, schema: MandateNoteSchema },
       { name: MandateDocumentEntry.name, schema: MandateDocumentSchema },
       { name: Task.name, schema: TaskSchema },
+      { name: Employee.name, schema: EmployeeSchema },
     ]),
   ],
-  providers: [MandateService, MandateWorkspaceService, TaskService],
-  controllers: [MandateController, MandateWorkspaceController, TaskController],
+  providers: [
+    MandateService,
+    MandateWorkspaceService,
+    TaskService,
+    MyProjectsService,
+  ],
+  controllers: [
+    MandateController,
+    MandateWorkspaceController,
+    TaskController,
+    MyProjectsController,
+  ],
   exports: [MandateService, MandateWorkspaceService, TaskService],
 })
 export class ProjectsModule {}

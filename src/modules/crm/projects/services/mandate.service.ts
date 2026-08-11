@@ -14,7 +14,13 @@ import {
   ConflictCheckStatus,
   DEFAULT_CLOSURE_CHECKLIST,
 } from '../schemas';
-import { CreateMandateDto, UpdateMandateDto, SetClosureItemDto } from '../dtos';
+import {
+  CreateMandateDto,
+  UpdateMandateDto,
+  SetClosureItemDto,
+  AddMilestoneDto,
+  UpdateMilestoneDto,
+} from '../dtos';
 
 @Injectable()
 export class MandateService {
@@ -32,11 +38,26 @@ export class MandateService {
     return `M-${year}-${String(count + 1).padStart(3, '0')}`;
   }
 
+  // .lean() returns the raw MongoDB document with no schema defaults
+  // applied — mandates created before `milestones` existed genuinely
+  // have no such key stored, so it comes back undefined here even
+  // though the schema says `default: []`. Normalize explicitly
+  // rather than relying on every caller to guard for it.
+  private normalize(m: any) {
+    return {
+      ...m,
+      description: m.description ?? '',
+      milestones: m.milestones ?? [],
+      customFolders: m.customFolders ?? [],
+    };
+  }
+
   async getAll(tenantId: string) {
-    return this.model
+    const rows = await this.model
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
+    return rows.map((m) => this.normalize(m));
   }
 
   async getById(tenantId: string, id: string) {
@@ -44,7 +65,7 @@ export class MandateService {
       .findOne({ _id: id, tenantId: new Types.ObjectId(tenantId) })
       .lean();
     if (!m) throw new NotFoundException('Mandate not found');
-    return m;
+    return this.normalize(m);
   }
 
   private async getRawDoc(tenantId: string, id: string) {
@@ -63,6 +84,7 @@ export class MandateService {
       tenantId: tId,
       ref,
       name: dto.name,
+      description: dto.description ?? '',
       clientUserId: new Types.ObjectId(dto.clientUserId),
       clientName: dto.clientName,
       type: dto.type,
@@ -86,6 +108,7 @@ export class MandateService {
   async update(tenantId: string, id: string, dto: UpdateMandateDto) {
     const m = await this.getRawDoc(tenantId, id);
     if (dto.name !== undefined) m.name = dto.name;
+    if (dto.description !== undefined) m.description = dto.description;
     if (dto.rag !== undefined) m.rag = dto.rag;
     if (dto.manager !== undefined) m.manager = dto.manager;
     if (dto.teamId !== undefined) m.teamId = new Types.ObjectId(dto.teamId);
@@ -166,6 +189,43 @@ export class MandateService {
       m.customFolders.push(folder);
       await m.save();
     }
+    return m.toObject();
+  }
+
+  // ── Milestones ───────────────────────────────────────────────
+
+  async addMilestone(tenantId: string, id: string, dto: AddMilestoneDto) {
+    const m = await this.getRawDoc(tenantId, id);
+    m.milestones.push({
+      name: dto.name,
+      date: new Date(dto.date),
+    } as any);
+    await m.save();
+    return m.toObject();
+  }
+
+  async updateMilestone(
+    tenantId: string,
+    id: string,
+    milestoneId: string,
+    dto: UpdateMilestoneDto,
+  ) {
+    const m = await this.getRawDoc(tenantId, id);
+    const milestone = m.milestones.id(milestoneId);
+    if (!milestone) throw new NotFoundException('Milestone not found');
+    if (dto.name !== undefined) milestone.name = dto.name;
+    if (dto.date !== undefined) milestone.date = new Date(dto.date);
+    if (dto.status !== undefined) milestone.status = dto.status as any;
+    await m.save();
+    return m.toObject();
+  }
+
+  async deleteMilestone(tenantId: string, id: string, milestoneId: string) {
+    const m = await this.getRawDoc(tenantId, id);
+    const milestone = m.milestones.id(milestoneId);
+    if (!milestone) throw new NotFoundException('Milestone not found');
+    milestone.deleteOne();
+    await m.save();
     return m.toObject();
   }
 }

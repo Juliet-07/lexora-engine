@@ -1,7 +1,21 @@
-import { Controller, Get, Post, Patch, Body, Param } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  Param,
+  Delete,
+} from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { MandateService } from '../services';
-import { CreateMandateDto, UpdateMandateDto, SetClosureItemDto } from '../dtos';
+import {
+  CreateMandateDto,
+  UpdateMandateDto,
+  SetClosureItemDto,
+  UpdateMilestoneDto,
+  AddMilestoneDto,
+} from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
   PlatformModuleKey,
@@ -94,5 +108,39 @@ export class MandateController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.close(t || u, id);
+  }
+
+  @Post(':id/milestones')
+  @ApiOperation({ summary: 'Add a milestone' })
+  addMilestone(
+    @Param('id') id: string,
+    @Body() dto: AddMilestoneDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addMilestone(t || u, id, dto);
+  }
+
+  @Patch(':id/milestones/:milestoneId')
+  @ApiOperation({ summary: 'Edit a milestone or move its status' })
+  updateMilestone(
+    @Param('id') id: string,
+    @Param('milestoneId') milestoneId: string,
+    @Body() dto: UpdateMilestoneDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateMilestone(t || u, id, milestoneId, dto);
+  }
+
+  @Delete(':id/milestones/:milestoneId')
+  @ApiOperation({ summary: 'Delete a milestone' })
+  deleteMilestone(
+    @Param('id') id: string,
+    @Param('milestoneId') milestoneId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.deleteMilestone(t || u, id, milestoneId);
   }
 }
