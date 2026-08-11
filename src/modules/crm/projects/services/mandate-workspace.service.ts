@@ -31,7 +31,10 @@ export class MandateWorkspaceService {
 
   async getMessages(tenantId: string, mandateId: string) {
     return this.messageModel
-      .find({ tenantId: new Types.ObjectId(tenantId), mandateId })
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+      })
       .sort({ createdAt: 1 })
       .lean();
   }
@@ -39,7 +42,7 @@ export class MandateWorkspaceService {
   async addMessage(tenantId: string, mandateId: string, dto: CreateMessageDto) {
     const created = await this.messageModel.create({
       tenantId: new Types.ObjectId(tenantId),
-      mandateId,
+      mandateId: new Types.ObjectId(mandateId),
       direction: MessageDirection.TENANT,
       author: dto.author,
       body: dto.body,
@@ -51,7 +54,10 @@ export class MandateWorkspaceService {
 
   async getNotes(tenantId: string, mandateId: string) {
     return this.noteModel
-      .find({ tenantId: new Types.ObjectId(tenantId), mandateId })
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+      })
       .sort({ createdAt: -1 })
       .lean();
   }
@@ -59,7 +65,7 @@ export class MandateWorkspaceService {
   async addNote(tenantId: string, mandateId: string, dto: CreateNoteDto) {
     const created = await this.noteModel.create({
       tenantId: new Types.ObjectId(tenantId),
-      mandateId,
+      mandateId: new Types.ObjectId(mandateId),
       author: dto.author,
       body: dto.body,
     });
@@ -70,7 +76,7 @@ export class MandateWorkspaceService {
     const res = await this.noteModel.deleteOne({
       _id: noteId,
       tenantId: new Types.ObjectId(tenantId),
-      mandateId,
+      mandateId: new Types.ObjectId(mandateId),
     });
     if (!res.deletedCount) throw new NotFoundException('Note not found');
     return { deleted: true };
@@ -80,9 +86,10 @@ export class MandateWorkspaceService {
 
   async getFolders(tenantId: string, mandateId: string) {
     const tId = new Types.ObjectId(tenantId);
+    const mId = new Types.ObjectId(mandateId);
     const [mandate, docFolders] = await Promise.all([
       this.mandateService.getById(tenantId, mandateId),
-      this.documentModel.distinct('folder', { tenantId: tId, mandateId }),
+      this.documentModel.distinct('folder', { tenantId: tId, mandateId: mId }),
     ]);
     return Array.from(
       new Set([
@@ -99,7 +106,10 @@ export class MandateWorkspaceService {
   }
 
   async getDocuments(tenantId: string, mandateId: string, folder?: string) {
-    const query: any = { tenantId: new Types.ObjectId(tenantId), mandateId };
+    const query: any = {
+      tenantId: new Types.ObjectId(tenantId),
+      mandateId: new Types.ObjectId(mandateId),
+    };
     if (folder) query.folder = folder;
     // Documents still pending client filing don't show up in their
     // folder listing until accepted — matches the confirmed
@@ -115,7 +125,7 @@ export class MandateWorkspaceService {
     return this.documentModel
       .find({
         tenantId: new Types.ObjectId(tenantId),
-        mandateId,
+        mandateId: new Types.ObjectId(mandateId),
         fromClient: true,
         status: ClientDocStatus.PENDING,
       })
@@ -132,7 +142,7 @@ export class MandateWorkspaceService {
   ) {
     const created = await this.documentModel.create({
       tenantId: new Types.ObjectId(tenantId),
-      mandateId,
+      mandateId: new Types.ObjectId(mandateId),
       folder,
       name: file.originalname,
       fileUrl: `/uploads/crm/mandates/${file.filename}`,
@@ -153,7 +163,7 @@ export class MandateWorkspaceService {
       {
         _id: documentId,
         tenantId: new Types.ObjectId(tenantId),
-        mandateId,
+        mandateId: new Types.ObjectId(mandateId),
       },
       { $set: { folder, status: ClientDocStatus.FILED } },
       { new: true },

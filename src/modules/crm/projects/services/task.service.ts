@@ -17,8 +17,10 @@ export class TaskService {
     filters: { mandateId?: string; assigneeUserId?: string } = {},
   ) {
     const query: any = { tenantId: new Types.ObjectId(tenantId) };
-    if (filters.mandateId) query.mandateId = filters.mandateId;
-    if (filters.assigneeUserId) query.assigneeUserId = filters.assigneeUserId;
+    if (filters.mandateId)
+      query.mandateId = new Types.ObjectId(filters.mandateId);
+    if (filters.assigneeUserId)
+      query.assigneeUserId = new Types.ObjectId(filters.assigneeUserId);
     return this.model.find(query).sort({ createdAt: -1 }).lean();
   }
 
@@ -35,10 +37,12 @@ export class TaskService {
     const created = await this.model.create({
       tenantId: new Types.ObjectId(tenantId),
       title: dto.title,
-      mandateId: dto.mandateId,
+      mandateId: new Types.ObjectId(dto.mandateId),
       mandateName: (mandate as any).name,
       assignee: dto.assignee,
-      assigneeUserId: dto.assigneeUserId ?? null,
+      assigneeUserId: dto.assigneeUserId
+        ? new Types.ObjectId(dto.assigneeUserId)
+        : null,
       priority: dto.priority,
       dueDate: new Date(dto.dueDate),
       estimateHrs: dto.estimateHrs,

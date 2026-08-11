@@ -115,7 +115,10 @@ export class MyProjectsService {
   async getMandateTasks(tenantId: string, userId: string, mandateId: string) {
     await this.getAuthorizedMandate(tenantId, userId, mandateId);
     return this.taskModel
-      .find({ tenantId: new Types.ObjectId(tenantId), mandateId })
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+      })
       .sort({ createdAt: -1 })
       .lean();
   }
@@ -140,7 +143,7 @@ export class MyProjectsService {
       tenantId: new Types.ObjectId(tenantId),
       assigneeUserId: employee._id,
     };
-    if (mandateId) query.mandateId = mandateId;
+    if (mandateId) query.mandateId = new Types.ObjectId(mandateId);
     return this.taskModel.find(query).sort({ createdAt: -1 }).lean();
   }
 
