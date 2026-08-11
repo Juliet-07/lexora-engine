@@ -7,12 +7,24 @@ import {
   ClientPipelineSchema,
   ContactSchema,
   Contact,
+  SlaProfile,
+  SlaProfileSchema,
+  ClientCommercial,
+  ClientCommercialSchema,
 } from './schemas';
-import { LeadService, ClientPipelineService, ContactService } from './services';
+import {
+  LeadService,
+  ClientPipelineService,
+  ContactService,
+  SlaProfileService,
+  ClientCommercialService,
+} from './services';
 import {
   LeadController,
   ClientPipelineController,
   ContactController,
+  SlaProfileController,
+  ClientCommercialController,
 } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
 import {
@@ -29,11 +41,31 @@ import { TenantModule } from 'src/modules/tenant/tenant.module';
       { name: User.name, schema: UserSchema },
       { name: ClientProfileRecord.name, schema: ClientProfileSchema },
       { name: Contact.name, schema: ContactSchema },
+      { name: ClientCommercial.name, schema: ClientCommercialSchema },
+      { name: SlaProfile.name, schema: SlaProfileSchema },
     ]),
     TenantModule,
   ],
-  providers: [LeadService, ClientPipelineService, ContactService],
-  controllers: [LeadController, ClientPipelineController, ContactController],
-  exports: [LeadService, ClientPipelineService, ContactService],
+  providers: [
+    LeadService,
+    ClientPipelineService,
+    ContactService,
+    SlaProfileService,
+    ClientCommercialService,
+  ],
+  controllers: [
+    LeadController,
+    ClientPipelineController,
+    ContactController,
+    SlaProfileController,
+    ClientCommercialController,
+  ],
+  exports: [
+    LeadService,
+    ClientPipelineService,
+    ContactService,
+    SlaProfileService,
+    ClientCommercialService,
+  ],
 })
 export class CrmRelationsModule {}
