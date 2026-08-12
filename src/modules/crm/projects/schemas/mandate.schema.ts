@@ -150,9 +150,8 @@ export class Mandate {
   @Prop({ required: true, default: 0 }) budget: number;
   @Prop({ default: 0 }) actualCost: number;
   @Prop({ default: 0 }) billed: number;
-  // Manually tracked until Time Tracking exists to compute it for
-  // real from logged, unbilled hours.
-  @Prop({ default: 0 }) wip: number;
+  // No stored wip — it's the sum of this mandate's Approved,
+  // billable time entries, computed in MandateService.
 
   @Prop({ enum: FeeStructure, required: true }) feeStructure: FeeStructure;
   @Prop({ default: 0, min: 0, max: 100 }) progress: number;

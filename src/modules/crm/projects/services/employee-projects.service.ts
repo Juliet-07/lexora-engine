@@ -5,11 +5,30 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Mandate, MandateDocument_, Task, TaskDocument_ } from '../schemas';
+import {
+  KbAudience,
+  KbStatus,
+  Mandate,
+  MandateDocument_,
+  Task,
+  TaskDocument_,
+  TicketStatus,
+  EmployeeMessageDirection,
+} from '../schemas';
 import { Employee, EmployeeDocument } from 'src/modules/hr/schemas';
-import { UpdateMyTaskDto, CreateEmployeeMessageDto } from '../dtos';
+import {
+  UpdateMyTaskDto,
+  CreateEmployeeMessageDto,
+  CreateMyTimeEntryDto,
+  UpdateTicketStatusDto,
+  AddTicketNoteDto,
+  VoteKbArticleDto,
+} from '../dtos';
 import { MandateWorkspaceService } from './mandate-workspace.service';
-import { EmployeeMessageDirection } from '../schemas';
+import { TaskService } from './task.service';
+import { TimeEntryService } from './time-entry.service';
+import { TicketService } from './ticket.service';
+import { KbArticleService } from './kb-article.service';
 
 @Injectable()
 export class MyProjectsService {
@@ -20,6 +39,8 @@ export class MyProjectsService {
     @InjectModel(Employee.name)
     private readonly employeeModel: Model<EmployeeDocument>,
     private readonly workspaceService: MandateWorkspaceService,
+    private readonly taskService: TaskService,
+    private readonly timeEntryService: TimeEntryService,
   ) {}
 
   // Every method here needs to know which real Employee record the
@@ -143,6 +164,10 @@ export class MyProjectsService {
   }
 
   // Every task on the mandate, any assignee — the "Board" view.
+  // Delegates to TaskService rather than querying the model
+  // directly — loggedHrs/progress are computed there from Approved
+  // time entries, not stored, so duplicating the query here would
+  // mean returning tasks with no loggedHrs at all.
   async getMandateTasks(
     tenantId: string,
     userId: string,
@@ -150,13 +175,7 @@ export class MyProjectsService {
     userType: string,
   ) {
     await this.getAuthorizedMandate(tenantId, userId, mandateId, userType);
-    return this.taskModel
-      .find({
-        tenantId: new Types.ObjectId(tenantId),
-        mandateId: new Types.ObjectId(mandateId),
-      })
-      .sort({ createdAt: -1 })
-      .lean();
+    return this.taskService.getAll(tenantId, { mandateId });
   }
 
   // Read-only access to the mandate's real documents — reuses the
@@ -231,19 +250,20 @@ export class MyProjectsService {
   }
 
   // Just this employee's own tasks — across every mandate, or one
-  // mandate if given. The "My Tasks" view.
+  // mandate if given. The "My Tasks" view. Same delegation reason as
+  // getMandateTasks above.
   async getMyTasks(tenantId: string, userId: string, mandateId?: string) {
     const employee = await this.resolveEmployee(tenantId, userId);
-    const query: any = {
-      tenantId: new Types.ObjectId(tenantId),
-      assigneeUserId: employee._id,
-    };
-    if (mandateId) query.mandateId = new Types.ObjectId(mandateId);
-    return this.taskModel.find(query).sort({ createdAt: -1 }).lean();
+    return this.taskService.getAll(tenantId, {
+      assigneeUserId: String(employee._id),
+      mandateId,
+    });
   }
 
-  // An employee can move their own task's status and log hours —
-  // nothing else, and only on tasks genuinely assigned to them.
+  // An employee can move their own task's status — nothing else, and
+  // only on tasks genuinely assigned to them. Delegates the actual
+  // save to TaskService.update() so the returned task has correctly
+  // computed loggedHrs/progress, same as every other consumer.
   async updateMyTask(
     tenantId: string,
     userId: string,
@@ -262,9 +282,155 @@ export class MyProjectsService {
     ) {
       throw new ForbiddenException('This task is not assigned to you');
     }
-    if (dto.status !== undefined) task.status = dto.status;
-    if (dto.loggedHrs !== undefined) task.loggedHrs = dto.loggedHrs;
-    await task.save();
-    return task.toObject();
+    return this.taskService.update(tenantId, taskId, { status: dto.status });
+  }
+
+  // ── Timesheets (self) ────────────────────────────────────────
+  // The employee's own time entries — memberUserId is always the
+  // resolved employee's own _id, never taken from the request, same
+  // rule as the message thread above. Logging against a mandate
+  // reuses getAuthorizedMandate, so an employee can't log time
+  // against a mandate they have no real involvement in — and since
+  // that already fetches the mandate, its name comes along for free
+  // rather than asking the caller to supply it separately.
+
+  async getMyTimeEntries(tenantId: string, userId: string, mandateId?: string) {
+    const employee = await this.resolveEmployee(tenantId, userId);
+    return this.timeEntryService.getAll(tenantId, {
+      memberUserId: String(employee._id),
+      mandateId,
+    });
+  }
+
+  async logMyTime(tenantId: string, userId: string, dto: CreateMyTimeEntryDto) {
+    const { employee, mandate } = await this.getAuthorizedMandate(
+      tenantId,
+      userId,
+      dto.mandateId,
+      'employee',
+    );
+    return this.timeEntryService.create(tenantId, {
+      memberUserId: String(employee._id),
+      member: `${employee.firstName} ${employee.lastName}`,
+      mandateId: dto.mandateId,
+      mandateName: (mandate as any).name,
+      taskId: dto.taskId,
+      taskTitle: dto.taskTitle,
+      narrative: dto.narrative,
+      date: dto.date,
+      hours: dto.hours,
+      billable: dto.billable,
+    });
+  }
+
+  async submitMyTimeEntry(tenantId: string, userId: string, entryId: string) {
+    const employee = await this.resolveEmployee(tenantId, userId);
+    const entry = await this.timeEntryService.getById(tenantId, entryId);
+    if (String(entry.memberUserId) !== String(employee._id)) {
+      throw new ForbiddenException('This time entry is not yours');
+    }
+    return this.timeEntryService.submit(tenantId, entryId);
+  }
+}
+
+@Injectable()
+export class MyTicketsService {
+  constructor(
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
+    private readonly ticketService: TicketService,
+  ) {}
+
+  private async resolveEmployee(tenantId: string, userId: string) {
+    const employee = await this.employeeModel.findOne({
+      tenantId: new Types.ObjectId(tenantId),
+      userId: new Types.ObjectId(userId),
+    });
+    if (!employee) {
+      throw new NotFoundException(
+        'No employee record is linked to this account',
+      );
+    }
+    return employee;
+  }
+
+  async getMyTickets(tenantId: string, userId: string, status?: TicketStatus) {
+    const employee = await this.resolveEmployee(tenantId, userId);
+    return this.ticketService.getAll(tenantId, {
+      agentUserId: String(employee._id),
+      status,
+    });
+  }
+
+  private async getOwnedTicket(
+    tenantId: string,
+    userId: string,
+    ticketId: string,
+  ) {
+    const employee = await this.resolveEmployee(tenantId, userId);
+    const ticket = await this.ticketService.getById(tenantId, ticketId);
+    if (
+      !ticket.agentUserId ||
+      String(ticket.agentUserId) !== String(employee._id)
+    ) {
+      throw new ForbiddenException('This ticket is not assigned to you');
+    }
+    return ticket;
+  }
+
+  async getMyTicket(tenantId: string, userId: string, ticketId: string) {
+    return this.getOwnedTicket(tenantId, userId, ticketId);
+  }
+
+  async setStatus(
+    tenantId: string,
+    userId: string,
+    ticketId: string,
+    dto: UpdateTicketStatusDto,
+  ) {
+    await this.getOwnedTicket(tenantId, userId, ticketId);
+    return this.ticketService.setStatus(tenantId, ticketId, dto);
+  }
+
+  async addNote(
+    tenantId: string,
+    userId: string,
+    ticketId: string,
+    dto: AddTicketNoteDto,
+  ) {
+    await this.getOwnedTicket(tenantId, userId, ticketId);
+    return this.ticketService.addNote(tenantId, ticketId, dto);
+  }
+}
+
+@Injectable()
+export class MyKbService {
+  constructor(private readonly kbService: KbArticleService) {}
+
+  // Internal + Published only — a draft internal article isn't
+  // ready for the floor yet, and client-facing articles belong to a
+  // different audience entirely.
+  async getArticles(tenantId: string) {
+    return this.kbService.getAll(tenantId, {
+      audience: KbAudience.INTERNAL,
+      status: KbStatus.PUBLISHED,
+    });
+  }
+
+  async recordView(tenantId: string, id: string) {
+    return this.kbService.recordView(tenantId, id);
+  }
+
+  async vote(tenantId: string, id: string, dto: VoteKbArticleDto) {
+    return this.kbService.vote(tenantId, id, dto);
+  }
+
+  async suggest(tenantId: string, query: string, limit = 3) {
+    return this.kbService.suggestArticles(
+      tenantId,
+      query,
+      KbAudience.INTERNAL,
+      limit,
+    );
   }
 }

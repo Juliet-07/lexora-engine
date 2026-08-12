@@ -19,14 +19,20 @@ import {
   ApiOperation,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { ClientProjectsService } from '../services';
-import { CreateMessageDto } from '../dtos';
-import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
-  PlatformModuleKey,
-  UserType,
-} from 'src/common/interfaces/user-role.enum';
-import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
+  ClientKbService,
+  ClientProjectsService,
+  ClientTicketsService,
+} from '../services';
+import {
+  CreateMessageDto,
+  CreateTicketDto,
+  RateTicketDto,
+  ReplyTicketDto,
+  VoteKbArticleDto,
+} from '../dtos';
+import { CurrentUser, UserTypes } from 'src/common/decorators';
+import { UserType } from 'src/common/interfaces/user-role.enum';
 
 const documentStorage = diskStorage({
   destination: (_req, _file, cb) => {
@@ -38,10 +44,9 @@ const documentStorage = diskStorage({
     cb(null, `${uuidv4()}${extname(file.originalname)}`),
 });
 
-@ApiTags('CRM — Projects (Client)')
+@ApiTags('CRM — Client Projects Controllers')
 @ApiBearerAuth()
 @UserTypes(UserType.CLIENT)
-@RequiresModule(PlatformModuleKey.CRM)
 @Controller('crm/client-projects')
 export class ClientProjectsController {
   constructor(private readonly service: ClientProjectsService) {}
@@ -120,5 +125,104 @@ export class ClientProjectsController {
       'Client',
       file,
     );
+  }
+}
+
+@ApiTags('CRM — Client Projects Controllers')
+@ApiBearerAuth()
+@UserTypes(UserType.CLIENT)
+@Controller('crm/client-tickets')
+export class ClientTicketsController {
+  constructor(private readonly service: ClientTicketsService) {}
+
+  @Post()
+  @ApiOperation({ summary: 'Raise a new ticket' })
+  raiseTicket(
+    @Body() dto: CreateTicketDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.raiseTicket(t || u, u, dto.clientName, dto);
+  }
+
+  @Get()
+  @ApiOperation({ summary: 'My own tickets' })
+  getMyTickets(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getMyTickets(t || u, u);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'One of my own tickets' })
+  getMyTicket(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getMyTicket(t || u, u, id);
+  }
+
+  @Post(':id/reply')
+  @ApiOperation({
+    summary: 'Reply on my own ticket — always sent to the tenant',
+  })
+  reply(
+    @Param('id') id: string,
+    @Body() dto: ReplyTicketDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.reply(t || u, u, id, dto.clientName, dto.body);
+  }
+
+  @Post(':id/rate')
+  @ApiOperation({ summary: 'Rate a closed ticket' })
+  rate(
+    @Param('id') id: string,
+    @Body() dto: RateTicketDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.rate(t || u, u, id, dto);
+  }
+}
+
+@ApiTags('CRM — Client Projects Controllers')
+@ApiBearerAuth()
+@UserTypes(UserType.CLIENT)
+@Controller('crm/client-kb-articles')
+export class ClientKbController {
+  constructor(private readonly service: ClientKbService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Published client-facing articles' })
+  getArticles(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getArticles(t || u);
+  }
+
+  @Post(':id/view')
+  @ApiOperation({ summary: 'Record a view' })
+  recordView(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.recordView(t || u, id);
+  }
+
+  @Post(':id/vote')
+  @ApiOperation({ summary: 'Vote helpful / not helpful' })
+  vote(
+    @Param('id') id: string,
+    @Body() dto: VoteKbArticleDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.vote(t || u, id, dto);
   }
 }

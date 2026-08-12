@@ -54,7 +54,6 @@ export class UpdateMandateDto {
   @ApiPropertyOptional() @IsOptional() @IsNumber() budget?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() actualCost?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() billed?: number;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() wip?: number;
   @ApiPropertyOptional({ enum: FeeStructure })
   @IsOptional()
   @IsEnum(FeeStructure)
@@ -89,6 +88,10 @@ export class CreateMessageDto {
   @ApiProperty() @IsString() body: string;
 }
 
+// Same shape as CreateMessageDto — direction is set server-side by
+// which controller (tenant vs employee) handles the request, not by
+// the caller, so a message can't be spoofed as coming from the
+// other side.
 export class CreateEmployeeMessageDto {
   @ApiProperty() @IsString() author: string;
   @ApiProperty() @IsString() body: string;

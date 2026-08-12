@@ -21,12 +21,14 @@ import {
   AddMilestoneDto,
   UpdateMilestoneDto,
 } from '../dtos';
+import { TimeEntryService } from './time-entry.service';
 
 @Injectable()
 export class MandateService {
   constructor(
     @InjectModel(Mandate.name)
     private readonly model: Model<MandateDocument_>,
+    private readonly timeEntryService: TimeEntryService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -43,12 +45,22 @@ export class MandateService {
   // have no such key stored, so it comes back undefined here even
   // though the schema says `default: []`. Normalize explicitly
   // rather than relying on every caller to guard for it.
-  private normalize(m: any) {
+  //
+  // wip is no longer a stored value the tenant sets by hand — it's
+  // the sum of this mandate's Approved, billable time entries, so
+  // this normalization is now async.
+  private async normalize(m: any, wip?: number) {
     return {
       ...m,
       description: m.description ?? '',
       milestones: m.milestones ?? [],
       customFolders: m.customFolders ?? [],
+      wip:
+        wip ??
+        (await this.timeEntryService.getApprovedBillableValueForMandate(
+          String(m.tenantId),
+          String(m._id),
+        )),
     };
   }
 
@@ -57,7 +69,14 @@ export class MandateService {
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
-    return rows.map((m) => this.normalize(m));
+    const wipMap =
+      await this.timeEntryService.getApprovedBillableValueByMandateIds(
+        tenantId,
+        rows.map((r) => String(r._id)),
+      );
+    return Promise.all(
+      rows.map((m) => this.normalize(m, wipMap.get(String(m._id)) ?? 0)),
+    );
   }
 
   async getById(tenantId: string, id: string) {
@@ -102,7 +121,8 @@ export class MandateService {
         done: false,
       })),
     });
-    return created.toObject();
+    // A brand-new mandate has no time entries yet — 0 without a query.
+    return this.normalize(created.toObject(), 0);
   }
 
   async update(tenantId: string, id: string, dto: UpdateMandateDto) {
@@ -118,11 +138,12 @@ export class MandateService {
     if (dto.budget !== undefined) m.budget = dto.budget;
     if (dto.actualCost !== undefined) m.actualCost = dto.actualCost;
     if (dto.billed !== undefined) m.billed = dto.billed;
-    if (dto.wip !== undefined) m.wip = dto.wip;
+    // wip intentionally not settable here anymore — it's derived
+    // from Approved, billable time entries. See UpdateMandateDto.
     if (dto.feeStructure !== undefined) m.feeStructure = dto.feeStructure;
     if (dto.progress !== undefined) m.progress = dto.progress;
     await m.save();
-    return m.toObject();
+    return this.normalize(m.toObject());
   }
 
   // Same gate as the confirmed prototype: can't reach Setup with an
@@ -144,14 +165,15 @@ export class MandateService {
     }
     m.stage = next;
     await m.save();
-    return { ...m.toObject(), stageTrigger: MANDATE_STAGE_META[next].trigger };
+    const normalized = await this.normalize(m.toObject());
+    return { ...normalized, stageTrigger: MANDATE_STAGE_META[next].trigger };
   }
 
   async clearConflictCheck(tenantId: string, id: string) {
     const m = await this.getRawDoc(tenantId, id);
     m.conflictCheck = ConflictCheckStatus.CLEARED;
     await m.save();
-    return m.toObject();
+    return this.normalize(m.toObject());
   }
 
   async setClosureItem(
@@ -165,7 +187,7 @@ export class MandateService {
     if (!item) throw new NotFoundException('Closure checklist item not found');
     item.done = dto.done;
     await m.save();
-    return m.toObject();
+    return this.normalize(m.toObject());
   }
 
   // Only closeable once every checklist item is done — same rule as
@@ -180,7 +202,7 @@ export class MandateService {
     m.stage = MandateStage.CLOSE;
     m.progress = 100;
     await m.save();
-    return m.toObject();
+    return this.normalize(m.toObject());
   }
 
   async addCustomFolder(tenantId: string, id: string, folder: string) {
@@ -189,7 +211,7 @@ export class MandateService {
       m.customFolders.push(folder);
       await m.save();
     }
-    return m.toObject();
+    return this.normalize(m.toObject());
   }
 
   // ── Milestones ───────────────────────────────────────────────
@@ -201,7 +223,7 @@ export class MandateService {
       date: new Date(dto.date),
     } as any);
     await m.save();
-    return m.toObject();
+    return this.normalize(m.toObject());
   }
 
   async updateMilestone(
@@ -217,7 +239,7 @@ export class MandateService {
     if (dto.date !== undefined) milestone.date = new Date(dto.date);
     if (dto.status !== undefined) milestone.status = dto.status as any;
     await m.save();
-    return m.toObject();
+    return this.normalize(m.toObject());
   }
 
   async deleteMilestone(tenantId: string, id: string, milestoneId: string) {
@@ -226,6 +248,6 @@ export class MandateService {
     if (!milestone) throw new NotFoundException('Milestone not found');
     milestone.deleteOne();
     await m.save();
-    return m.toObject();
+    return this.normalize(m.toObject());
   }
 }

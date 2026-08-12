@@ -18,6 +18,13 @@ export enum TaskPriority {
   CRITICAL = 'Critical',
 }
 
+export enum DependencyType {
+  FINISH_TO_START = 'FS',
+  START_TO_START = 'SS',
+  FINISH_TO_FINISH = 'FF',
+  START_TO_FINISH = 'SF',
+}
+
 @Schema({ timestamps: true, collection: 'crm_tasks' })
 export class Task {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -43,9 +50,28 @@ export class Task {
   status: TaskStatus;
   @Prop({ enum: TaskPriority, required: true }) priority: TaskPriority;
 
+  // Gantt bar positioning needs both ends — dueDate alone (the
+  // original shape) can only anchor the end. Optional rather than
+  // required so existing tasks aren't broken by this addition;
+  // service-layer normalization falls back to createdAt when absent.
+  @Prop({ default: null }) startDate: Date | null;
   @Prop({ required: true }) dueDate: Date;
   @Prop({ required: true, default: 0 }) estimateHrs: number;
-  @Prop({ default: 0 }) loggedHrs: number;
+  // No stored loggedHrs — it's the sum of this task's Approved time
+  // entries, computed in TaskService, never written to directly.
+
+  // WBS hierarchy and dependencies — self-referencing, both optional.
+  @Prop({ type: Types.ObjectId, ref: 'Task', default: null })
+  parentTaskId: Types.ObjectId | null;
+  @Prop({ type: Types.ObjectId, ref: 'Task', default: null })
+  dependsOnTaskId: Types.ObjectId | null;
+  @Prop({ enum: DependencyType, default: null })
+  depType: DependencyType | null;
+
+  // Manually set by the tenant, not computed via a critical-path
+  // algorithm — that's a meaningfully bigger undertaking than a WBS
+  // view needs right now.
+  @Prop({ default: false }) critical: boolean;
 
   // Free text, matching the prototype — mandates don't have a rigid
   // phase list, just a phase *count* on their template.

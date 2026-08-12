@@ -1,9 +1,27 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Mandate, MandateDocument_, MessageDirection } from '../schemas';
+import {
+  KbAudience,
+  KbStatus,
+  Mandate,
+  MandateDocument_,
+  MessageDirection,
+} from '../schemas';
 import { MandateWorkspaceService } from './mandate-workspace.service';
-import { CreateMessageDto } from '../dtos';
+import {
+  AddTicketNoteDto,
+  CreateMessageDto,
+  CreateTicketDto,
+  RateTicketDto,
+  VoteKbArticleDto,
+} from '../dtos';
+import { KbArticleService } from './kb-article.service';
+import { TicketService } from './ticket.service';
 
 // Simpler than the employee case: Mandate.clientUserId already IS
 // the client's own real User id directly (that's exactly what
@@ -120,5 +138,107 @@ export class ClientProjectsService {
       file,
       true,
     );
+  }
+}
+
+@Injectable()
+export class ClientTicketsService {
+  constructor(private readonly ticketService: TicketService) {}
+
+  // Internal notes are staff-only by definition — stripped here,
+  // server-side, on every single path that returns a ticket to a
+  // client, never left to the frontend to hide. A client must never
+  // receive an internal note in a response body at all, whether
+  // that's the list, one ticket, or the result of posting a reply.
+  private stripInternalNotes(ticket: any) {
+    return { ...ticket, notes: ticket.notes.filter((n: any) => !n.internal) };
+  }
+
+  // The only real ticket-creation path in the whole system.
+  async raiseTicket(
+    tenantId: string,
+    clientUserId: string,
+    clientName: string,
+    dto: CreateTicketDto,
+  ) {
+    const ticket = await this.ticketService.create(
+      tenantId,
+      clientUserId,
+      clientName,
+      dto,
+    );
+    return this.stripInternalNotes(ticket);
+  }
+
+  async getMyTickets(tenantId: string, clientUserId: string) {
+    const tickets = await this.ticketService.getAll(tenantId, { clientUserId });
+    return tickets.map((t) => this.stripInternalNotes(t));
+  }
+
+  private async getOwnedTicket(
+    tenantId: string,
+    clientUserId: string,
+    ticketId: string,
+  ) {
+    const ticket = await this.ticketService.getById(tenantId, ticketId);
+    if (String(ticket.clientUserId) !== String(clientUserId)) {
+      throw new BadRequestException('This ticket is not yours');
+    }
+    return ticket;
+  }
+
+  async getMyTicket(tenantId: string, clientUserId: string, ticketId: string) {
+    const ticket = await this.getOwnedTicket(tenantId, clientUserId, ticketId);
+    return this.stripInternalNotes(ticket);
+  }
+
+  // Always non-internal, always from the client — there's no
+  // internal/external choice on this side, unlike the tenant/agent note.
+  async reply(
+    tenantId: string,
+    clientUserId: string,
+    ticketId: string,
+    clientName: string,
+    body: string,
+  ) {
+    await this.getOwnedTicket(tenantId, clientUserId, ticketId);
+    const dto: AddTicketNoteDto = { author: clientName, body, internal: false };
+    const ticket = await this.ticketService.addNote(tenantId, ticketId, dto);
+    return this.stripInternalNotes(ticket);
+  }
+
+  async rate(
+    tenantId: string,
+    clientUserId: string,
+    ticketId: string,
+    dto: RateTicketDto,
+  ) {
+    const ticket = await this.ticketService.rate(
+      tenantId,
+      ticketId,
+      clientUserId,
+      dto,
+    );
+    return this.stripInternalNotes(ticket);
+  }
+}
+
+@Injectable()
+export class ClientKbService {
+  constructor(private readonly kbService: KbArticleService) {}
+
+  async getArticles(tenantId: string) {
+    return this.kbService.getAll(tenantId, {
+      audience: KbAudience.CLIENT_FACING,
+      status: KbStatus.PUBLISHED,
+    });
+  }
+
+  async recordView(tenantId: string, id: string) {
+    return this.kbService.recordView(tenantId, id);
+  }
+
+  async vote(tenantId: string, id: string, dto: VoteKbArticleDto) {
+    return this.kbService.vote(tenantId, id, dto);
   }
 }
