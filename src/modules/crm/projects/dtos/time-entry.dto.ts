@@ -64,3 +64,23 @@ export class UpsertRateCardDto {
   @ApiProperty() @IsNumber() @Min(0) standardRate: number;
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
 }
+
+// The WIP billing review — a distinct second-stage action from the
+// time-approval workflow above, only meaningful on entries that are
+// already Approved and billable.
+export class ApproveForBillingDto {}
+
+export class WriteDownWipDto {
+  @ApiProperty() @IsNumber() @Min(0) writtenDownAmount: number;
+  @ApiProperty() @IsString() reason: string;
+  @ApiProperty() @IsString() approvedBy: string;
+}
+
+export class WriteOffWipDto {
+  @ApiProperty() @IsString() reason: string;
+  @ApiProperty() @IsString() approvedBy: string;
+}
+
+export class HoldWipDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() reason?: string;
+}

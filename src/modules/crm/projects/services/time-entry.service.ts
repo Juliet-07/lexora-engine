@@ -5,7 +5,12 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { TimeEntry, TimeEntryDocument, TimesheetStatus } from '../schemas';
+import {
+  TimeEntry,
+  TimeEntryDocument,
+  TimesheetStatus,
+  WipBillingStatus,
+} from '../schemas';
 import {
   CreateTimeEntryDto,
   UpdateTimeEntryDto,
@@ -263,5 +268,90 @@ export class TimeEntryService {
       },
     ]);
     return new Map(rows.map((r) => [String(r._id), r.total]));
+  }
+
+  // ── WIP register — real Approved, billable time that hasn't been
+  // invoiced yet. Not a separate entity: this is TimeEntry itself,
+  // filtered and re-shaped. ─────────────────────────────────────
+
+  async getWipRegister(tenantId: string, mandateId?: string) {
+    const query: any = {
+      tenantId: new Types.ObjectId(tenantId),
+      status: TimesheetStatus.APPROVED,
+      billable: true,
+      invoiceId: null,
+    };
+    if (mandateId) query.mandateId = new Types.ObjectId(mandateId);
+    return this.model.find(query).sort({ date: 1 }).lean();
+  }
+
+  private async getApprovedBillableEntry(tenantId: string, id: string) {
+    const e = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+      status: TimesheetStatus.APPROVED,
+      billable: true,
+    });
+    if (!e) {
+      throw new NotFoundException(
+        'Time entry not found, or not an approved billable entry',
+      );
+    }
+    return e;
+  }
+
+  // The simple field-level moves. Orchestration with the real
+  // WriteOff audit record happens one layer up, in Finance's
+  // WipService — TimeEntryService stays a leaf, same as everywhere
+  // else in this module.
+  async approveForBilling(tenantId: string, id: string) {
+    const e = await this.getApprovedBillableEntry(tenantId, id);
+    e.billingStatus = WipBillingStatus.APPROVED_FOR_BILLING;
+    await e.save();
+    return e.toObject();
+  }
+
+  async writeDownWip(
+    tenantId: string,
+    id: string,
+    writtenDownAmount: number,
+    reason: string,
+  ) {
+    const e = await this.getApprovedBillableEntry(tenantId, id);
+    e.billingStatus = WipBillingStatus.WRITTEN_DOWN;
+    e.writtenDownAmount = writtenDownAmount;
+    e.billingReviewReason = reason;
+    await e.save();
+    return e.toObject();
+  }
+
+  async writeOffWip(tenantId: string, id: string, reason: string) {
+    const e = await this.getApprovedBillableEntry(tenantId, id);
+    e.billingStatus = WipBillingStatus.WRITTEN_OFF;
+    e.billingReviewReason = reason;
+    await e.save();
+    return e.toObject();
+  }
+
+  async holdWip(tenantId: string, id: string, reason?: string) {
+    const e = await this.getApprovedBillableEntry(tenantId, id);
+    e.billingStatus = WipBillingStatus.HELD;
+    e.billingReviewReason = reason ?? null;
+    await e.save();
+    return e.toObject();
+  }
+
+  // Called once the entries are genuinely pulled onto a real
+  // invoice — this is what removes them from the WIP register.
+  async markInvoiced(tenantId: string, ids: string[], invoiceId: string) {
+    await this.model.updateMany(
+      { _id: { $in: ids }, tenantId: new Types.ObjectId(tenantId) },
+      {
+        $set: {
+          billingStatus: WipBillingStatus.INVOICED,
+          invoiceId: new Types.ObjectId(invoiceId),
+        },
+      },
+    );
   }
 }

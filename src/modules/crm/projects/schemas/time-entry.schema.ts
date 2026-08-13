@@ -15,6 +15,20 @@ export enum TimesheetStatus {
 export const TIMESHEET_STATUSES: TimesheetStatus[] =
   Object.values(TimesheetStatus);
 
+// The spec's "WIP review" is a distinct second-stage billing review —
+// separate from the time-approval workflow above. An entry only
+// becomes meaningful WIP once status=Approved and billable=true;
+// this tracks what the billing partner decided to do with it from
+// there.
+export enum WipBillingStatus {
+  UNBILLED = 'Unbilled',
+  APPROVED_FOR_BILLING = 'Approved for billing',
+  WRITTEN_DOWN = 'Written down',
+  WRITTEN_OFF = 'Written off',
+  HELD = 'Held',
+  INVOICED = 'Invoiced',
+}
+
 @Schema({ timestamps: true, collection: 'crm_time_entries' })
 export class TimeEntry {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -54,6 +68,25 @@ export class TimeEntry {
   @Prop({ enum: TimesheetStatus, default: TimesheetStatus.DRAFT, index: true })
   status: TimesheetStatus;
   @Prop({ default: null }) rejectReason: string | null;
+
+  // WIP billing review — only meaningful once status=Approved and
+  // billable=true, but present on every entry so it defaults
+  // sensibly regardless of state. Held/Written down/Written off all
+  // require a reason and generate a real WriteOff audit record —
+  // see FinanceService.
+  @Prop({ enum: WipBillingStatus, default: WipBillingStatus.UNBILLED })
+  billingStatus: WipBillingStatus;
+  // The reduced value when written down — the entry's real hours*rate
+  // still reflects the work done; this is what billing decided to
+  // actually carry forward. Zero for every other billing status.
+  @Prop({ default: 0 }) writtenDownAmount: number;
+  @Prop({ default: null }) billingReviewReason: string | null;
+
+  // Set once this entry has genuinely been pulled onto a real
+  // invoice — from that point it's excluded from the WIP register
+  // entirely, not just displayed differently.
+  @Prop({ type: Types.ObjectId, ref: 'Invoice', default: null })
+  invoiceId: Types.ObjectId | null;
 }
 export const TimeEntrySchema = SchemaFactory.createForClass(TimeEntry);
 
