@@ -21,6 +21,10 @@ import {
   TicketSchema,
   KbArticle,
   KbArticleSchema,
+  AdrCase,
+  AdrCaseSchema,
+  PortfolioRisk,
+  PortfolioRiskSchema,
 } from './schemas';
 import {
   MandateService,
@@ -36,6 +40,8 @@ import {
   KbArticleService,
   MyKbService,
   ClientKbService,
+  AdrCaseService,
+  PortfolioRiskService,
 } from './services';
 import {
   MandateController,
@@ -51,6 +57,8 @@ import {
   KbArticleController,
   MyKbController,
   ClientKbController,
+  AdrCaseController,
+  PortfolioRiskController,
 } from './controllers';
 import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
 
@@ -86,6 +94,8 @@ import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
       { name: RateCard.name, schema: RateCardSchema },
       { name: Ticket.name, schema: TicketSchema },
       { name: KbArticle.name, schema: KbArticleSchema },
+      { name: AdrCase.name, schema: AdrCaseSchema },
+      { name: PortfolioRisk.name, schema: PortfolioRiskSchema },
       { name: Employee.name, schema: EmployeeSchema },
     ]),
   ],
@@ -98,6 +108,8 @@ import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
     KbArticleService,
     MyKbService,
     ClientKbService,
+    AdrCaseService,
+    PortfolioRiskService,
     MandateService,
     MandateWorkspaceService,
     TaskService,
@@ -113,6 +125,8 @@ import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
     KbArticleController,
     MyKbController,
     ClientKbController,
+    AdrCaseController,
+    PortfolioRiskController,
     MandateController,
     MandateWorkspaceController,
     TaskController,
