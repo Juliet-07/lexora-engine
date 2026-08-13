@@ -208,6 +208,14 @@ import {
   DealReviewInviteEmailData,
   dealReviewInviteTemplate,
 } from './templates/deal-review-invite.template';
+import {
+  QuoteSentEmailData,
+  quoteSentTemplate,
+} from './templates/quote-sent.template';
+import {
+  InvoiceSentEmailData,
+  invoiceSentTemplate,
+} from './templates/invoice-sent.template';
 
 @Injectable()
 export class EmailService {
@@ -870,6 +878,26 @@ export class EmailService {
 
   async sendDealReviewInvite(data: DealReviewInviteEmailData): Promise<void> {
     const { subject, html } = dealReviewInviteTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendQuoteEmail(data: QuoteSentEmailData): Promise<void> {
+    const { subject, html } = quoteSentTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendInvoiceEmail(data: InvoiceSentEmailData): Promise<void> {
+    const { subject, html } = invoiceSentTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

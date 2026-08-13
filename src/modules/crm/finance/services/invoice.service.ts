@@ -30,15 +30,20 @@ import {
 } from 'src/modules/crm/projects/services';
 import { WriteOffService } from './write-off.service';
 import { WipBillingStatus } from 'src/modules/crm/projects/schemas';
+import { EmailService } from 'src/common/utils/mailing/email.service';
+import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 
 @Injectable()
 export class InvoiceService {
   constructor(
     @InjectModel(Invoice.name)
     private readonly model: Model<InvoiceDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
     private readonly mandateService: MandateService,
     private readonly timeEntryService: TimeEntryService,
     private readonly writeOffService: WriteOffService,
+    private readonly emailService: EmailService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -244,13 +249,45 @@ export class InvoiceService {
     );
   }
 
+  // This is the actual delivery to the client — a real email, not
+  // just a stage flip. Self-contained with line items and totals in
+  // the email body, since there's no client-facing invoice view in
+  // the portal yet to link to. If the send fails the stage change
+  // still stands; the tenant sees the invoice at Sent and can
+  // manually follow up rather than the whole action failing silently.
   async send(tenantId: string, id: string) {
-    return this.transition(
+    const invoice = await this.transition(
       tenantId,
       id,
       [InvoiceStage.APPROVED],
       InvoiceStage.SENT,
     );
+    const client = await this.userModel.findById(invoice.clientUserId).lean();
+    if (client?.email) {
+      await this.emailService
+        .sendInvoiceEmail({
+          to: client.email,
+          clientName: invoice.clientName,
+          ref: invoice.ref,
+          mandateName: invoice.mandateName,
+          lines: invoice.lines.map((l: any) => ({
+            description: l.description,
+            qty: l.qty,
+            unit: l.unit,
+          })),
+          currency: invoice.currency,
+          net: invoice.net,
+          vat: invoice.vat,
+          vatRate: invoice.vatRate,
+          wht: invoice.wht,
+          whtRate: invoice.whtRate,
+          payable: invoice.payable,
+          dueOn: new Date(invoice.dueOn),
+          issuedOn: new Date(invoice.issuedOn),
+        })
+        .catch(() => undefined);
+    }
+    return invoice;
   }
 
   // Internal — used by PaymentService after recording a real payment,

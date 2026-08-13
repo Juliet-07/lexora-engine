@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ProjectsModule } from 'src/modules/crm/projects/project.module';
+import { EmailService } from 'src/common/utils/mailing/email.service';
+import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
 import {
   Invoice,
   InvoiceSchema,
@@ -66,6 +68,7 @@ import {
       { name: Quote.name, schema: QuoteSchema },
       { name: RecurringInvoice.name, schema: RecurringInvoiceSchema },
       { name: PaymentPlan.name, schema: PaymentPlanSchema },
+      { name: User.name, schema: UserSchema },
     ]),
   ],
   providers: [
@@ -77,6 +80,7 @@ import {
     QuoteService,
     RecurringInvoiceService,
     PaymentPlanService,
+    EmailService,
   ],
   controllers: [
     WriteOffController,

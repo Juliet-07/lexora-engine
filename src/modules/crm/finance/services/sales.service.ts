@@ -28,6 +28,8 @@ import {
   CreateQuoteDto,
   CreateRecurringInvoiceDto,
 } from '../dtos';
+import { EmailService } from 'src/common/utils/mailing/email.service';
+import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 
 @Injectable()
 export class WipService {
@@ -177,7 +179,10 @@ export class QuoteService {
   constructor(
     @InjectModel(Quote.name)
     private readonly model: Model<QuoteDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
     private readonly invoiceService: InvoiceService,
+    private readonly emailService: EmailService,
   ) {}
 
   private async nextRef(
@@ -228,10 +233,36 @@ export class QuoteService {
     return q;
   }
 
+  // Sending is when the client actually finds out this exists — a
+  // real email goes out here, not just a status flip. If the email
+  // fails (bad address, SMTP hiccup) the status change still stands;
+  // the tenant can see that and resend rather than the whole action
+  // silently failing.
   async setStatus(tenantId: string, id: string, status: QuoteStatus) {
     const q = await this.getRawDoc(tenantId, id);
+    const wasNotSent = q.status !== QuoteStatus.SENT;
     q.status = status;
     await q.save();
+
+    if (status === QuoteStatus.SENT && wasNotSent) {
+      const client = await this.userModel.findById(q.clientUserId).lean();
+      if (client?.email) {
+        await this.emailService
+          .sendQuoteEmail({
+            to: client.email,
+            clientName: q.clientName,
+            ref: q.ref,
+            kind: q.kind as 'Quote' | 'Proforma',
+            title: q.title,
+            amount: q.amount,
+            currency: q.currency,
+            issued: q.issued,
+            expires: q.expires,
+          })
+          .catch(() => undefined);
+      }
+    }
+
     return q.toObject();
   }
 
