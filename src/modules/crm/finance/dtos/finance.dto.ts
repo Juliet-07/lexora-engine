@@ -9,6 +9,7 @@ import {
   IsMongoId,
   IsArray,
   ValidateNested,
+  IsEmail,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -48,10 +49,19 @@ export class CreateInvoiceDto {
 // freehand, so the invoice reflects what was actually done.
 export class CreateInvoiceFromWipDto {
   @ApiProperty() @IsMongoId() mandateId: string;
-  @ApiProperty({ type: [String] })
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
   @IsArray()
   @IsMongoId({ each: true })
-  timeEntryIds: string[];
+  timeEntryIds?: string[];
+  // Real rechargeable, approved expense claims pulled in as
+  // disbursement lines — the WIP register's other real half, not a
+  // separate invoicing flow.
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  expenseClaimIds?: string[];
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiPropertyOptional() @IsOptional() @IsNumber() vatRate?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() whtRate?: number;
@@ -128,4 +138,78 @@ export class CreatePaymentPlanDto {
   @ValidateNested({ each: true })
   @Type(() => InstalmentInputDto)
   instalments: InstalmentInputDto[];
+}
+
+// ── Purchases: vendors ────────────────────────────────────────
+
+export class CreateVendorDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() tin?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() category?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() terms?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+  @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() wht?: boolean;
+}
+
+// ── Purchases: purchase orders ───────────────────────────────
+
+export class PoLineDto {
+  @ApiProperty() @IsString() description: string;
+  @ApiProperty() @IsNumber() @Min(0) qty: number;
+  @ApiProperty() @IsNumber() @Min(0) unit: number;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) discountPct?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() taxLabel?: string;
+}
+
+export class CreatePurchaseOrderDto {
+  @ApiProperty() @IsMongoId() vendorId: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  expectedDelivery?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() deliveryAddress?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() deliveryAttention?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() deliveryPhone?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  deliveryInstructions?: string;
+  @ApiProperty({ type: [PoLineDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PoLineDto)
+  lines: PoLineDto[];
+}
+
+// ── Purchases: bills ──────────────────────────────────────────
+
+export class CreateBillDto {
+  @ApiProperty() @IsMongoId() vendorId: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() poId?: string;
+  @ApiProperty() @IsString() description: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() category?: string;
+  @ApiProperty() @IsDateString() dueOn: string;
+  @ApiProperty() @IsNumber() @Min(0.01) amount: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() recurring?: boolean;
+}
+
+// ── Purchases: expense claims ────────────────────────────────
+
+export class CreateExpenseClaimDto {
+  @ApiProperty() @IsString() description: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
+  @ApiProperty() @IsNumber() @Min(0.01) amount: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() rechargeable?: boolean;
+}
+
+// ── Purchases: expense policies ──────────────────────────────
+
+export class UpsertExpensePolicyDto {
+  @ApiProperty() @IsString() rule: string;
+  @ApiProperty() @IsString() value: string;
 }

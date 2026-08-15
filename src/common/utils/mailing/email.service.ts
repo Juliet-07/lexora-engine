@@ -216,6 +216,10 @@ import {
   InvoiceSentEmailData,
   invoiceSentTemplate,
 } from './templates/invoice-sent.template';
+import {
+  PurchaseOrderIssuedEmailData,
+  purchaseOrderIssuedTemplate,
+} from './templates/purchase-order-issued.template';
 
 @Injectable()
 export class EmailService {
@@ -903,6 +907,26 @@ export class EmailService {
       to: data.to,
       subject,
       html,
+    });
+  }
+
+  async sendPurchaseOrderIssued(
+    data: PurchaseOrderIssuedEmailData,
+    pdfBuffer: Buffer,
+  ): Promise<void> {
+    const { subject, html } = purchaseOrderIssuedTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${data.firmName}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+      attachments: [
+        {
+          filename: `${data.ref}.pdf`,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        },
+      ],
     });
   }
 }

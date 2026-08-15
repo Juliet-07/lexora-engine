@@ -32,6 +32,7 @@ import { WriteOffService } from './write-off.service';
 import { WipBillingStatus } from 'src/modules/crm/projects/schemas';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+import { ExpenseClaimService } from './purchases.service';
 
 @Injectable()
 export class InvoiceService {
@@ -44,6 +45,7 @@ export class InvoiceService {
     private readonly timeEntryService: TimeEntryService,
     private readonly writeOffService: WriteOffService,
     private readonly emailService: EmailService,
+    private readonly expenseClaimService: ExpenseClaimService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -153,15 +155,27 @@ export class InvoiceService {
   // rejected here rather than silently invoiced anyway. A written-
   // down entry is billed at its reduced value, not its original
   // hours*rate, since that's what billing actually decided it's worth.
+  // The real WIP → invoice connection, for both halves of what "work
+  // in progress" means: time entries and rechargeable disbursements.
+  // Only Unbilled or Approved-for-billing time entries are
+  // invoiceable — Written off entries are worth nothing and Held
+  // entries are deliberately paused, so both are rejected here
+  // rather than silently invoiced anyway. A written-down entry is
+  // billed at its reduced value, not its original hours*rate, since
+  // that's what billing actually decided it's worth. Disbursements
+  // need no such review stage — an approved, rechargeable claim is
+  // simply invoiced at its real amount.
   async createFromWip(tenantId: string, dto: CreateInvoiceFromWipDto) {
     const mandate: any = await this.mandateService.getById(
       tenantId,
       dto.mandateId,
     );
-    const entries = await Promise.all(
-      dto.timeEntryIds.map((id) => this.timeEntryService.getById(tenantId, id)),
-    );
+    const timeEntryIds = dto.timeEntryIds ?? [];
+    const disbursementIds = dto.expenseClaimIds ?? [];
 
+    const entries = await Promise.all(
+      timeEntryIds.map((id) => this.timeEntryService.getById(tenantId, id)),
+    );
     const notInvoiceable = entries.filter(
       (e: any) =>
         String(e.mandateId) !== dto.mandateId ||
@@ -172,11 +186,32 @@ export class InvoiceService {
     );
     if (notInvoiceable.length) {
       throw new BadRequestException(
-        'One or more selected entries are not invoiceable (wrong mandate, already invoiced, written off, or held)',
+        'One or more selected time entries are not invoiceable (wrong mandate, already invoiced, written off, or held)',
       );
     }
 
-    const lines = entries.map((e: any) => {
+    const disbursements = disbursementIds.length
+      ? await this.expenseClaimService.getRechargeableRegister(
+          tenantId,
+          dto.mandateId,
+        )
+      : [];
+    const selectedDisbursements = disbursements.filter((d: any) =>
+      disbursementIds.includes(String(d._id)),
+    );
+    if (selectedDisbursements.length !== disbursementIds.length) {
+      throw new BadRequestException(
+        'One or more selected disbursements are not invoiceable (wrong mandate, already invoiced, or not an approved rechargeable claim)',
+      );
+    }
+
+    if (!timeEntryIds.length && !disbursementIds.length) {
+      throw new BadRequestException(
+        'Select at least one time entry or disbursement',
+      );
+    }
+
+    const timeLines = entries.map((e: any) => {
       const isWrittenDown = e.billingStatus === WipBillingStatus.WRITTEN_DOWN;
       return {
         description: `${e.taskTitle}${e.narrative ? ` — ${e.narrative}` : ''} (${e.member}, ${e.hours}h)`,
@@ -185,6 +220,12 @@ export class InvoiceService {
         timeEntryId: e._id,
       };
     });
+    const disbursementLines = selectedDisbursements.map((d: any) => ({
+      description: `Disbursement — ${d.description}`,
+      qty: 1,
+      unit: d.amount,
+      timeEntryId: null,
+    }));
 
     const tId = new Types.ObjectId(tenantId);
     const ref = await this.nextRef(tId);
@@ -202,14 +243,23 @@ export class InvoiceService {
       model: 'Time & materials',
       issuedOn: new Date(),
       dueOn: new Date(dto.dueOn),
-      lines,
+      lines: [...timeLines, ...disbursementLines],
     });
 
-    await this.timeEntryService.markInvoiced(
-      tenantId,
-      dto.timeEntryIds,
-      String(created._id),
-    );
+    if (timeEntryIds.length) {
+      await this.timeEntryService.markInvoiced(
+        tenantId,
+        timeEntryIds,
+        String(created._id),
+      );
+    }
+    if (disbursementIds.length) {
+      await this.expenseClaimService.markInvoiced(
+        tenantId,
+        disbursementIds,
+        String(created._id),
+      );
+    }
 
     return this.normalize(created.toObject());
   }

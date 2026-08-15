@@ -18,6 +18,16 @@ import {
   RecurringInvoiceSchema,
   PaymentPlan,
   PaymentPlanSchema,
+  Vendor,
+  VendorSchema,
+  PurchaseOrder,
+  PurchaseOrderSchema,
+  Bill,
+  BillSchema,
+  ExpenseClaim,
+  ExpenseClaimSchema,
+  ExpensePolicy,
+  ExpensePolicySchema,
 } from './schemas';
 import {
   WriteOffService,
@@ -28,6 +38,11 @@ import {
   QuoteService,
   RecurringInvoiceService,
   PaymentPlanService,
+  VendorService,
+  PurchaseOrderService,
+  BillService,
+  ExpenseClaimService,
+  ExpensePolicyService,
 } from './services';
 import {
   WriteOffController,
@@ -38,6 +53,11 @@ import {
   QuoteController,
   RecurringInvoiceController,
   PaymentPlanController,
+  VendorController,
+  PurchaseOrderController,
+  BillController,
+  ExpenseClaimController,
+  ExpensePolicyController,
 } from './controllers';
 
 /**
@@ -55,7 +75,10 @@ import {
  * three checkpoints of the write-off lifecycle instead of three
  * disconnected ones. InvoiceService is the hub the rest (Payment,
  * CreditNote, Quote, RecurringInvoice, PaymentPlan) depend on for
- * invoice totals and stage changes.
+ * invoice totals and stage changes, and now also depends on
+ * ExpenseClaimService for the disbursement half of WIP — a
+ * rechargeable, approved expense claim is invoiced through the same
+ * createFromWip flow as time entries, not a separate one.
  */
 @Module({
   imports: [
@@ -68,6 +91,11 @@ import {
       { name: Quote.name, schema: QuoteSchema },
       { name: RecurringInvoice.name, schema: RecurringInvoiceSchema },
       { name: PaymentPlan.name, schema: PaymentPlanSchema },
+      { name: Vendor.name, schema: VendorSchema },
+      { name: PurchaseOrder.name, schema: PurchaseOrderSchema },
+      { name: Bill.name, schema: BillSchema },
+      { name: ExpenseClaim.name, schema: ExpenseClaimSchema },
+      { name: ExpensePolicy.name, schema: ExpensePolicySchema },
       { name: User.name, schema: UserSchema },
     ]),
   ],
@@ -80,6 +108,11 @@ import {
     QuoteService,
     RecurringInvoiceService,
     PaymentPlanService,
+    VendorService,
+    PurchaseOrderService,
+    BillService,
+    ExpenseClaimService,
+    ExpensePolicyService,
     EmailService,
   ],
   controllers: [
@@ -91,6 +124,11 @@ import {
     QuoteController,
     RecurringInvoiceController,
     PaymentPlanController,
+    VendorController,
+    PurchaseOrderController,
+    BillController,
+    ExpenseClaimController,
+    ExpensePolicyController,
   ],
   exports: [InvoiceService, WriteOffService],
 })
