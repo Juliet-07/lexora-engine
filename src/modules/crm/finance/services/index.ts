@@ -1,3 +1,4 @@
+export * from './banking.service';
 export * from './invoice.service';
 export * from './purchases.service';
 export * from './sales.service';

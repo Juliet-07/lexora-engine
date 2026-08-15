@@ -17,6 +17,7 @@ import { BillingModel } from '../schemas';
 import { PaymentMethod } from '../schemas';
 import { QuoteKind } from '../schemas';
 import { RecurringFrequency } from '../schemas';
+import { BankAccountType, TxLinkType } from '../schemas';
 
 // ── Invoices ──────────────────────────────────────────────────
 
@@ -212,4 +213,53 @@ export class CreateExpenseClaimDto {
 export class UpsertExpensePolicyDto {
   @ApiProperty() @IsString() rule: string;
   @ApiProperty() @IsString() value: string;
+}
+
+// ── Banking ───────────────────────────────────────────────────
+
+export class CreateBankAccountDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiProperty() @IsString() bank: string;
+  @ApiProperty() @IsString() last4: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() openingBalance?: number;
+  @ApiProperty({ enum: BankAccountType })
+  @IsEnum(BankAccountType)
+  type: BankAccountType;
+}
+
+export class CreateBankTransactionDto {
+  @ApiProperty() @IsMongoId() accountId: string;
+  @ApiProperty() @IsDateString() date: string;
+  @ApiProperty() @IsString() description: string;
+  @ApiProperty() @IsNumber() amount: number;
+}
+
+export class MatchTransactionDto {
+  @ApiProperty({ enum: TxLinkType }) @IsEnum(TxLinkType) linkType: TxLinkType;
+  @ApiProperty() @IsString() linkId: string;
+  @ApiProperty() @IsString() linkLabel: string;
+}
+
+export class CreateBankRuleDto {
+  @ApiProperty() @IsString() matchText: string;
+  @ApiProperty() @IsString() account: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() auto?: boolean;
+}
+
+export class CreateTransferDto {
+  @ApiProperty() @IsMongoId() fromAccountId: string;
+  @ApiProperty() @IsMongoId() toAccountId: string;
+  @ApiProperty() @IsNumber() @Min(0.01) amount: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() reference?: string;
+  @ApiProperty() @IsString() authoriser: string;
+}
+
+export class SetStatementBalanceDto {
+  @ApiProperty() @IsNumber() statementBalance: number;
+  @ApiProperty() @IsString() preparedBy: string;
+}
+
+export class SignOffReconciliationDto {
+  @ApiProperty() @IsString() signedOffBy: string;
 }

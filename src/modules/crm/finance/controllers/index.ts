@@ -1,3 +1,4 @@
+export * from './banking.controller';
 export * from './invoice.controller';
 export * from './purchases.controller';
 export * from './sales.controller';
