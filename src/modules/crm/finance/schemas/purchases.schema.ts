@@ -107,8 +107,13 @@ export class Bill {
 
   @Prop({ required: true }) ref: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'Vendor', required: true, index: true })
-  vendorId: Types.ObjectId;
+  // Optional — not every bill is a vendor invoice. A tenant can use
+  // this to record a general expense (bank charges, a one-off
+  // purchase, anything without a formal vendor relationship)
+  // without inventing a throwaway vendor record for it. vendorName
+  // carries the display label either way.
+  @Prop({ type: Types.ObjectId, ref: 'Vendor', default: null, index: true })
+  vendorId: Types.ObjectId | null;
   @Prop({ required: true }) vendorName: string;
 
   // Optional link back to the PO this bill fulfils — a bill doesn't
@@ -169,6 +174,12 @@ export class ExpenseClaim {
   @Prop({ default: false }) rechargeable: boolean;
   @Prop({ enum: ClaimStatus, default: ClaimStatus.SUBMITTED, index: true })
   status: ClaimStatus;
+
+  // Proof of the expense — a receipt photo or document. Optional at
+  // the schema level since it's attached via its own upload endpoint
+  // after the claim is created, not required to submit one at all.
+  @Prop({ default: null }) receiptUrl: string | null;
+  @Prop({ default: null }) receiptName: string | null;
 
   // Set once a rechargeable, approved claim has genuinely been
   // pulled onto a real invoice as a disbursement line — from that

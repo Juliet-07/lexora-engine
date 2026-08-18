@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import { EbmStatus } from './sales.schema';
 
 export type InvoiceDocument = Invoice & Document;
 export type PaymentDocument = Payment & Document;
@@ -106,6 +107,12 @@ export class Invoice {
   // Set once, when the invoice is formally written off as bad debt —
   // the corresponding WriteOff audit record is created at that point.
   @Prop({ default: null }) writeOffReason: string | null;
+
+  // EBM (Electronic Billing Machine) sync — same status vocabulary
+  // CreditNote already uses, since it's the same real RRA compliance
+  // concern on a different document type.
+  @Prop({ enum: EbmStatus, default: EbmStatus.PENDING }) ebmStatus: EbmStatus;
+  @Prop({ default: '' }) ebmReceiptNumber: string;
 }
 export const InvoiceSchema = SchemaFactory.createForClass(Invoice);
 

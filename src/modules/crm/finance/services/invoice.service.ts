@@ -33,6 +33,8 @@ import { WipBillingStatus } from 'src/modules/crm/projects/schemas';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { ExpenseClaimService } from './purchases.service';
+import { WhtService } from './wht.service';
+import { WhtDirection, EbmStatus } from '../schemas';
 
 @Injectable()
 export class InvoiceService {
@@ -46,6 +48,7 @@ export class InvoiceService {
     private readonly writeOffService: WriteOffService,
     private readonly emailService: EmailService,
     private readonly expenseClaimService: ExpenseClaimService,
+    private readonly whtService: WhtService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -312,6 +315,22 @@ export class InvoiceService {
       [InvoiceStage.APPROVED],
       InvoiceStage.SENT,
     );
+
+    // The client-receipt side of the single WHT source of truth —
+    // this invoice doesn't compute its own separate WHT figure
+    // beyond what's already in computeTotals; it just records that
+    // real event in the one real register.
+    if (invoice.whtRate > 0) {
+      await this.whtService.record(tenantId, {
+        direction: WhtDirection.CLIENT_RECEIPT,
+        counterparty: invoice.clientName,
+        sourceRef: invoice.ref,
+        sourceId: invoice._id,
+        gross: invoice.net,
+        rate: invoice.whtRate,
+      });
+    }
+
     const client = await this.userModel.findById(invoice.clientUserId).lean();
     if (client?.email) {
       await this.emailService
@@ -338,6 +357,21 @@ export class InvoiceService {
         .catch(() => undefined);
     }
     return invoice;
+  }
+
+  // Called by EbmService.resync — the only writer of this field, so
+  // the real sync state lives in one place.
+  async setEbmStatus(
+    tenantId: string,
+    id: string,
+    status: EbmStatus,
+    receiptNumber: string,
+  ) {
+    const i = await this.getRawDoc(tenantId, id);
+    i.ebmStatus = status;
+    i.ebmReceiptNumber = receiptNumber;
+    await i.save();
+    return this.normalize(i.toObject());
   }
 
   // Internal — used by PaymentService after recording a real payment,

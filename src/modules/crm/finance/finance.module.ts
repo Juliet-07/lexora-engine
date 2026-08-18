@@ -39,6 +39,10 @@ import {
   TransferSchema,
   Reconciliation,
   ReconciliationSchema,
+  TaxObligation,
+  TaxObligationSchema,
+  WhtCertificate,
+  WhtCertificateSchema,
 } from './schemas';
 import {
   WriteOffService,
@@ -60,6 +64,12 @@ import {
   TransferService,
   ReconciliationService,
   CashForecastService,
+  WhtService,
+  VatService,
+  PayrollTaxService,
+  CitService,
+  EbmService,
+  TaxObligationService,
 } from './services';
 import {
   WriteOffController,
@@ -81,6 +91,12 @@ import {
   TransferController,
   ReconciliationController,
   CashForecastController,
+  WhtController,
+  VatController,
+  PayrollTaxController,
+  CitController,
+  EbmController,
+  TaxObligationController,
 } from './controllers';
 
 /**
@@ -130,6 +146,8 @@ import {
       { name: BankRule.name, schema: BankRuleSchema },
       { name: Transfer.name, schema: TransferSchema },
       { name: Reconciliation.name, schema: ReconciliationSchema },
+      { name: TaxObligation.name, schema: TaxObligationSchema },
+      { name: WhtCertificate.name, schema: WhtCertificateSchema },
       { name: User.name, schema: UserSchema },
     ]),
   ],
@@ -153,6 +171,12 @@ import {
     TransferService,
     ReconciliationService,
     CashForecastService,
+    WhtService,
+    VatService,
+    PayrollTaxService,
+    CitService,
+    EbmService,
+    TaxObligationService,
     EmailService,
   ],
   controllers: [
@@ -175,6 +199,12 @@ import {
     TransferController,
     ReconciliationController,
     CashForecastController,
+    WhtController,
+    VatController,
+    PayrollTaxController,
+    CitController,
+    EbmController,
+    TaxObligationController,
   ],
   exports: [InvoiceService, WriteOffService],
 })

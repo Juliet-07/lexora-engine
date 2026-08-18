@@ -6,7 +6,9 @@ import {
   Param,
   Query,
   Patch,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -33,6 +35,7 @@ import {
   CreateCreditNoteDto,
   CreateQuoteDto,
   CreateRecurringInvoiceDto,
+  SetQuoteMandateDto,
 } from '../dtos';
 import { QuoteStatus, RecurringStatus } from '../schemas';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -180,6 +183,38 @@ export class QuoteController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.convertToInvoice(t || u, id, body.dueOn);
+  }
+
+  @Patch(':id/mandate')
+  @ApiOperation({
+    summary:
+      'Link a mandate to an existing quote — the flow for a quote that was written before one existed',
+  })
+  setMandate(
+    @Param('id') id: string,
+    @Body() dto: SetQuoteMandateDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.setMandate(t || u, id, dto);
+  }
+
+  @Get(':id/pdf')
+  @ApiOperation({ summary: 'Download as PDF' })
+  async downloadPdf(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const quote: any = await this.service.getById(t || u, id);
+    const buffer = await this.service.generatePdf(t || u, id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${quote.ref}.pdf"`,
+      'Content-Length': buffer.length,
+    });
+    res.send(buffer);
   }
 }
 

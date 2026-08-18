@@ -302,14 +302,22 @@ export class BillService {
       .lean();
   }
 
-  async create(tenantId: string, dto: CreateBillDto, vendorName: string) {
+  // vendorName is passed in from the real Vendor record when
+  // vendorId is set; when it's omitted, the caller-supplied
+  // dto.vendorName carries the free-text payee label instead — a
+  // bill genuinely doesn't require a formal vendor relationship.
+  async create(
+    tenantId: string,
+    dto: CreateBillDto,
+    resolvedVendorName: string | null,
+  ) {
     const tId = new Types.ObjectId(tenantId);
     const ref = await this.nextRef(tId);
     const created = await this.model.create({
       tenantId: tId,
       ref,
-      vendorId: new Types.ObjectId(dto.vendorId),
-      vendorName,
+      vendorId: dto.vendorId ? new Types.ObjectId(dto.vendorId) : null,
+      vendorName: resolvedVendorName ?? dto.vendorName ?? 'Unspecified',
       poId: dto.poId ? new Types.ObjectId(dto.poId) : null,
       description: dto.description,
       category: dto.category ?? '',
@@ -454,6 +462,17 @@ export class ExpenseClaimService {
   async markPaid(tenantId: string, id: string) {
     const c = await this.getRawDoc(tenantId, id);
     c.status = ClaimStatus.PAID;
+    await c.save();
+    return c.toObject();
+  }
+
+  // Receipt/proof is attached as its own step after the claim is
+  // created, via its own multipart endpoint — same convention
+  // dispute case documents already use elsewhere in the app.
+  async attachReceipt(tenantId: string, id: string, file: Express.Multer.File) {
+    const c = await this.getRawDoc(tenantId, id);
+    c.receiptUrl = `/uploads/finance/expense-claims/${file.filename}`;
+    c.receiptName = file.originalname;
     await c.save();
     return c.toObject();
   }

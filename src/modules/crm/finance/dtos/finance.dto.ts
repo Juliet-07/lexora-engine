@@ -18,6 +18,7 @@ import { PaymentMethod } from '../schemas';
 import { QuoteKind } from '../schemas';
 import { RecurringFrequency } from '../schemas';
 import { BankAccountType, TxLinkType } from '../schemas';
+import { TaxObligationType } from '../schemas';
 
 // ── Invoices ──────────────────────────────────────────────────
 
@@ -99,7 +100,9 @@ export class CreateCreditNoteDto {
 // ── Quotes ────────────────────────────────────────────────────
 
 export class CreateQuoteDto {
-  @ApiProperty() @IsMongoId() clientUserId: string;
+  // Optional — a quote can be written for a prospect who isn't a
+  // registered client. clientName is required either way.
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() clientUserId?: string;
   @ApiProperty() @IsString() clientName: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
   @ApiProperty() @IsString() title: string;
@@ -107,6 +110,10 @@ export class CreateQuoteDto {
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiProperty() @IsDateString() expires: string;
   @ApiProperty({ enum: QuoteKind }) @IsEnum(QuoteKind) kind: QuoteKind;
+}
+
+export class SetQuoteMandateDto {
+  @ApiProperty() @IsMongoId() mandateId: string;
 }
 
 // ── Recurring invoices ───────────────────────────────────────
@@ -188,7 +195,11 @@ export class CreatePurchaseOrderDto {
 // ── Purchases: bills ──────────────────────────────────────────
 
 export class CreateBillDto {
-  @ApiProperty() @IsMongoId() vendorId: string;
+  // Optional — a bill can record a general expense with no formal
+  // vendor relationship. When vendorId is omitted, vendorName is
+  // required as the free-text payee label instead.
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() vendorId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() vendorName?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() poId?: string;
   @ApiProperty() @IsString() description: string;
   @ApiPropertyOptional() @IsOptional() @IsString() category?: string;
@@ -262,4 +273,15 @@ export class SetStatementBalanceDto {
 
 export class SignOffReconciliationDto {
   @ApiProperty() @IsString() signedOffBy: string;
+}
+
+// ── Tax ───────────────────────────────────────────────────────
+
+export class CreateTaxObligationDto {
+  @ApiProperty({ enum: TaxObligationType })
+  @IsEnum(TaxObligationType)
+  type: TaxObligationType;
+  @ApiProperty() @IsString() period: string;
+  @ApiProperty() @IsDateString() dueOn: string;
+  @ApiProperty() @IsNumber() amount: number;
 }

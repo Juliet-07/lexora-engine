@@ -63,12 +63,18 @@ export class Quote {
 
   @Prop({ required: true }) ref: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-  clientUserId: Types.ObjectId;
+  // Optional — a quote is often prepared for a prospect who isn't a
+  // registered client yet. clientName carries the display name
+  // either way; clientUserId is only set when it's a real client.
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  clientUserId: Types.ObjectId | null;
   @Prop({ required: true }) clientName: string;
 
   // A proforma is usually tied to a real mandate already underway;
   // a Quote often precedes one existing at all, so this stays optional.
+  // Settable after creation too, via QuoteService.setMandate — a quote
+  // written for a prospect naturally gets a mandate once they sign on,
+  // not necessarily at creation time.
   @Prop({ type: Types.ObjectId, ref: 'Mandate', default: null })
   mandateId: Types.ObjectId | null;
 
