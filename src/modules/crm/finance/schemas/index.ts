@@ -1,3 +1,4 @@
+export * from './accounting.schema';
 export * from './banking.schema';
 export * from './invoice.schema';
 export * from './purchases.schema';

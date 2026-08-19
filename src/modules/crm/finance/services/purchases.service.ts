@@ -30,6 +30,10 @@ import {
 import { buildPurchaseOrderPdf } from 'src/common/utils/pdf/purchase-order.util';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+import { WhtService } from './wht.service';
+import { WhtDirection } from '../schemas';
+import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
+import { GlSource } from '../schemas';
 
 // ── Vendors ───────────────────────────────────────────────────
 // Outstanding and age band are never stored — always computed live
@@ -284,6 +288,10 @@ export class PurchaseOrderService {
 export class BillService {
   constructor(
     @InjectModel(Bill.name) private readonly model: Model<BillDocument>,
+    @InjectModel(Vendor.name)
+    private readonly vendorModel: Model<VendorDocument>,
+    private readonly whtService: WhtService,
+    private readonly glPostingService: GlPostingService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -348,6 +356,30 @@ export class BillService {
     b.status = BillStatus.APPROVED;
     b.approvedBy = approvedBy;
     await b.save();
+
+    await this.glPostingService.post(tenantId, [
+      {
+        date: new Date(),
+        ref: b.ref,
+        description: `${b.vendorName} — ${b.description}`,
+        accountCode: GL_ACCOUNTS.GENERAL_EXPENSE.code,
+        accountName: GL_ACCOUNTS.GENERAL_EXPENSE.name,
+        source: GlSource.PURCHASES,
+        debit: b.amount,
+        sourceId: b._id,
+      },
+      {
+        date: new Date(),
+        ref: b.ref,
+        description: `${b.vendorName} — AP`,
+        accountCode: GL_ACCOUNTS.ACCOUNTS_PAYABLE.code,
+        accountName: GL_ACCOUNTS.ACCOUNTS_PAYABLE.name,
+        source: GlSource.PURCHASES,
+        credit: b.amount,
+        sourceId: b._id,
+      },
+    ]);
+
     return b.toObject();
   }
 
@@ -370,11 +402,66 @@ export class BillService {
     return b.toObject();
   }
 
+  // The vendor-payment side of the single WHT source of truth — if
+  // the vendor is flagged non-resident/WHT-liable, this doesn't
+  // compute its own WHT figure, it calls the one real register.
   async markPaid(tenantId: string, id: string) {
     const b = await this.getRawDoc(tenantId, id);
     b.status = BillStatus.PAID;
     b.paidAt = new Date();
     await b.save();
+
+    let whtAmount = 0;
+    if (b.vendorId) {
+      const vendor = await this.vendorModel.findById(b.vendorId).lean();
+      if (vendor?.wht) {
+        const cert = await this.whtService.record(tenantId, {
+          direction: WhtDirection.VENDOR_PAYMENT,
+          counterparty: b.vendorName,
+          sourceRef: b.ref,
+          sourceId: String(b._id),
+          gross: b.amount,
+        });
+        whtAmount = cert.wht;
+      }
+    }
+
+    const glLines: Parameters<GlPostingService['post']>[1] = [
+      {
+        date: new Date(),
+        ref: b.ref,
+        description: `${b.vendorName} — AP settled`,
+        accountCode: GL_ACCOUNTS.ACCOUNTS_PAYABLE.code,
+        accountName: GL_ACCOUNTS.ACCOUNTS_PAYABLE.name,
+        source: GlSource.PURCHASES,
+        debit: b.amount,
+        sourceId: b._id,
+      },
+      {
+        date: new Date(),
+        ref: b.ref,
+        description: `${b.vendorName} — payment`,
+        accountCode: GL_ACCOUNTS.BANK_OPERATING.code,
+        accountName: GL_ACCOUNTS.BANK_OPERATING.name,
+        source: GlSource.BANKING,
+        credit: b.amount - whtAmount,
+        sourceId: b._id,
+      },
+    ];
+    if (whtAmount > 0) {
+      glLines.push({
+        date: new Date(),
+        ref: b.ref,
+        description: `${b.vendorName} — WHT withheld`,
+        accountCode: GL_ACCOUNTS.WHT_PAYABLE.code,
+        accountName: GL_ACCOUNTS.WHT_PAYABLE.name,
+        source: GlSource.PURCHASES,
+        credit: whtAmount,
+        sourceId: b._id,
+      });
+    }
+    await this.glPostingService.post(tenantId, glLines);
+
     return b.toObject();
   }
 }
@@ -386,6 +473,7 @@ export class ExpenseClaimService {
   constructor(
     @InjectModel(ExpenseClaim.name)
     private readonly model: Model<ExpenseClaimDocument>,
+    private readonly glPostingService: GlPostingService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -449,6 +537,37 @@ export class ExpenseClaimService {
     const c = await this.getRawDoc(tenantId, id);
     c.status = ClaimStatus.APPROVED;
     await c.save();
+
+    // Rechargeable claims sit in Unbilled disbursements — the same
+    // account the WIP register's disbursement half already points
+    // at — since they're recoverable from the client, not a sunk
+    // cost. Non-rechargeable claims are a real firm expense.
+    const debitAccount = c.rechargeable
+      ? GL_ACCOUNTS.UNBILLED_DISBURSEMENTS
+      : GL_ACCOUNTS.GENERAL_EXPENSE;
+    await this.glPostingService.post(tenantId, [
+      {
+        date: new Date(),
+        ref: c.ref,
+        description: `${c.employee} — ${c.description}`,
+        accountCode: debitAccount.code,
+        accountName: debitAccount.name,
+        source: GlSource.PURCHASES,
+        debit: c.amount,
+        sourceId: c._id,
+      },
+      {
+        date: new Date(),
+        ref: c.ref,
+        description: `${c.employee} — reimbursement payable`,
+        accountCode: GL_ACCOUNTS.STAFF_REIMBURSEMENTS_PAYABLE.code,
+        accountName: GL_ACCOUNTS.STAFF_REIMBURSEMENTS_PAYABLE.name,
+        source: GlSource.PURCHASES,
+        credit: c.amount,
+        sourceId: c._id,
+      },
+    ]);
+
     return c.toObject();
   }
 
@@ -463,6 +582,30 @@ export class ExpenseClaimService {
     const c = await this.getRawDoc(tenantId, id);
     c.status = ClaimStatus.PAID;
     await c.save();
+
+    await this.glPostingService.post(tenantId, [
+      {
+        date: new Date(),
+        ref: c.ref,
+        description: `${c.employee} — reimbursement settled`,
+        accountCode: GL_ACCOUNTS.STAFF_REIMBURSEMENTS_PAYABLE.code,
+        accountName: GL_ACCOUNTS.STAFF_REIMBURSEMENTS_PAYABLE.name,
+        source: GlSource.PURCHASES,
+        debit: c.amount,
+        sourceId: c._id,
+      },
+      {
+        date: new Date(),
+        ref: c.ref,
+        description: `${c.employee} — reimbursement payment`,
+        accountCode: GL_ACCOUNTS.BANK_OPERATING.code,
+        accountName: GL_ACCOUNTS.BANK_OPERATING.name,
+        source: GlSource.BANKING,
+        credit: c.amount,
+        sourceId: c._id,
+      },
+    ]);
+
     return c.toObject();
   }
 

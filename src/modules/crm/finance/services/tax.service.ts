@@ -11,6 +11,8 @@ import { CreateTaxObligationDto } from '../dtos';
 import { InvoiceService } from './invoice.service';
 import { BillService } from './purchases.service';
 import { PayrollRunService } from 'src/modules/hr/services/payroll-run.service';
+import { EmailService } from 'src/common/utils/mailing/email.service';
+import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 
 // ── VAT — real output VAT from invoices, real input VAT from bills ──
 
@@ -194,6 +196,9 @@ export class TaxObligationService {
   constructor(
     @InjectModel(TaxObligation.name)
     private readonly model: Model<TaxObligationDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
+    private readonly emailService: EmailService,
   ) {}
 
   async getAll(tenantId: string) {
@@ -203,6 +208,11 @@ export class TaxObligationService {
       .lean();
   }
 
+  // Creating the obligation is the real reminder — an email goes
+  // out immediately with the type, period, amount and due date. If
+  // the send fails (bad address, SMTP hiccup) the obligation is
+  // still created; the tenant sees it on the calendar regardless
+  // and email delivery doesn't block the record existing.
   async create(tenantId: string, dto: CreateTaxObligationDto) {
     const created = await this.model.create({
       tenantId: new Types.ObjectId(tenantId),
@@ -211,6 +221,27 @@ export class TaxObligationService {
       dueOn: new Date(dto.dueOn),
       amount: dto.amount,
     });
+
+    const tenant = await this.userModel.findById(tenantId).lean();
+    const profile = tenant?.tenantProfile;
+    const firmName = profile?.businessName || 'Your firm';
+    const recipientEmail = profile?.contactPerson?.email || tenant?.email;
+    const recipientName = profile?.contactPerson?.firstName || firmName;
+
+    if (recipientEmail) {
+      await this.emailService
+        .sendTaxObligationReminder({
+          to: recipientEmail,
+          recipientName,
+          firmName,
+          type: dto.type,
+          period: dto.period,
+          dueOn: created.dueOn,
+          amount: dto.amount,
+        })
+        .catch(() => undefined);
+    }
+
     return created.toObject();
   }
 

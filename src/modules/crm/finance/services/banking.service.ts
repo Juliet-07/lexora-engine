@@ -30,6 +30,8 @@ import {
 import { InvoiceService } from './invoice.service';
 import { BillService } from './purchases.service';
 import { PayrollRunService } from 'src/modules/hr/services/payroll-run.service';
+import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
+import { GlSource } from '../schemas';
 
 // ── Bank rules — a leaf, matched against by BankTransactionService ──
 
@@ -152,7 +154,10 @@ export class BankTransactionService {
   constructor(
     @InjectModel(BankTransaction.name)
     private readonly model: Model<BankTransactionDocument>,
+    @InjectModel(BankAccount.name)
+    private readonly accountModel: Model<BankAccountDocument>,
     private readonly ruleService: BankRuleService,
+    private readonly glPostingService: GlPostingService,
   ) {}
 
   async getAll(tenantId: string, accountId?: string) {
@@ -165,9 +170,24 @@ export class BankTransactionService {
   // no live external bank connection to sync from, so this is the
   // real entry point transactions actually come from. A matching
   // bank rule is applied automatically at this point, same as it
-  // would be for an actual synced feed.
+  // would be for an actual synced feed. It's also a real cash
+  // movement, so it posts to the GL immediately — against the
+  // bank's own account code (1110 operating, or 1120 for a real
+  // Trust account) and the suggested/contra account, falling back
+  // to General expenses if nothing matched. A transaction later
+  // matched to a specific invoice or bill isn't re-posted — the
+  // cash movement already happened here; matching just links it to
+  // the business document for traceability.
   async create(tenantId: string, dto: CreateBankTransactionDto) {
-    const rule = await this.ruleService.findMatch(tenantId, dto.description);
+    const [rule, account] = await Promise.all([
+      this.ruleService.findMatch(tenantId, dto.description),
+      this.accountModel
+        .findOne({
+          _id: dto.accountId,
+          tenantId: new Types.ObjectId(tenantId),
+        })
+        .lean(),
+    ]);
     const created = await this.model.create({
       tenantId: new Types.ObjectId(tenantId),
       accountId: new Types.ObjectId(dto.accountId),
@@ -176,6 +196,46 @@ export class BankTransactionService {
       amount: dto.amount,
       suggestedAccount: rule?.account ?? '',
     });
+
+    const bankGlAccount =
+      account?.type === 'Trust'
+        ? { code: '1120', name: 'Bank - trust (ring-fenced)' }
+        : GL_ACCOUNTS.BANK_OPERATING;
+    const contraCode = rule?.account?.split(' · ')[0]?.trim();
+    const contra = contraCode
+      ? {
+          code: contraCode,
+          name: rule!.account.split(' · ')[1]?.trim() ?? rule!.account,
+        }
+      : GL_ACCOUNTS.GENERAL_EXPENSE;
+    const magnitude = Math.abs(dto.amount);
+    const isInflow = dto.amount >= 0;
+
+    await this.glPostingService.post(tenantId, [
+      {
+        date: new Date(dto.date),
+        ref: String(created._id),
+        description: dto.description,
+        accountCode: bankGlAccount.code,
+        accountName: bankGlAccount.name,
+        source: GlSource.BANKING,
+        debit: isInflow ? magnitude : 0,
+        credit: isInflow ? 0 : magnitude,
+        sourceId: String(created._id),
+      },
+      {
+        date: new Date(dto.date),
+        ref: String(created._id),
+        description: dto.description,
+        accountCode: contra.code,
+        accountName: contra.name,
+        source: GlSource.BANKING,
+        debit: isInflow ? 0 : magnitude,
+        credit: isInflow ? magnitude : 0,
+        sourceId: String(created._id),
+      },
+    ]);
+
     return created.toObject();
   }
 

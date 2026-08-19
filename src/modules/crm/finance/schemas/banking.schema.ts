@@ -75,6 +75,12 @@ export class BankTransaction {
   // ledger account and matching to a specific real invoice or bill
   // are two different things a transaction needs, not one.
   @Prop({ default: '' }) suggestedAccount: string;
+  // The confirmed coding — empty until someone accepts the
+  // suggestion or overrides it via Accounting's real Find & Recode.
+  // A transaction with a suggestion but no confirmed ledgerAccount
+  // (or one that disagrees with the suggestion) is a genuine recode
+  // candidate, not a separately tracked list.
+  @Prop({ default: '' }) ledgerAccount: string;
 }
 export const BankTransactionSchema =
   SchemaFactory.createForClass(BankTransaction);

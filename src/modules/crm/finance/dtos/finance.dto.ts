@@ -19,6 +19,7 @@ import { QuoteKind } from '../schemas';
 import { RecurringFrequency } from '../schemas';
 import { BankAccountType, TxLinkType } from '../schemas';
 import { TaxObligationType } from '../schemas';
+import { AccountType, AssetKind, JournalType } from '../schemas';
 
 // ── Invoices ──────────────────────────────────────────────────
 
@@ -284,4 +285,87 @@ export class CreateTaxObligationDto {
   @ApiProperty() @IsString() period: string;
   @ApiProperty() @IsDateString() dueOn: string;
   @ApiProperty() @IsNumber() amount: number;
+}
+
+// ── Accounting: chart of accounts ────────────────────────────
+
+export class CreateAccountDto {
+  @ApiProperty() @IsString() code: string;
+  @ApiProperty() @IsString() name: string;
+  @ApiProperty({ enum: AccountType }) @IsEnum(AccountType) type: AccountType;
+  @ApiPropertyOptional() @IsOptional() @IsString() subGroup?: string;
+}
+
+// ── Accounting: journals (real multi-line double-entry) ──────
+
+export class JournalLineDto {
+  @ApiProperty() @IsString() accountCode: string;
+  @ApiProperty() @IsString() accountName: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) debit?: number;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) credit?: number;
+}
+
+export class CreateJournalDto {
+  @ApiProperty() @IsString() title: string;
+  @ApiProperty() @IsDateString() date: string;
+  @ApiProperty({ enum: JournalType }) @IsEnum(JournalType) type: JournalType;
+  @ApiProperty() @IsString() narration: string;
+  @ApiProperty() @IsString() preparedBy: string;
+  @ApiProperty({ type: [JournalLineDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => JournalLineDto)
+  lines: JournalLineDto[];
+}
+
+export class PostJournalDto {
+  @ApiProperty() @IsString() postedBy: string;
+}
+
+// ── Accounting: find & recode ────────────────────────────────
+
+export class RecodeTransactionDto {
+  @ApiProperty() @IsString() ledgerAccount: string;
+}
+
+// ── Accounting: period-end close ─────────────────────────────
+
+export class CompletePeriodStepDto {
+  @ApiProperty() @IsString() completedBy: string;
+}
+
+export class LockPeriodDto {
+  @ApiProperty() @IsString() lockedBy: string;
+}
+
+export class OverridePeriodLockDto {
+  @ApiProperty() @IsString() by: string;
+  @ApiProperty() @IsString() reason: string;
+}
+
+// ── Asset register ────────────────────────────────────────────
+
+export class CreateAssetDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiProperty() @IsString() category: string;
+  @ApiProperty({ enum: AssetKind }) @IsEnum(AssetKind) kind: AssetKind;
+  @ApiProperty() @IsNumber() @Min(0) cost: number;
+  @ApiProperty() @IsDateString() acquiredOn: string;
+  @ApiProperty() @IsNumber() @Min(1) usefulLifeYears: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() assignedTo?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() condition?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() insurer?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() renewalDate?: string;
+}
+
+export class DisposeAssetDto {
+  @ApiProperty() @IsNumber() @Min(0) disposalValue: number;
+}
+
+export class CreateMaintenanceLogDto {
+  @ApiProperty() @IsMongoId() assetId: string;
+  @ApiProperty() @IsDateString() date: string;
+  @ApiProperty() @IsString() description: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() vendor?: string;
+  @ApiProperty() @IsNumber() @Min(0) cost: number;
 }

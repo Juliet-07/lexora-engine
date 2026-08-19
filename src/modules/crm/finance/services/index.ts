@@ -1,4 +1,6 @@
+export * from './acounting.service';
 export * from './banking.service';
+export * from './gl-posting.service';
 export * from './invoice.service';
 export * from './purchases.service';
 export * from './sales.service';

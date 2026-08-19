@@ -35,6 +35,8 @@ import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { ExpenseClaimService } from './purchases.service';
 import { WhtService } from './wht.service';
 import { WhtDirection, EbmStatus } from '../schemas';
+import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
+import { GlSource } from '../schemas';
 
 @Injectable()
 export class InvoiceService {
@@ -49,6 +51,7 @@ export class InvoiceService {
     private readonly emailService: EmailService,
     private readonly expenseClaimService: ExpenseClaimService,
     private readonly whtService: WhtService,
+    private readonly glPostingService: GlPostingService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -316,6 +319,46 @@ export class InvoiceService {
       InvoiceStage.SENT,
     );
 
+    // Real double-entry posting — this is the actual "Sales" source
+    // in the general ledger, not a separate figure the ledger
+    // trusts on faith. Dr AR for the full payable, Cr Revenue for
+    // net, Cr VAT payable for the VAT component if any.
+    const glLines: Parameters<GlPostingService['post']>[1] = [
+      {
+        date: new Date(invoice.issuedOn),
+        ref: invoice.ref,
+        description: `${invoice.clientName} — ${invoice.mandateName}`,
+        accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.code,
+        accountName: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.name,
+        source: GlSource.SALES,
+        debit: invoice.payable,
+        sourceId: invoice._id,
+      },
+      {
+        date: new Date(invoice.issuedOn),
+        ref: invoice.ref,
+        description: `${invoice.clientName} — accounts receivable`,
+        accountCode: GL_ACCOUNTS.REVENUE.code,
+        accountName: GL_ACCOUNTS.REVENUE.name,
+        source: GlSource.SALES,
+        credit: invoice.net,
+        sourceId: invoice._id,
+      },
+    ];
+    if (invoice.vat > 0) {
+      glLines.push({
+        date: new Date(invoice.issuedOn),
+        ref: invoice.ref,
+        description: `${invoice.clientName} — VAT`,
+        accountCode: GL_ACCOUNTS.VAT_PAYABLE.code,
+        accountName: GL_ACCOUNTS.VAT_PAYABLE.name,
+        source: GlSource.SALES,
+        credit: invoice.vat,
+        sourceId: invoice._id,
+      });
+    }
+    await this.glPostingService.post(tenantId, glLines);
+
     // The client-receipt side of the single WHT source of truth —
     // this invoice doesn't compute its own separate WHT figure
     // beyond what's already in computeTotals; it just records that
@@ -385,6 +428,30 @@ export class InvoiceService {
         ? InvoiceStage.PAID
         : InvoiceStage.PART_PAID;
     await i.save();
+
+    await this.glPostingService.post(tenantId, [
+      {
+        date: new Date(),
+        ref: i.ref,
+        description: `${i.clientName} — payment received`,
+        accountCode: GL_ACCOUNTS.BANK_OPERATING.code,
+        accountName: GL_ACCOUNTS.BANK_OPERATING.name,
+        source: GlSource.BANKING,
+        debit: amount,
+        sourceId: i._id,
+      },
+      {
+        date: new Date(),
+        ref: i.ref,
+        description: `${i.clientName} — AR cleared`,
+        accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.code,
+        accountName: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.name,
+        source: GlSource.BANKING,
+        credit: amount,
+        sourceId: i._id,
+      },
+    ]);
+
     return this.normalize(i.toObject());
   }
 

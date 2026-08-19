@@ -220,6 +220,10 @@ import {
   PurchaseOrderIssuedEmailData,
   purchaseOrderIssuedTemplate,
 } from './templates/purchase-order-issued.template';
+import {
+  TaxObligationReminderEmailData,
+  taxObligationReminderTemplate,
+} from './templates/tax-obligation-reminder.template';
 
 @Injectable()
 export class EmailService {
@@ -927,6 +931,18 @@ export class EmailService {
           contentType: 'application/pdf',
         },
       ],
+    });
+  }
+
+  async sendTaxObligationReminder(
+    data: TaxObligationReminderEmailData,
+  ): Promise<void> {
+    const { subject, html } = taxObligationReminderTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${data.firmName}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
     });
   }
 }
