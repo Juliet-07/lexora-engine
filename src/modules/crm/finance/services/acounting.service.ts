@@ -823,3 +823,199 @@ export class AccountingOverviewService {
     };
   }
 }
+
+// ── Financials — P&L, Balance Sheet, Cash Flow. All three read the
+// same real GlEntry postings everything else in Accounting already
+// writes to; nothing here is a separately maintained figure that
+// could disagree with the ledger. ─────────────────────────────
+
+@Injectable()
+export class FinancialStatementsService {
+  constructor(
+    @InjectModel(GlEntry.name)
+    private readonly glModel: Model<GlEntryDocument>,
+    @InjectModel(LedgerAccount.name)
+    private readonly accountModel: Model<LedgerAccountDocument>,
+  ) {}
+
+  private async getAccountBalances(
+    tenantId: string,
+    from?: string,
+    to?: string,
+  ) {
+    const tId = new Types.ObjectId(tenantId);
+    const match: any = { tenantId: tId };
+    if (from || to) {
+      match.date = {};
+      if (from) match.date.$gte = new Date(from);
+      if (to) match.date.$lte = new Date(to);
+    }
+    const [accounts, balances] = await Promise.all([
+      this.accountModel.find({ tenantId: tId }).sort({ code: 1 }).lean(),
+      this.glModel.aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: '$accountCode',
+            debit: { $sum: '$debit' },
+            credit: { $sum: '$credit' },
+          },
+        },
+      ]),
+    ]);
+    const balanceMap = new Map(
+      balances.map((b) => [b._id, b.debit - b.credit]),
+    );
+    return { accounts, balanceMap };
+  }
+
+  // Real, accrual-basis P&L — revenue and expenses as GL entries
+  // actually posted them for the period (an invoice sent counts,
+  // regardless of whether it's been paid yet), not a cash-basis
+  // figure. This will genuinely differ from CIT's own provision in
+  // Tax, which is deliberately cash-basis and flagged as partial —
+  // the two aren't meant to match, and forcing them to would make
+  // one of them dishonest.
+  async getProfitAndLoss(tenantId: string, from: string, to: string) {
+    const { accounts, balanceMap } = await this.getAccountBalances(
+      tenantId,
+      from,
+      to,
+    );
+
+    const revenueRows = accounts
+      .filter((a) => a.type === AccountType.REVENUE)
+      .map((a) => ({
+        code: a.code,
+        name: a.name,
+        subGroup: a.subGroup,
+        // Revenue is credit-normal — a positive real balance shows
+        // as a negative net (credit), so this flips sign to read
+        // as a normal positive revenue figure.
+        amount: Math.max(0, -(balanceMap.get(a.code) ?? 0)),
+      }))
+      .filter((r) => r.amount > 0.01);
+
+    const expenseRows = accounts
+      .filter((a) => a.type === AccountType.EXPENSE)
+      .map((a) => ({
+        code: a.code,
+        name: a.name,
+        subGroup: a.subGroup,
+        amount: Math.max(0, balanceMap.get(a.code) ?? 0),
+      }))
+      .filter((r) => r.amount > 0.01);
+
+    const totalRevenue = revenueRows.reduce((s, r) => s + r.amount, 0);
+    const totalExpenses = expenseRows.reduce((s, r) => s + r.amount, 0);
+
+    return {
+      from,
+      to,
+      revenueRows,
+      expenseRows,
+      totalRevenue,
+      totalExpenses,
+      profitBeforeTax: totalRevenue - totalExpenses,
+    };
+  }
+
+  // Real balance sheet as of a date. Retained earnings is computed
+  // live from the cumulative real P&L result up to that date — there's
+  // no formal period-close journal zeroing Revenue/Expense accounts
+  // into Equity each month, so this stands in for that closing entry
+  // at read time. That's what makes Assets = Liabilities + Equity
+  // genuinely hold, rather than the balance sheet quietly excluding
+  // the year's trading result from equity.
+  async getBalanceSheet(tenantId: string, asOf: string) {
+    const { accounts, balanceMap } = await this.getAccountBalances(
+      tenantId,
+      undefined,
+      asOf,
+    );
+
+    const rowsFor = (type: AccountType, isDebitNormal: boolean) =>
+      accounts
+        .filter((a) => a.type === type)
+        .map((a) => {
+          const net = balanceMap.get(a.code) ?? 0;
+          const amount = isDebitNormal ? net : -net;
+          return { code: a.code, name: a.name, subGroup: a.subGroup, amount };
+        })
+        .filter((r) => Math.abs(r.amount) > 0.01);
+
+    const assets = rowsFor(AccountType.ASSET, true);
+    const liabilities = rowsFor(AccountType.LIABILITY, false);
+    const equity = rowsFor(AccountType.EQUITY, false);
+
+    const revenueTotal = accounts
+      .filter((a) => a.type === AccountType.REVENUE)
+      .reduce((s, a) => s + -(balanceMap.get(a.code) ?? 0), 0);
+    const expenseTotal = accounts
+      .filter((a) => a.type === AccountType.EXPENSE)
+      .reduce((s, a) => s + (balanceMap.get(a.code) ?? 0), 0);
+    const retainedEarnings = revenueTotal - expenseTotal;
+
+    const totalAssets = assets.reduce((s, r) => s + r.amount, 0);
+    const totalLiabilities = liabilities.reduce((s, r) => s + r.amount, 0);
+    const totalEquity =
+      equity.reduce((s, r) => s + r.amount, 0) + retainedEarnings;
+
+    return {
+      asOf,
+      assets,
+      liabilities,
+      equity: [
+        ...equity,
+        {
+          code: '3900',
+          name: 'Retained earnings (current period)',
+          subGroup: 'Equity',
+          amount: retainedEarnings,
+        },
+      ],
+      totalAssets,
+      totalLiabilities,
+      totalEquity,
+      balanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01,
+    };
+  }
+
+  // Real, direct-method cash flow — actual movements on the firm's
+  // own operating bank account for the period, grouped by the real
+  // GL source that caused them. Trust accounts are deliberately
+  // excluded, same reasoning CashForecastService already uses —
+  // that's client money, not the firm's own cash. Net movement here
+  // should match the real change in the Bank - operating balance
+  // over the same period; that's a built-in consistency check
+  // against real data, not a separately maintained total.
+  async getCashFlow(tenantId: string, from: string, to: string) {
+    const tId = new Types.ObjectId(tenantId);
+    const rows = await this.glModel.aggregate([
+      {
+        $match: {
+          tenantId: tId,
+          accountCode: GL_ACCOUNTS.BANK_OPERATING.code,
+          date: { $gte: new Date(from), $lte: new Date(to) },
+        },
+      },
+      {
+        $group: {
+          _id: '$source',
+          inflow: { $sum: '$debit' },
+          outflow: { $sum: '$credit' },
+        },
+      },
+    ]);
+
+    const lines = rows.map((r) => ({
+      source: r._id as GlSource,
+      inflow: r.inflow as number,
+      outflow: r.outflow as number,
+      netMovement: (r.inflow as number) - (r.outflow as number),
+    }));
+    const netMovement = lines.reduce((s, l) => s + l.netMovement, 0);
+
+    return { from, to, lines, netMovement };
+  }
+}

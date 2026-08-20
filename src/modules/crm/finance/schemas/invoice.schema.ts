@@ -44,6 +44,11 @@ export enum InstalmentStatus {
   OVERDUE = 'Overdue',
 }
 
+export enum ClientInvoiceAction {
+  PAID = 'Paid',
+  CANCELLED = 'Cancelled',
+}
+
 @Schema({ _id: true })
 export class InvoiceLine {
   @Prop({ required: true }) description: string;
@@ -113,8 +118,31 @@ export class Invoice {
   // concern on a different document type.
   @Prop({ enum: EbmStatus, default: EbmStatus.PENDING }) ebmStatus: EbmStatus;
   @Prop({ default: '' }) ebmReceiptNumber: string;
+
+  @Prop({ enum: ClientInvoiceAction, default: null })
+  clientAction: ClientInvoiceAction | null;
+  @Prop({ default: null }) clientActionAt: Date | null;
+  @Prop({ default: null }) clientActionNote: string | null;
 }
 export const InvoiceSchema = SchemaFactory.createForClass(Invoice);
+
+export type RemittanceAccountDocument = RemittanceAccount & Document;
+
+@Schema({ timestamps: true, collection: 'crm_remittance_accounts' })
+export class RemittanceAccount {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({ required: true }) accountName: string;
+  @Prop({ required: true }) bankName: string;
+  @Prop({ required: true }) accountNumber: string;
+  @Prop({ required: true }) currency: string;
+  @Prop({ default: '' }) branchCode: string;
+  @Prop({ default: '' }) swiftCode: string;
+  @Prop({ default: true }) active: boolean;
+}
+export const RemittanceAccountSchema =
+  SchemaFactory.createForClass(RemittanceAccount);
 
 // PAYMENT
 @Schema({ timestamps: true, collection: 'crm_payments' })

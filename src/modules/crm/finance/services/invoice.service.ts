@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -16,6 +17,9 @@ import {
   PaymentPlanDocument,
   InstalmentStatus,
   WriteOffStage,
+  ClientInvoiceAction,
+  RemittanceAccount,
+  RemittanceAccountDocument,
 } from '../schemas';
 import {
   CreateInvoiceDto,
@@ -23,6 +27,8 @@ import {
   AddDunningEventDto,
   RecordPaymentDto,
   CreatePaymentPlanDto,
+  CreateRemittanceAccountDto,
+  SetClientInvoiceStatusDto,
 } from '../dtos';
 import {
   MandateService,
@@ -37,6 +43,7 @@ import { WhtService } from './wht.service';
 import { WhtDirection, EbmStatus } from '../schemas';
 import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
 import { GlSource } from '../schemas';
+import { buildInvoicePdf } from 'src/common/utils/pdf/invoice.util';
 
 @Injectable()
 export class InvoiceService {
@@ -45,6 +52,8 @@ export class InvoiceService {
     private readonly model: Model<InvoiceDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    @InjectModel(RemittanceAccount.name)
+    private readonly remittanceModel: Model<RemittanceAccountDocument>,
     private readonly mandateService: MandateService,
     private readonly timeEntryService: TimeEntryService,
     private readonly writeOffService: WriteOffService,
@@ -53,6 +62,37 @@ export class InvoiceService {
     private readonly whtService: WhtService,
     private readonly glPostingService: GlPostingService,
   ) {}
+
+  // A client can't be told where to send money if the tenant hasn't
+  // said where money goes — real guard, not a UI-only nudge, since
+  // an invoice created via any path (manual or from WIP) needs this
+  // to actually be payable.
+  private async requirePaymentDetails(tenantId: string) {
+    const hasActive = await this.remittanceModel.exists({
+      tenantId: new Types.ObjectId(tenantId),
+      active: true,
+    });
+    if (!hasActive) {
+      throw new BadRequestException(
+        'Add your payment details in Settings before creating invoices, so clients know where to send payment.',
+      );
+    }
+  }
+
+  // Real accounts matching the invoice's own currency come first —
+  // a client paying a USD invoice needs the USD account, not a RWF
+  // one buried in the same list. Falls back to every active account
+  // if none match, rather than showing nothing. Shared by both
+  // generatePdf and ClientInvoiceService (via injected InvoiceService),
+  // so the PDF and the portal view never disagree about which
+  // accounts to show.
+  async getRemittanceAccountsFor(tenantId: string, currency: string) {
+    const all = await this.remittanceModel
+      .find({ tenantId: new Types.ObjectId(tenantId), active: true })
+      .lean();
+    const matching = all.filter((a) => a.currency === currency);
+    return matching.length ? matching : all;
+  }
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
     const year = new Date().getFullYear();
@@ -129,6 +169,7 @@ export class InvoiceService {
   // worse failure mode here than it is on, say, a Task's denormalized
   // mandate name.
   async create(tenantId: string, dto: CreateInvoiceDto) {
+    await this.requirePaymentDetails(tenantId);
     const mandate: any = await this.mandateService.getById(
       tenantId,
       dto.mandateId,
@@ -172,6 +213,7 @@ export class InvoiceService {
   // need no such review stage — an approved, rechargeable claim is
   // simply invoiced at its real amount.
   async createFromWip(tenantId: string, dto: CreateInvoiceFromWipDto) {
+    await this.requirePaymentDetails(tenantId);
     const mandate: any = await this.mandateService.getById(
       tenantId,
       dto.mandateId,
@@ -402,6 +444,94 @@ export class InvoiceService {
     return invoice;
   }
 
+  // Real PDF, same tenant-branding convention Quote and Purchase
+  // Order PDFs already use — the firm's own logo/name, never the
+  // platform's. Called both by the tenant-facing download endpoint
+  // and by ClientInvoiceService.downloadMyInvoicePdf for the client
+  // portal — one real PDF, not two separately maintained renderers.
+  // Includes real payment details matching the invoice's currency,
+  // so a client reading the PDF alone (not just the portal) still
+  // knows where to send money.
+  async generatePdf(tenantId: string, id: string): Promise<Buffer> {
+    const i = await this.getRawDoc(tenantId, id);
+    const totals = this.computeTotals(i.toObject());
+    const tenant = await this.userModel.findById(tenantId).lean();
+    const profile: any = tenant?.tenantProfile;
+    const firmName = profile?.businessName || 'Your firm';
+    const addressLines = [
+      profile?.address?.city,
+      profile?.address?.state,
+      profile?.address?.country,
+    ].filter(Boolean);
+    const remittanceAccounts = await this.getRemittanceAccountsFor(
+      tenantId,
+      i.currency,
+    );
+
+    return buildInvoicePdf({
+      ref: i.ref,
+      clientName: i.clientName,
+      mandateName: i.mandateName,
+      lines: i.lines.map((l: any) => ({
+        description: l.description,
+        qty: l.qty,
+        unit: l.unit,
+      })),
+      currency: i.currency,
+      net: totals.net,
+      vat: totals.vat,
+      vatRate: i.vatRate,
+      wht: totals.wht,
+      whtRate: i.whtRate,
+      payable: totals.payable,
+      issuedOn: i.issuedOn,
+      dueOn: i.dueOn,
+      firmName,
+      firmAddressLines: addressLines,
+      logoDataUrl: profile?.logoUrl || null,
+      remittanceAccounts: remittanceAccounts.map((a: any) => ({
+        accountName: a.accountName,
+        bankName: a.bankName,
+        accountNumber: a.accountNumber,
+        currency: a.currency,
+        branchCode: a.branchCode || undefined,
+        swiftCode: a.swiftCode || undefined,
+      })),
+    });
+  }
+
+  // The actual writer of the client's claim — called by
+  // ClientInvoiceService.markStatus after it's confirmed the client
+  // genuinely owns this invoice. Records the claim and nothing more:
+  // no stage change, no paidAmount change, no GL posting. Those only
+  // happen when the tenant takes their own real confirming action.
+  async setClientAction(
+    tenantId: string,
+    id: string,
+    action: ClientInvoiceAction,
+    note: string | null,
+  ) {
+    const i = await this.getRawDoc(tenantId, id);
+    i.clientAction = action;
+    i.clientActionAt = new Date();
+    i.clientActionNote = note;
+    await i.save();
+    return this.normalize(i.toObject());
+  }
+
+  // Tenant clears a client's claim without it having been a real
+  // payment — the claim was premature, mistaken, or already
+  // resolved another way (e.g. a written-off dispute). A real,
+  // separate action from applyPayment's own automatic clearing.
+  async dismissClientAction(tenantId: string, id: string) {
+    const i = await this.getRawDoc(tenantId, id);
+    i.clientAction = null;
+    i.clientActionAt = null;
+    i.clientActionNote = null;
+    await i.save();
+    return this.normalize(i.toObject());
+  }
+
   // Called by EbmService.resync — the only writer of this field, so
   // the real sync state lives in one place.
   async setEbmStatus(
@@ -427,6 +557,17 @@ export class InvoiceService {
       i.paidAmount >= totals.payable
         ? InvoiceStage.PAID
         : InvoiceStage.PART_PAID;
+    // The client's "I've paid" claim has now been genuinely verified
+    // by a real recorded payment — clear it rather than leave a
+    // stale flag sitting on an invoice that's actually settled.
+    if (
+      i.stage === InvoiceStage.PAID &&
+      i.clientAction === ClientInvoiceAction.PAID
+    ) {
+      i.clientAction = null;
+      i.clientActionAt = null;
+      i.clientActionNote = null;
+    }
     await i.save();
 
     await this.glPostingService.post(tenantId, [
@@ -611,5 +752,160 @@ export class PaymentPlanService {
       instalment.amount,
     );
     return plan.toObject();
+  }
+}
+
+// ── Client-facing — a thin layer over the real InvoiceService,
+// scoped to exactly the invoices genuinely belonging to this
+// client. Draft/In Review/Approved invoices aren't visible here —
+// those are internal, not yet the client's business. Dunning log is
+// stripped from what the client sees, same reasoning ticket
+// internal notes are stripped for clients elsewhere in the app. ──
+
+@Injectable()
+export class ClientInvoiceService {
+  constructor(private readonly invoiceService: InvoiceService) {}
+
+  private readonly visibleStages = [
+    'Sent',
+    'Part Paid',
+    'Paid',
+    'Overdue',
+    'Written Off',
+  ];
+
+  private sanitize(i: any) {
+    const { dunningLog, ...rest } = i;
+    return rest;
+  }
+
+  async getMyInvoices(tenantId: string, clientUserId: string) {
+    const invoices = await this.invoiceService.getAll(tenantId, {
+      clientUserId,
+    });
+    return invoices
+      .filter((i: any) => this.visibleStages.includes(i.stage))
+      .map((i) => this.sanitize(i));
+  }
+
+  private async getOwnedInvoice(
+    tenantId: string,
+    clientUserId: string,
+    id: string,
+  ) {
+    const invoice: any = await this.invoiceService.getById(tenantId, id);
+    if (String(invoice.clientUserId) !== clientUserId) {
+      throw new ForbiddenException('This is not your invoice');
+    }
+    if (!this.visibleStages.includes(invoice.stage)) {
+      throw new NotFoundException('Invoice not found');
+    }
+    return invoice;
+  }
+
+  async getMyInvoice(tenantId: string, clientUserId: string, id: string) {
+    const invoice = await this.getOwnedInvoice(tenantId, clientUserId, id);
+    // Real signal the tenant's credit control already relies on —
+    // this is the one place it's genuinely set, when the client
+    // actually opens their own invoice.
+    if (!invoice.openedByClient) {
+      await this.invoiceService.markOpenedByClient(tenantId, id);
+    }
+    // Same real accounts the PDF shows — one source, via the
+    // injected InvoiceService, so the portal and the PDF never
+    // disagree about which accounts to display.
+    const remittanceAccounts =
+      await this.invoiceService.getRemittanceAccountsFor(
+        tenantId,
+        invoice.currency,
+      );
+    return { ...this.sanitize(invoice), remittanceAccounts };
+  }
+
+  async downloadMyInvoicePdf(
+    tenantId: string,
+    clientUserId: string,
+    id: string,
+  ): Promise<{ buffer: Buffer; ref: string }> {
+    const invoice = await this.getOwnedInvoice(tenantId, clientUserId, id);
+    const buffer = await this.invoiceService.generatePdf(tenantId, id);
+    return { buffer, ref: invoice.ref };
+  }
+
+  // The client's own claim — "I've paid" or "there's an issue" —
+  // recorded as a real, timestamped signal the tenant sees and acts
+  // on. Deliberately never touches stage, paidAmount, or the ledger;
+  // only the tenant's own confirmation (via the real payment-
+  // recording flow) does that.
+  async markStatus(
+    tenantId: string,
+    clientUserId: string,
+    id: string,
+    dto: SetClientInvoiceStatusDto,
+  ) {
+    await this.getOwnedInvoice(tenantId, clientUserId, id);
+    return this.invoiceService.setClientAction(
+      tenantId,
+      id,
+      dto.action,
+      dto.note ?? null,
+    );
+  }
+}
+
+// ── Remittance accounts — a small, real CRUD surface for the
+// tenant's own bank details shown to clients on invoices and PDFs. ──
+
+@Injectable()
+export class RemittanceAccountService {
+  constructor(
+    @InjectModel(RemittanceAccount.name)
+    private readonly model: Model<RemittanceAccountDocument>,
+  ) {}
+
+  async getAll(tenantId: string) {
+    return this.model
+      .find({ tenantId: new Types.ObjectId(tenantId) })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  async create(tenantId: string, dto: CreateRemittanceAccountDto) {
+    const created = await this.model.create({
+      tenantId: new Types.ObjectId(tenantId),
+      accountName: dto.accountName,
+      bankName: dto.bankName,
+      accountNumber: dto.accountNumber,
+      currency: dto.currency,
+      branchCode: dto.branchCode ?? '',
+      swiftCode: dto.swiftCode ?? '',
+    });
+    return created.toObject();
+  }
+
+  async update(
+    tenantId: string,
+    id: string,
+    dto: Partial<CreateRemittanceAccountDto>,
+  ) {
+    const a = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!a) throw new NotFoundException('Remittance account not found');
+    Object.assign(a, dto);
+    await a.save();
+    return a.toObject();
+  }
+
+  async setActive(tenantId: string, id: string, active: boolean) {
+    const a = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!a) throw new NotFoundException('Remittance account not found');
+    a.active = active;
+    await a.save();
+    return a.toObject();
   }
 }

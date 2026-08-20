@@ -7,6 +7,8 @@ import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
 import {
   Invoice,
   InvoiceSchema,
+  RemittanceAccount,
+  RemittanceAccountSchema,
   Payment,
   PaymentSchema,
   CreditNote,
@@ -59,6 +61,8 @@ import {
 import {
   WriteOffService,
   InvoiceService,
+  ClientInvoiceService,
+  RemittanceAccountService,
   WipService,
   PaymentService,
   CreditNoteService,
@@ -92,11 +96,14 @@ import {
   AssetService,
   MaintenanceLogService,
   AccountingOverviewService,
+  FinancialStatementsService,
 } from './services';
 import {
   WriteOffController,
   WipController,
   InvoiceController,
+  ClientInvoiceController,
+  RemittanceAccountController,
   PaymentController,
   CreditNoteController,
   QuoteController,
@@ -130,39 +137,16 @@ import {
   RecodeController,
   AssetController,
   MaintenanceLogController,
+  FinancialStatementsController,
 } from './controllers';
 
-/**
- * The "Finance" sidebar section — sibling to CrmRelationsModule
- * ("CRM") and ProjectsModule ("Projects"). Depends on ProjectsModule
- * for MandateService (financial documents resolve client/mandate
- * from the real record, not caller-supplied strings) and
- * TimeEntryService (WIP is a real view over approved, billable,
- * not-yet-invoiced time — not a separate parallel entity). Also
- * depends on HrModule for PayrollRunService — Cash Forecast reads
- * real processed-but-unpaid payroll runs, not a separate number.
- *
- * Internal dependency shape: WriteOffService is the leaf everything
- * else in this module writes to — WipService, InvoiceService and
- * CreditNoteService all create WriteOff records as a side effect of
- * their own real actions, giving one real audit trail across all
- * three checkpoints of the write-off lifecycle instead of three
- * disconnected ones. InvoiceService is the hub the rest (Payment,
- * CreditNote, Quote, RecurringInvoice, PaymentPlan) depend on for
- * invoice totals and stage changes, and also depends on
- * ExpenseClaimService for the disbursement half of WIP. Banking's
- * BankAccountService never stores a balance — it's always computed
- * from real transactions and transfers — and CashForecastService is
- * entirely computed too, pulling real AR from InvoiceService, real
- * AP from BillService, real payroll from HrModule, and real current
- * cash from BankAccountService, with no stored forecast entity at all.
- */
 @Module({
   imports: [
     ProjectsModule,
     HrModule,
     MongooseModule.forFeature([
       { name: Invoice.name, schema: InvoiceSchema },
+      { name: RemittanceAccount.name, schema: RemittanceAccountSchema },
       { name: Payment.name, schema: PaymentSchema },
       { name: CreditNote.name, schema: CreditNoteSchema },
       { name: WriteOff.name, schema: WriteOffSchema },
@@ -193,6 +177,8 @@ import {
   providers: [
     WriteOffService,
     InvoiceService,
+    ClientInvoiceService,
+    RemittanceAccountService,
     WipService,
     PaymentService,
     CreditNoteService,
@@ -226,12 +212,15 @@ import {
     AssetService,
     MaintenanceLogService,
     AccountingOverviewService,
+    FinancialStatementsService,
     EmailService,
   ],
   controllers: [
     WriteOffController,
     WipController,
     InvoiceController,
+    ClientInvoiceController,
+    RemittanceAccountController,
     PaymentController,
     CreditNoteController,
     QuoteController,
@@ -263,6 +252,7 @@ import {
     RecodeController,
     AssetController,
     MaintenanceLogController,
+    FinancialStatementsController,
   ],
   exports: [InvoiceService, WriteOffService],
 })

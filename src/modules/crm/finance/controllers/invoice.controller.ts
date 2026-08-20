@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  Param,
+  Query,
+  Res,
+} from '@nestjs/common';
+import { Response } from 'express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -9,6 +19,8 @@ import {
   InvoiceService,
   PaymentService,
   PaymentPlanService,
+  ClientInvoiceService,
+  RemittanceAccountService,
 } from '../services';
 import {
   CreateInvoiceDto,
@@ -17,6 +29,8 @@ import {
   AddDunningEventDto,
   WriteOffInvoiceDto,
   CreatePaymentPlanDto,
+  CreateRemittanceAccountDto,
+  SetClientInvoiceStatusDto,
 } from '../dtos';
 import { InvoiceStage } from '../schemas';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
@@ -159,6 +173,19 @@ export class InvoiceController {
   ) {
     return this.service.setDunningPaused(t || u, id, body.paused);
   }
+
+  @Post(':id/dismiss-client-action')
+  @ApiOperation({
+    summary:
+      "Clear a client's claim without recording a payment — it was premature, mistaken, or resolved another way",
+  })
+  dismissClientAction(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.dismissClientAction(t || u, id);
+  }
 }
 
 @ApiTags('CRM — Finance — Invoicing')
@@ -220,5 +247,129 @@ export class PaymentPlanController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.markInstalmentPaid(t || u, planId, instalmentId);
+  }
+}
+
+// ── Client-facing — the tenant's own client viewing invoices
+// issued to them. Same crm/client-* URL convention client-projects,
+// client-tickets and client-kb-articles already use, so the client
+// app's existing auth/routing setup covers this without changes.
+@ApiTags('CRM — Client Invoices')
+@ApiBearerAuth()
+@UserTypes(UserType.CLIENT)
+@Controller('crm/client-invoices')
+export class ClientInvoiceController {
+  constructor(private readonly service: ClientInvoiceService) {}
+
+  @Get()
+  @ApiOperation({
+    summary: 'My own invoices — only stages the client should see',
+  })
+  getMyInvoices(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getMyInvoices(t || u, u);
+  }
+
+  @Get(':id')
+  @ApiOperation({
+    summary:
+      "One of my own invoices, with the tenant's remittance details — marks it opened, which the tenant's credit control relies on",
+  })
+  getMyInvoice(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getMyInvoice(t || u, u, id);
+  }
+
+  @Get(':id/pdf')
+  @ApiOperation({ summary: 'Download as PDF — includes real payment details' })
+  async downloadPdf(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const { buffer, ref } = await this.service.downloadMyInvoicePdf(
+      t || u,
+      u,
+      id,
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${ref}.pdf"`,
+      'Content-Length': buffer.length,
+    });
+    res.send(buffer);
+  }
+
+  @Post(':id/status')
+  @ApiOperation({
+    summary:
+      "Mark the invoice Paid or Cancelled from the client's side — a claim the tenant sees and confirms, not a real payment by itself",
+  })
+  markStatus(
+    @Param('id') id: string,
+    @Body() dto: SetClientInvoiceStatusDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.markStatus(t || u, u, id, dto);
+  }
+}
+
+// ── Remittance accounts — the tenant's own real bank details for
+// receiving client payments. Tenant-facing CRUD, surfaced read-only
+// to clients via ClientInvoiceService.getMyInvoice and on the PDF. ──
+@ApiTags('CRM — Finance — Remittance Accounts')
+@ApiBearerAuth()
+@UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.CRM)
+@Controller('finance/remittance-accounts')
+export class RemittanceAccountController {
+  constructor(private readonly service: RemittanceAccountService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'All remittance accounts' })
+  getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
+    return this.service.getAll(t || u);
+  }
+
+  @Post()
+  @ApiOperation({ summary: 'Add a remittance account' })
+  create(
+    @Body() dto: CreateRemittanceAccountDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.create(t || u, dto);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Update a remittance account' })
+  update(
+    @Param('id') id: string,
+    @Body() dto: Partial<CreateRemittanceAccountDto>,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.update(t || u, id, dto);
+  }
+
+  @Post(':id/active')
+  @ApiOperation({
+    summary:
+      'Activate or deactivate — deactivated accounts stop showing on client invoices and PDFs',
+  })
+  setActive(
+    @Param('id') id: string,
+    @Body() body: { active: boolean },
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.setActive(t || u, id, body.active);
   }
 }

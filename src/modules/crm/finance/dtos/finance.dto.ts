@@ -20,6 +20,7 @@ import { RecurringFrequency } from '../schemas';
 import { BankAccountType, TxLinkType } from '../schemas';
 import { TaxObligationType } from '../schemas';
 import { AccountType, AssetKind, JournalType } from '../schemas';
+import { ClientInvoiceAction } from '../schemas';
 
 // ── Invoices ──────────────────────────────────────────────────
 
@@ -368,4 +369,22 @@ export class CreateMaintenanceLogDto {
   @ApiProperty() @IsString() description: string;
   @ApiPropertyOptional() @IsOptional() @IsString() vendor?: string;
   @ApiProperty() @IsNumber() @Min(0) cost: number;
+}
+
+// ── Remittance accounts ──────────────────────────────────────
+
+export class CreateRemittanceAccountDto {
+  @ApiProperty() @IsString() accountName: string;
+  @ApiProperty() @IsString() bankName: string;
+  @ApiProperty() @IsString() accountNumber: string;
+  @ApiProperty() @IsString() currency: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() branchCode?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() swiftCode?: string;
+}
+
+export class SetClientInvoiceStatusDto {
+  @ApiProperty({ enum: ClientInvoiceAction })
+  @IsEnum(ClientInvoiceAction)
+  action: ClientInvoiceAction;
+  @ApiPropertyOptional() @IsOptional() @IsString() note?: string;
 }

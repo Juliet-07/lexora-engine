@@ -15,6 +15,7 @@ import {
   AssetService,
   MaintenanceLogService,
   AccountingOverviewService,
+  FinancialStatementsService,
 } from '../services';
 import {
   CreateAccountDto,
@@ -365,5 +366,59 @@ export class MaintenanceLogController {
   @ApiOperation({ summary: 'The maintenance log' })
   getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
     return this.service.getAll(t || u);
+  }
+}
+
+// ── Financials — P&L, Balance Sheet, Cash Flow ─────────────────
+@ApiTags('CRM —Finance — Financials')
+@ApiBearerAuth()
+@UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.CRM)
+@Controller('finance/financials')
+export class FinancialStatementsController {
+  constructor(private readonly service: FinancialStatementsService) {}
+
+  @Get('pl')
+  @ApiQuery({ name: 'from', required: true })
+  @ApiQuery({ name: 'to', required: true })
+  @ApiOperation({
+    summary: 'Profit & Loss — real, accrual-basis, from real GL postings',
+  })
+  getProfitAndLoss(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getProfitAndLoss(t || u, from, to);
+  }
+
+  @Get('balance-sheet')
+  @ApiQuery({ name: 'asOf', required: true })
+  @ApiOperation({
+    summary: 'Balance Sheet as of a date — retained earnings computed live',
+  })
+  getBalanceSheet(
+    @Query('asOf') asOf: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getBalanceSheet(t || u, asOf);
+  }
+
+  @Get('cash-flow')
+  @ApiQuery({ name: 'from', required: true })
+  @ApiQuery({ name: 'to', required: true })
+  @ApiOperation({
+    summary:
+      'Cash Flow — real direct-method movement on the operating bank account',
+  })
+  getCashFlow(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getCashFlow(t || u, from, to);
   }
 }
