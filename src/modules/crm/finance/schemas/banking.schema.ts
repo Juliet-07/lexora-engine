@@ -8,6 +8,7 @@ export type BankAccountDocument = BankAccount & Document;
 export enum BankAccountType {
   OFFICE = 'Office',
   TRUST = 'Trust',
+  FUND = 'Fund',
   SPECIAL_PURPOSE = 'Special purpose',
 }
 

@@ -35,7 +35,14 @@ import {
 } from '../dtos';
 import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
 import { InvoiceService } from './invoice.service';
-import { BillService } from './purchases.service';
+import { BillService, ExpenseClaimService } from './purchases.service';
+import {
+  MandateService,
+  TimeEntryService,
+} from 'src/modules/crm/projects/services';
+import { EmployeeService } from 'src/modules/hr/services/employee.service';
+import { TrustLedgerService } from './trust.service';
+import { FundService } from './fund.service';
 
 @Injectable()
 export class LedgerAccountService {
@@ -480,11 +487,6 @@ export class TrialBalanceService {
       balances.map((b) => [b._id, b.debit - b.credit]),
     );
 
-    // Assets and Expenses normally carry a debit balance; Liabilities,
-    // Equity and Revenue normally carry a credit balance. Net > 0 on
-    // a debit-normal account is a real debit; net > 0 on a credit-
-    // normal account is a real credit — and the reverse for either
-    // sitting the "wrong" way (an overdrawn bank, a credit memo).
     const rows = accounts
       .map((a) => {
         const net = balanceMap.get(a.code) ?? 0;
@@ -689,11 +691,6 @@ export class AssetService {
     return this.normalize(a.toObject());
   }
 
-  // Generates one real, unposted depreciation journal for the whole
-  // register for the given period — mirrors "Aug depreciation...
-  // Auto from Asset Register" exactly. Skips assets already
-  // depreciated for this period, disposed assets, and assets that
-  // are fully depreciated.
   async generateDepreciationJournal(
     tenantId: string,
     period: string,
@@ -794,15 +791,23 @@ export class AccountingOverviewService {
   constructor(
     private readonly invoiceService: InvoiceService,
     private readonly billService: BillService,
+    private readonly trustLedgerService: TrustLedgerService,
+    private readonly fundService: FundService,
   ) {}
 
-  // Real cross-module summary. Trust and Fund aren't built yet, so
-  // the frontend simply doesn't render those cards rather than this
-  // returning a faked zero for something that doesn't exist.
+  // Real cross-module summary. Trust and Fund now contribute real
+  // figures too — total trust balance is the same live-computed sum
+  // the Trust register itself shows, total committed fund capital
+  // is the same real figure Fund setup computes. Distributed/NAV
+  // still aren't included here, same reasoning they're absent from
+  // Fund's own totals — no confirmed waterfall to compute them from
+  // honestly yet.
   async getOverview(tenantId: string) {
-    const [invoices, bills] = await Promise.all([
+    const [invoices, bills, trustLedgers, funds] = await Promise.all([
       this.invoiceService.getAll(tenantId),
       this.billService.getAll(tenantId),
+      this.trustLedgerService.getAll(tenantId),
+      this.fundService.getAll(tenantId),
     ]);
 
     const salesRevenueYtd = invoices
@@ -816,10 +821,21 @@ export class AccountingOverviewService {
       0,
     );
 
+    const trustBalance = trustLedgers.reduce(
+      (s: number, l: any) => s + l.balance,
+      0,
+    );
+    const fundCommitted = funds.reduce(
+      (s: number, f: any) => s + f.committed,
+      0,
+    );
+
     return {
       salesRevenueYtd,
       outstandingReceivables,
       purchasesExpensesYtd,
+      trustBalance,
+      fundCommitted,
     };
   }
 }
@@ -836,13 +852,17 @@ export class FinancialStatementsService {
     private readonly glModel: Model<GlEntryDocument>,
     @InjectModel(LedgerAccount.name)
     private readonly accountModel: Model<LedgerAccountDocument>,
+    private readonly invoiceService: InvoiceService,
+    private readonly mandateService: MandateService,
+    private readonly expenseClaimService: ExpenseClaimService,
+    private readonly timeEntryService: TimeEntryService,
+    private readonly employeeService: EmployeeService,
   ) {}
 
-  private async getAccountBalances(
-    tenantId: string,
-    from?: string,
-    to?: string,
-  ) {
+  // Public — shared with BudgetService's real variance calculation,
+  // so budget-vs-actual reads the exact same real GL aggregation
+  // the P&L itself uses, not a separately maintained figure.
+  async getAccountBalances(tenantId: string, from?: string, to?: string) {
     const tId = new Types.ObjectId(tenantId);
     const match: any = { tenantId: tId };
     if (from || to) {
@@ -869,13 +889,6 @@ export class FinancialStatementsService {
     return { accounts, balanceMap };
   }
 
-  // Real, accrual-basis P&L — revenue and expenses as GL entries
-  // actually posted them for the period (an invoice sent counts,
-  // regardless of whether it's been paid yet), not a cash-basis
-  // figure. This will genuinely differ from CIT's own provision in
-  // Tax, which is deliberately cash-basis and flagged as partial —
-  // the two aren't meant to match, and forcing them to would make
-  // one of them dishonest.
   async getProfitAndLoss(tenantId: string, from: string, to: string) {
     const { accounts, balanceMap } = await this.getAccountBalances(
       tenantId,
@@ -889,9 +902,6 @@ export class FinancialStatementsService {
         code: a.code,
         name: a.name,
         subGroup: a.subGroup,
-        // Revenue is credit-normal — a positive real balance shows
-        // as a negative net (credit), so this flips sign to read
-        // as a normal positive revenue figure.
         amount: Math.max(0, -(balanceMap.get(a.code) ?? 0)),
       }))
       .filter((r) => r.amount > 0.01);
@@ -920,13 +930,6 @@ export class FinancialStatementsService {
     };
   }
 
-  // Real balance sheet as of a date. Retained earnings is computed
-  // live from the cumulative real P&L result up to that date — there's
-  // no formal period-close journal zeroing Revenue/Expense accounts
-  // into Equity each month, so this stands in for that closing entry
-  // at read time. That's what makes Assets = Liabilities + Equity
-  // genuinely hold, rather than the balance sheet quietly excluding
-  // the year's trading result from equity.
   async getBalanceSheet(tenantId: string, asOf: string) {
     const { accounts, balanceMap } = await this.getAccountBalances(
       tenantId,
@@ -981,14 +984,6 @@ export class FinancialStatementsService {
     };
   }
 
-  // Real, direct-method cash flow — actual movements on the firm's
-  // own operating bank account for the period, grouped by the real
-  // GL source that caused them. Trust accounts are deliberately
-  // excluded, same reasoning CashForecastService already uses —
-  // that's client money, not the firm's own cash. Net movement here
-  // should match the real change in the Bank - operating balance
-  // over the same period; that's a built-in consistency check
-  // against real data, not a separately maintained total.
   async getCashFlow(tenantId: string, from: string, to: string) {
     const tId = new Types.ObjectId(tenantId);
     const rows = await this.glModel.aggregate([
@@ -1017,5 +1012,195 @@ export class FinancialStatementsService {
     const netMovement = lines.reduce((s, l) => s + l.netMovement, 0);
 
     return { from, to, lines, netMovement };
+  }
+
+  private async computeContributionByGroup(
+    tenantId: string,
+    from: string,
+    to: string,
+    groupKeyFor: (mandate: any) => string,
+  ) {
+    const [invoices, mandates, claims] = await Promise.all([
+      this.invoiceService.getAll(tenantId),
+      this.mandateService.getAll(tenantId),
+      this.expenseClaimService.getAll(tenantId),
+    ]);
+
+    const groupByMandateId = new Map(
+      (mandates as any[]).map((m) => [String(m._id), groupKeyFor(m)]),
+    );
+
+    const fromMs = new Date(from).getTime();
+    const toMs = new Date(to).getTime();
+    const inRange = (d: string | Date) => {
+      const t = new Date(d).getTime();
+      return t >= fromMs && t <= toMs;
+    };
+
+    const revenueByGroup = new Map<string, number>();
+    (invoices as any[])
+      .filter((i) => i.stage !== 'Draft' && inRange(i.issuedOn))
+      .forEach((i) => {
+        const group = groupByMandateId.get(String(i.mandateId)) ?? 'Unassigned';
+        revenueByGroup.set(group, (revenueByGroup.get(group) ?? 0) + i.net);
+      });
+
+    const disbByGroup = new Map<string, number>();
+    (claims as any[])
+      .filter(
+        (c) =>
+          c.rechargeable &&
+          c.status !== 'Rejected' &&
+          c.mandateId &&
+          inRange(c.createdAt),
+      )
+      .forEach((c) => {
+        const group = groupByMandateId.get(String(c.mandateId)) ?? 'Unassigned';
+        disbByGroup.set(group, (disbByGroup.get(group) ?? 0) + c.amount);
+      });
+
+    const groups = new Set([...revenueByGroup.keys(), ...disbByGroup.keys()]);
+    return Array.from(groups)
+      .map((group) => {
+        const revenue = revenueByGroup.get(group) ?? 0;
+        const directExpenses = disbByGroup.get(group) ?? 0;
+        return {
+          group,
+          revenue,
+          directExpenses,
+          contribution: revenue - directExpenses,
+          contributionMargin:
+            revenue > 0 ? (revenue - directExpenses) / revenue : 0,
+        };
+      })
+      .sort((a, b) => b.revenue - a.revenue);
+  }
+
+  async getServiceLineReport(tenantId: string, from: string, to: string) {
+    const rows = await this.computeContributionByGroup(
+      tenantId,
+      from,
+      to,
+      (m) => m.type,
+    );
+    return {
+      from,
+      to,
+      rows: rows.map((r) => ({ serviceLine: r.group, ...r })),
+      note: 'Contribution = revenue minus direct rechargeable disbursements only. Excludes staff cost and shared overhead — there is no agreed allocation methodology for those yet.',
+    };
+  }
+
+  async getClientProfitability(tenantId: string, from: string, to: string) {
+    const rows = await this.computeContributionByGroup(
+      tenantId,
+      from,
+      to,
+      (m) => m.clientName,
+    );
+    return {
+      from,
+      to,
+      rows: rows.map((r) => ({ clientName: r.group, ...r })),
+      note: "Contribution = revenue minus direct rechargeable disbursements. Staff cost is excluded by design — confirmed with the product owner that time isn't charged hourly, so there is no real per-hour cost to attribute per client.",
+    };
+  }
+
+  async getKpiDashboard(tenantId: string, from: string, to: string) {
+    const [pl, invoices, wipEntries, employees, balances] = await Promise.all([
+      this.getProfitAndLoss(tenantId, from, to),
+      this.invoiceService.getAll(tenantId),
+      this.timeEntryService.getWipRegister(tenantId),
+      this.employeeService.getEmployeeDirectory(tenantId),
+      this.getAccountBalances(tenantId, from, to),
+    ]);
+
+    const fromMs = new Date(from).getTime();
+    const toMs = new Date(to).getTime();
+    const inRange = (d: string | Date) => {
+      const t = new Date(d).getTime();
+      return t >= fromMs && t <= toMs;
+    };
+
+    const payrollCost = balances.accounts
+      .filter((a) => a.type === AccountType.EXPENSE && a.subGroup === 'Payroll')
+      .reduce(
+        (s, a) => s + Math.max(0, balances.balanceMap.get(a.code) ?? 0),
+        0,
+      );
+    const grossProfit = pl.totalRevenue - payrollCost;
+    const grossMargin = pl.totalRevenue > 0 ? grossProfit / pl.totalRevenue : 0;
+
+    const netMargin =
+      pl.totalRevenue > 0 ? pl.profitBeforeTax / pl.totalRevenue : 0;
+
+    const activeEmployees = employees.length;
+    const revenuePerEmployee =
+      activeEmployees > 0 ? pl.totalRevenue / activeEmployees : 0;
+
+    const days = Math.max(1, Math.round((toMs - fromMs) / 86400000));
+    const dailyRevenue = pl.totalRevenue / days;
+
+    const unbilledWipValue = (wipEntries as any[])
+      .filter((w) =>
+        ['Unbilled', 'Approved for billing', 'Written down'].includes(
+          w.billingStatus,
+        ),
+      )
+      .reduce(
+        (s, w) =>
+          s +
+          (w.billingStatus === 'Written down'
+            ? w.writtenDownAmount
+            : w.hours * w.rate),
+        0,
+      );
+    const wipDays = dailyRevenue > 0 ? unbilledWipValue / dailyRevenue : 0;
+
+    const outstandingAr = (invoices as any[])
+      .filter((i) => !['Paid', 'Draft', 'Written Off'].includes(i.stage))
+      .reduce((s, i) => s + (i.payable - i.paidAmount), 0);
+    const arDays = dailyRevenue > 0 ? outstandingAr / dailyRevenue : 0;
+
+    const lockupDays = wipDays + arDays;
+
+    const everBilled = (wipEntries as any[]).filter((w) =>
+      ['Invoiced', 'Written down', 'Written off'].includes(w.billingStatus),
+    );
+    const standardValue = everBilled.reduce((s, w) => s + w.hours * w.rate, 0);
+    const actualValue = everBilled.reduce((s, w) => {
+      if (w.billingStatus === 'Written down') return s + w.writtenDownAmount;
+      if (w.billingStatus === 'Written off') return s;
+      return s + w.hours * w.rate;
+    }, 0);
+    const realizationRate = standardValue > 0 ? actualValue / standardValue : 1;
+
+    const invoicesInRange = (invoices as any[]).filter(
+      (i) => i.stage !== 'Draft' && inRange(i.issuedOn),
+    );
+    const totalInvoiced = invoicesInRange.reduce((s, i) => s + i.payable, 0);
+    const totalCollected = invoicesInRange.reduce(
+      (s, i) => s + i.paidAmount,
+      0,
+    );
+    const collectionRate =
+      totalInvoiced > 0 ? totalCollected / totalInvoiced : 1;
+
+    return {
+      from,
+      to,
+      totalRevenue: pl.totalRevenue,
+      grossMargin,
+      netMargin,
+      activeEmployees,
+      revenuePerEmployee,
+      lockupDays,
+      wipDays,
+      arDays,
+      realizationRate,
+      collectionRate,
+      grossMarginNote:
+        'Treats Payroll-subgroup expenses as the direct cost of service delivery; all other expenses as overhead.',
+    };
   }
 }

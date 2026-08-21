@@ -20,6 +20,8 @@ import { RecurringFrequency } from '../schemas';
 import { BankAccountType, TxLinkType } from '../schemas';
 import { TaxObligationType } from '../schemas';
 import { AccountType, AssetKind, JournalType } from '../schemas';
+import { FundStatus } from '../schemas';
+import { InterestTreatment } from '../schemas';
 import { ClientInvoiceAction } from '../schemas';
 
 // ── Invoices ──────────────────────────────────────────────────
@@ -387,4 +389,95 @@ export class SetClientInvoiceStatusDto {
   @IsEnum(ClientInvoiceAction)
   action: ClientInvoiceAction;
   @ApiPropertyOptional() @IsOptional() @IsString() note?: string;
+}
+
+// ── Fund accounting ────────────────────────────────────────────
+
+export class CreateFundDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() structure?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() jurisdiction?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() strategy?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) targetSize?: number;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() vintage?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() bankAccountId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) mgmtFeePct?: number;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) carryPct?: number;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) hurdlePct?: number;
+}
+
+export class SetFundStatusDto {
+  @ApiProperty({ enum: FundStatus }) @IsEnum(FundStatus) status: FundStatus;
+}
+
+export class CreateCapitalCommitmentDto {
+  @ApiProperty() @IsMongoId() lpUserId: string;
+  @ApiProperty() @IsString() lpName: string;
+  @ApiProperty() @IsNumber() @Min(0.01) commitment: number;
+}
+
+export class CreateCapitalCallDto {
+  @ApiProperty() @IsString() purpose: string;
+  @ApiProperty() @IsNumber() @Min(0.01) totalAmount: number;
+  @ApiProperty() @IsDateString() issuedOn: string;
+  @ApiProperty() @IsDateString() dueOn: string;
+}
+
+export class RecordCallFundingDto {
+  @ApiProperty() @IsNumber() @Min(0.01) amount: number;
+}
+
+// ── Trust accounting ──────────────────────────────────────────
+
+export class CreateTrustLedgerDto {
+  @ApiProperty() @IsMongoId() bankAccountId: string;
+  @ApiProperty() @IsMongoId() clientUserId: string;
+  @ApiProperty() @IsString() clientName: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() mandateName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEnum(InterestTreatment)
+  interestTreatment?: InterestTreatment;
+}
+
+export class RecordTrustDepositDto {
+  @ApiProperty() @IsMongoId() ledgerId: string;
+  @ApiProperty() @IsNumber() @Min(0.01) amount: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() reference?: string;
+  @ApiProperty() @IsDateString() date: string;
+  @ApiProperty() @IsString() preparedBy: string;
+}
+
+export class RequestTrustDrawdownDto {
+  @ApiProperty() @IsMongoId() ledgerId: string;
+  @ApiProperty() @IsNumber() @Min(0.01) amount: number;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() linkedInvoiceId?: string;
+  @ApiProperty() @IsString() preparedBy: string;
+}
+
+export class AuthoriseTrustDrawdownDto {
+  @ApiProperty() @IsString() authorisedBy: string;
+}
+
+export class RejectTrustDrawdownDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() reason?: string;
+}
+
+// ── Budget ──────────────────────────────────────────────────────
+
+export class BudgetLineDto {
+  @ApiProperty() @IsString() accountCode: string;
+  @ApiProperty() @IsString() accountName: string;
+  @ApiProperty() @IsNumber() budgetedAmount: number;
+}
+
+export class UpsertBudgetDto {
+  @ApiProperty({ type: [BudgetLineDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BudgetLineDto)
+  lines: BudgetLineDto[];
 }

@@ -60,6 +60,8 @@ export class GlPostingService {
 // needs to know where things land reliably.
 export const GL_ACCOUNTS = {
   BANK_OPERATING: { code: '1110', name: 'Bank - operating' },
+  BANK_TRUST: { code: '1120', name: 'Bank - trust (ring-fenced)' },
+  BANK_FUND: { code: '1130', name: 'Bank - fund (ring-fenced)' },
   ACCOUNTS_RECEIVABLE: { code: '1200', name: 'Accounts receivable' },
   UNBILLED_WIP: { code: '1210', name: 'Unbilled WIP' },
   UNBILLED_DISBURSEMENTS: { code: '1220', name: 'Unbilled disbursements' },
@@ -69,6 +71,8 @@ export const GL_ACCOUNTS = {
   PAYE_PAYABLE: { code: '2130', name: 'PAYE payable' },
   RSSB_PAYABLE: { code: '2140', name: 'RSSB payable' },
   VAT_PAYABLE: { code: '2150', name: 'VAT payable' },
+  CLIENT_TRUST_LIABILITY: { code: '2170', name: 'Client trust liability' },
+  LP_PAID_IN_CAPITAL: { code: '2160', name: 'LP paid-in capital' },
   WHT_PAYABLE: { code: '2190', name: 'WHT payable' },
   STAFF_REIMBURSEMENTS_PAYABLE: {
     code: '2180',

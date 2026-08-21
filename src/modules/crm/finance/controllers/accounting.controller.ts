@@ -16,6 +16,7 @@ import {
   MaintenanceLogService,
   AccountingOverviewService,
   FinancialStatementsService,
+  BudgetService,
 } from '../services';
 import {
   CreateAccountDto,
@@ -28,6 +29,7 @@ import {
   CreateAssetDto,
   DisposeAssetDto,
   CreateMaintenanceLogDto,
+  UpsertBudgetDto,
 } from '../dtos';
 import { GlSource } from '../schemas';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
@@ -420,5 +422,115 @@ export class FinancialStatementsController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.getCashFlow(t || u, from, to);
+  }
+
+  @Get('service-line')
+  @ApiQuery({ name: 'from', required: true })
+  @ApiQuery({ name: 'to', required: true })
+  @ApiOperation({
+    summary:
+      'Revenue and direct expenses by service line (mandate type) — a real contribution figure, not full profit',
+  })
+  getServiceLineReport(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getServiceLineReport(t || u, from, to);
+  }
+
+  @Get('client-profitability')
+  @ApiQuery({ name: 'from', required: true })
+  @ApiQuery({ name: 'to', required: true })
+  @ApiOperation({
+    summary:
+      'Revenue and direct expenses by client — staff cost deliberately excluded, confirmed with the product owner',
+  })
+  getClientProfitability(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getClientProfitability(t || u, from, to);
+  }
+
+  @Get('kpis')
+  @ApiQuery({ name: 'from', required: true })
+  @ApiQuery({ name: 'to', required: true })
+  @ApiOperation({
+    summary:
+      'Gross margin, net margin, revenue per employee, lockup days, realization and collection rates — all real',
+  })
+  getKpiDashboard(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getKpiDashboard(t || u, from, to);
+  }
+}
+
+@ApiTags('CRM — Finance — Financials')
+@ApiBearerAuth()
+@UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.CRM)
+@Controller('finance/budgets')
+export class BudgetController {
+  constructor(private readonly service: BudgetService) {}
+
+  @Get(':period')
+  @ApiOperation({
+    summary:
+      'Get the real budget for a period (YYYY-MM) — empty lines if none set yet',
+  })
+  getBudget(
+    @Param('period') period: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getBudget(t || u, period);
+  }
+
+  @Post(':period')
+  @ApiOperation({
+    summary: 'Set or replace the real per-account budget lines for a period',
+  })
+  upsertBudget(
+    @Param('period') period: string,
+    @Body() dto: UpsertBudgetDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.upsertBudget(t || u, period, dto);
+  }
+
+  @Post(':period/copy-from/:fromPeriod')
+  @ApiOperation({
+    summary:
+      "Copy a prior period's real budget as a starting point — a real, explicit action, never automatic",
+  })
+  copyFromPeriod(
+    @Param('period') period: string,
+    @Param('fromPeriod') fromPeriod: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.copyFromPeriod(t || u, fromPeriod, period);
+  }
+
+  @Get(':period/vs-actual')
+  @ApiOperation({
+    summary:
+      'Real budget vs actual variance for a period, actuals from the same GL aggregation the P&L uses',
+  })
+  getBudgetVsActual(
+    @Param('period') period: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getBudgetVsActual(t || u, period);
   }
 }

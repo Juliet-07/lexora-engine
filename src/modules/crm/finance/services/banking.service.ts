@@ -197,10 +197,18 @@ export class BankTransactionService {
       suggestedAccount: rule?.account ?? '',
     });
 
+    // Which real bank GL account this transaction actually hit —
+    // Trust and Fund both need their own ring-fenced code, same
+    // reasoning both are excluded from Cash Forecast's operating-
+    // only view. Anything else (including Special purpose, which
+    // has no dedicated code yet) falls back to Operating rather
+    // than silently picking a code that doesn't represent it.
     const bankGlAccount =
       account?.type === 'Trust'
-        ? { code: '1120', name: 'Bank - trust (ring-fenced)' }
-        : GL_ACCOUNTS.BANK_OPERATING;
+        ? GL_ACCOUNTS.BANK_TRUST
+        : account?.type === 'Fund'
+          ? GL_ACCOUNTS.BANK_FUND
+          : GL_ACCOUNTS.BANK_OPERATING;
     const contraCode = rule?.account?.split(' · ')[0]?.trim();
     const contra = contraCode
       ? {
