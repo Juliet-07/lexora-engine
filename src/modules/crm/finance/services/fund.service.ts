@@ -32,6 +32,14 @@ import {
   ManagementFeeCharge,
   ManagementFeeChargeDocument,
   FeeChargeStatus,
+  KeyPerson,
+  KeyPersonDocument,
+  KeyPersonStatus,
+  ComplianceCalendarItem,
+  ComplianceCalendarItemDocument,
+  ComplianceFrequency,
+  FxRate,
+  FxRateDocument,
   BankAccount,
   BankAccountDocument,
   BankAccountType,
@@ -51,6 +59,11 @@ import {
   ApproveValuationDto,
   RecordFundExpenseDto,
   ChargeManagementFeeDto,
+  AddKeyPersonDto,
+  AddComplianceCalendarItemDto,
+  MarkComplianceCompleteDto,
+  RecordFxRateDto,
+  RunScenarioDto,
 } from '../dtos';
 import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
 import { GlSource } from '../schemas';
@@ -1079,7 +1092,10 @@ export class DistributionService {
   // getAccruedCarryOnNav (hypothetical, read-only) — the same real
   // tier-filling math either way, so the two can never quietly
   // diverge from each other.
-  private waterfallFill(
+  // Public — shared with ScenarioService's real what-if calculator,
+  // so scenario modelling runs the exact same real tier logic as an
+  // actual distribution, not a second parallel calculation.
+  waterfallFill(
     amount: number,
     tier1Room: number,
     tier2Room: number,
@@ -1108,7 +1124,8 @@ export class DistributionService {
       .lean();
   }
 
-  private async computePreferredReturnTarget(
+  // Public — same reasoning as waterfallFill above.
+  async computePreferredReturnTarget(
     tenantId: string,
     fundId: string,
     fund: any,
@@ -2085,5 +2102,755 @@ export class HoldingValuationService {
     v.status = HoldingValuationStatus.APPROVED;
     await v.save();
     return v.toObject();
+  }
+}
+
+// ── Compliance — key persons and real, LPA-set investment
+// restrictions, checked against real portfolio holdings. AML status
+// per LP is deliberately not included: it lives in the platform's
+// own AML/KYC module, which this doesn't yet cross-reference —
+// showing a fabricated status here would be worse than omitting it.
+
+@Injectable()
+export class ComplianceService {
+  constructor(
+    @InjectModel(KeyPerson.name)
+    private readonly keyPersonModel: Model<KeyPersonDocument>,
+    @InjectModel(ComplianceCalendarItem.name)
+    private readonly calendarModel: Model<ComplianceCalendarItemDocument>,
+    @InjectModel(Fund.name)
+    private readonly fundModel: Model<FundDocument>,
+    @InjectModel(PortfolioHolding.name)
+    private readonly holdingModel: Model<PortfolioHoldingDocument>,
+    @InjectModel(CapitalCommitment.name)
+    private readonly commitmentModel: Model<CapitalCommitmentDocument>,
+  ) {}
+
+  async getKeyPersons(tenantId: string, fundId: string) {
+    return this.keyPersonModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        fundId: new Types.ObjectId(fundId),
+      })
+      .sort({ createdAt: 1 })
+      .lean();
+  }
+
+  async addKeyPerson(tenantId: string, fundId: string, dto: AddKeyPersonDto) {
+    const created = await this.keyPersonModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      fundId: new Types.ObjectId(fundId),
+      name: dto.name,
+      role: dto.role,
+      timeThresholdPct: dto.timeThresholdPct,
+    });
+    return created.toObject();
+  }
+
+  async confirmActive(tenantId: string, keyPersonId: string) {
+    const kp = await this.keyPersonModel.findOne({
+      _id: keyPersonId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!kp) throw new NotFoundException('Key person not found');
+    kp.lastConfirmedAt = new Date();
+    await kp.save();
+    return kp.toObject();
+  }
+
+  // A real, automatic consequence — matching what a real key-person
+  // clause does, not a display-only status change.
+  async markDeparted(tenantId: string, fundId: string, keyPersonId: string) {
+    const tId = new Types.ObjectId(tenantId);
+    const kp = await this.keyPersonModel.findOne({
+      _id: keyPersonId,
+      tenantId: tId,
+      fundId: new Types.ObjectId(fundId),
+    });
+    if (!kp) throw new NotFoundException('Key person not found');
+    kp.status = KeyPersonStatus.DEPARTED;
+    kp.departedAt = new Date();
+    await kp.save();
+
+    const fund = await this.fundModel.findOne({ _id: fundId, tenantId: tId });
+    if (fund) {
+      fund.investmentPeriodSuspended = true;
+      await fund.save();
+    }
+    return kp.toObject();
+  }
+
+  async getCalendar(tenantId: string, fundId: string) {
+    const items = await this.calendarModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        fundId: new Types.ObjectId(fundId),
+      })
+      .lean();
+    // Real status, computed live from real dates — never stored,
+    // since "overdue" or "upcoming" is only ever true relative to
+    // right now.
+    return items.map((item) => {
+      let nextDueDate: Date | null = null;
+      if (item.lastCompletedAt) {
+        const daysInCycle =
+          item.frequency === ComplianceFrequency.QUARTERLY
+            ? 90
+            : item.frequency === ComplianceFrequency.SEMI_ANNUAL
+              ? 182
+              : item.frequency === ComplianceFrequency.ANNUAL
+                ? 365
+                : null;
+        if (daysInCycle) {
+          nextDueDate = new Date(
+            item.lastCompletedAt.getTime() +
+              daysInCycle * 86400000 +
+              item.daysAfterPeriodEnd * 86400000,
+          );
+        }
+      }
+      const daysUntilDue = nextDueDate
+        ? Math.round((nextDueDate.getTime() - Date.now()) / 86400000)
+        : null;
+      const status =
+        daysUntilDue === null
+          ? 'Not yet scheduled'
+          : daysUntilDue < 0
+            ? 'Overdue'
+            : daysUntilDue <= 14
+              ? 'Due soon'
+              : 'Upcoming';
+      return { ...item, nextDueDate, daysUntilDue, status };
+    });
+  }
+
+  async addCalendarItem(
+    tenantId: string,
+    fundId: string,
+    dto: AddComplianceCalendarItemDto,
+  ) {
+    const created = await this.calendarModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      fundId: new Types.ObjectId(fundId),
+      name: dto.name,
+      frequency: dto.frequency,
+      daysAfterPeriodEnd: dto.daysAfterPeriodEnd ?? 0,
+    });
+    return created.toObject();
+  }
+
+  async markComplete(
+    tenantId: string,
+    calendarItemId: string,
+    dto: MarkComplianceCompleteDto,
+  ) {
+    const item = await this.calendarModel.findOne({
+      _id: calendarItemId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!item)
+      throw new NotFoundException('Compliance calendar item not found');
+    item.lastCompletedAt = new Date();
+    item.lastCompletedPeriod = dto.period;
+    await item.save();
+    return item.toObject();
+  }
+
+  // Real-time monitoring against the fund's own real LPA
+  // restrictions — a restriction with no cap set (0) is simply not
+  // checked, rather than treated as a 0% limit.
+  async getRestrictionMonitoring(tenantId: string, fundId: string) {
+    const tId = new Types.ObjectId(tenantId);
+    const fId = new Types.ObjectId(fundId);
+    const [fund, holdings, commitments] = await Promise.all([
+      this.fundModel.findOne({ _id: fId, tenantId: tId }).lean(),
+      this.holdingModel
+        .find({ tenantId: tId, fundId: fId, status: HoldingStatus.ACTIVE })
+        .lean(),
+      this.commitmentModel.find({ tenantId: tId, fundId: fId }).lean(),
+    ]);
+    if (!fund) throw new NotFoundException('Fund not found');
+
+    const totalCommitment = commitments.reduce((s, c) => s + c.commitment, 0);
+
+    const singleInvestment =
+      fund.maxSingleInvestmentPct > 0
+        ? holdings.map((h) => {
+            const pct =
+              totalCommitment > 0 ? (h.costBasis / totalCommitment) * 100 : 0;
+            return {
+              companyName: h.companyName,
+              amount: h.costBasis,
+              capAmount: totalCommitment * (fund.maxSingleInvestmentPct / 100),
+              pct,
+              withinLimit: pct <= fund.maxSingleInvestmentPct,
+            };
+          })
+        : [];
+
+    const bySector = new Map<string, number>();
+    for (const h of holdings) {
+      bySector.set(h.sector, (bySector.get(h.sector) ?? 0) + h.costBasis);
+    }
+    const sectorConcentration =
+      fund.maxSectorConcentrationPct > 0
+        ? Array.from(bySector.entries()).map(([sector, amount]) => {
+            const pct =
+              totalCommitment > 0 ? (amount / totalCommitment) * 100 : 0;
+            return {
+              sector,
+              amount,
+              pct,
+              withinLimit: pct <= fund.maxSectorConcentrationPct,
+            };
+          })
+        : [];
+
+    const byCountry = new Map<string, number>();
+    for (const h of holdings) {
+      byCountry.set(h.country, (byCountry.get(h.country) ?? 0) + h.costBasis);
+    }
+    const countryConcentration =
+      fund.maxCountryConcentrationPct > 0
+        ? Array.from(byCountry.entries()).map(([country, amount]) => {
+            const pct =
+              totalCommitment > 0 ? (amount / totalCommitment) * 100 : 0;
+            return {
+              country,
+              amount,
+              pct,
+              withinLimit: pct <= fund.maxCountryConcentrationPct,
+            };
+          })
+        : [];
+
+    const excludedSectorViolations = fund.excludedSectors.length
+      ? holdings.filter((h) => fund.excludedSectors.includes(h.sector))
+      : [];
+    const outOfGeographyHoldings = fund.allowedGeography.length
+      ? holdings.filter((h) => !fund.allowedGeography.includes(h.country))
+      : [];
+
+    return {
+      singleInvestment,
+      sectorConcentration,
+      countryConcentration,
+      excludedSectorViolations,
+      outOfGeographyHoldings,
+      investmentPeriodSuspended: fund.investmentPeriodSuspended,
+      amlNote:
+        "AML status per LP isn't shown here — it lives in the platform's own AML/KYC module, not yet cross-referenced from Fund.",
+    };
+  }
+}
+
+// ── FX rates — real, tenant-entered rate snapshots. No live rate
+// feed is connected here, so nothing is auto-fetched; every rate is
+// a real figure the tenant recorded, with its own source and date.
+
+@Injectable()
+export class FxRateService {
+  constructor(
+    @InjectModel(FxRate.name)
+    private readonly model: Model<FxRateDocument>,
+    @InjectModel(Fund.name)
+    private readonly fundModel: Model<FundDocument>,
+    @InjectModel(PortfolioHolding.name)
+    private readonly holdingModel: Model<PortfolioHoldingDocument>,
+  ) {}
+
+  async getAll(tenantId: string, fundId: string) {
+    return this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        fundId: new Types.ObjectId(fundId),
+      })
+      .sort({ asOfDate: -1 })
+      .lean();
+  }
+
+  async recordRate(tenantId: string, fundId: string, dto: RecordFxRateDto) {
+    const created = await this.model.create({
+      tenantId: new Types.ObjectId(tenantId),
+      fundId: new Types.ObjectId(fundId),
+      fromCurrency: dto.fromCurrency,
+      toCurrency: dto.toCurrency,
+      rate: dto.rate,
+      asOfDate: new Date(dto.asOfDate),
+      source: dto.source ?? '',
+    });
+    return created.toObject();
+  }
+
+  private async getRateAsOf(
+    tenantId: string,
+    fundId: string,
+    fromCcy: string,
+    toCcy: string,
+    asOfDate: Date,
+  ): Promise<number | null> {
+    if (fromCcy === toCcy) return 1;
+    const rate = await this.model
+      .findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        fundId: new Types.ObjectId(fundId),
+        fromCurrency: fromCcy,
+        toCurrency: toCcy,
+        asOfDate: { $lte: asOfDate },
+      })
+      .sort({ asOfDate: -1 })
+      .lean();
+    return rate?.rate ?? null;
+  }
+
+  // Real FX exposure — isolates currency movement from operating
+  // performance by holding the local-currency amount fixed and
+  // comparing its translation at entry-rate vs today's rate. This
+  // is a real, defensible simplification (it uses cost basis, not
+  // fair value, to isolate pure FX cleanly) — not a full FX P&L.
+  async getFxExposure(tenantId: string, fundId: string) {
+    const tId = new Types.ObjectId(tenantId);
+    const fId = new Types.ObjectId(fundId);
+    const [fund, holdings] = await Promise.all([
+      this.fundModel.findOne({ _id: fId, tenantId: tId }).lean(),
+      this.holdingModel
+        .find({ tenantId: tId, fundId: fId, status: HoldingStatus.ACTIVE })
+        .lean(),
+    ]);
+    if (!fund) throw new NotFoundException('Fund not found');
+
+    const exposed = holdings.filter(
+      (h) => h.currency && h.currency !== fund.currency,
+    );
+    const rows: any[] = [];
+    for (const h of exposed) {
+      const entryRate = await this.getRateAsOf(
+        tenantId,
+        fundId,
+        h.currency,
+        fund.currency,
+        h.entryDate,
+      );
+      const currentRate = await this.getRateAsOf(
+        tenantId,
+        fundId,
+        h.currency,
+        fund.currency,
+        new Date(),
+      );
+      if (entryRate === null || currentRate === null) {
+        rows.push({
+          companyName: h.companyName,
+          currency: h.currency,
+          note: 'Missing a recorded FX rate for entry or current date — cannot compute exposure for this holding.',
+        });
+        continue;
+      }
+      const localCostBasis = entryRate > 0 ? h.costBasis / entryRate : 0;
+      const valueAtCurrentRate =
+        Math.round(localCostBasis * currentRate * 100) / 100;
+      const fxGainLoss =
+        Math.round((valueAtCurrentRate - h.costBasis) * 100) / 100;
+      rows.push({
+        companyName: h.companyName,
+        currency: h.currency,
+        entryRate,
+        currentRate,
+        costBasisFundCcy: h.costBasis,
+        fxGainLoss,
+      });
+    }
+    return {
+      fundCurrency: fund.currency,
+      rows,
+      totalFxGainLoss:
+        Math.round(rows.reduce((s, r) => s + (r.fxGainLoss ?? 0), 0) * 100) /
+        100,
+      currencyCount: new Set(exposed.map((h) => h.currency)).size,
+    };
+  }
+}
+
+// ── Scenarios — a real, read-only what-if calculator. Runs
+// hypothetical exit values through the exact same real waterfall
+// tier logic a real distribution uses (via DistributionService's
+// public waterfallFill and computePreferredReturnTarget), against
+// the fund's real cumulative state. Nothing here is persisted. ────
+
+@Injectable()
+export class ScenarioService {
+  constructor(
+    @InjectModel(Fund.name)
+    private readonly fundModel: Model<FundDocument>,
+    @InjectModel(PortfolioHolding.name)
+    private readonly holdingModel: Model<PortfolioHoldingDocument>,
+    @InjectModel(HoldingValuation.name)
+    private readonly valuationModel: Model<HoldingValuationDocument>,
+    @InjectModel(CapitalCall.name)
+    private readonly callModel: Model<CapitalCallDocument>,
+    @InjectModel(Distribution.name)
+    private readonly distributionModel: Model<DistributionDocument>,
+    private readonly distributionService: DistributionService,
+    private readonly bankAccountService: BankAccountService,
+  ) {}
+
+  async runScenario(tenantId: string, fundId: string, dto: RunScenarioDto) {
+    const tId = new Types.ObjectId(tenantId);
+    const fId = new Types.ObjectId(fundId);
+    const fund = await this.fundModel
+      .findOne({ _id: fId, tenantId: tId })
+      .lean();
+    if (!fund) throw new NotFoundException('Fund not found');
+
+    const [holdings, calls, priorDistributions] = await Promise.all([
+      this.holdingModel
+        .find({ tenantId: tId, fundId: fId, status: HoldingStatus.ACTIVE })
+        .lean(),
+      this.callModel.find({ tenantId: tId, fundId: fId }).lean(),
+      this.distributionModel.find({ tenantId: tId, fundId: fId }).lean(),
+    ]);
+
+    const overrideMap = new Map(
+      (dto.holdingExitValues ?? []).map((h) => [h.holdingId, h.exitValue]),
+    );
+
+    // For holdings without a scenario override, fall back to their
+    // real latest approved fair value.
+    let hypotheticalTotal = 0;
+    const perHolding: {
+      holdingId: string;
+      companyName: string;
+      value: number;
+      overridden: boolean;
+    }[] = [];
+    for (const h of holdings) {
+      let value = overrideMap.get(String(h._id));
+      const overridden = value !== undefined;
+      if (value === undefined) {
+        const latest = await this.valuationModel
+          .findOne({
+            tenantId: tId,
+            fundId: fId,
+            holdingId: h._id,
+            status: HoldingValuationStatus.APPROVED,
+          })
+          .sort({ period: -1 })
+          .lean();
+        value = latest?.approvedValue ?? h.costBasis;
+      }
+      hypotheticalTotal += value;
+      perHolding.push({
+        holdingId: String(h._id),
+        companyName: h.companyName,
+        value,
+        overridden,
+      });
+    }
+
+    const cashHeld = fund.bankAccountId
+      ? await this.bankAccountService.computeBalance(
+          tenantId,
+          String(fund.bankAccountId),
+        )
+      : 0;
+    hypotheticalTotal += cashHeld;
+
+    const totalCalled = calls.reduce(
+      (s, c) => s + c.allocations.reduce((s2, a) => s2 + a.fundedAmount, 0),
+      0,
+    );
+    const tier2TargetNow =
+      await this.distributionService.computePreferredReturnTarget(
+        tenantId,
+        fundId,
+        fund,
+        new Date(),
+      );
+    const tier3Target =
+      tier2TargetNow > 0
+        ? (tier2TargetNow * (fund.carryPct / 100)) / (1 - fund.carryPct / 100)
+        : 0;
+
+    const tier1PaidSoFar = priorDistributions.reduce(
+      (s, d) => s + d.tier1Amount,
+      0,
+    );
+    const tier2PaidSoFar = priorDistributions.reduce(
+      (s, d) => s + d.tier2Amount,
+      0,
+    );
+    const tier3PaidSoFar = priorDistributions.reduce(
+      (s, d) => s + d.tier3Amount,
+      0,
+    );
+
+    const result = this.distributionService.waterfallFill(
+      hypotheticalTotal,
+      totalCalled - tier1PaidSoFar,
+      tier2TargetNow - tier2PaidSoFar,
+      tier3Target - tier3PaidSoFar,
+      fund.carryPct,
+    );
+
+    const totalToLps =
+      Math.round((result.tier1 + result.tier2 + result.tier4Lp) * 100) / 100;
+    const totalToGpGross =
+      Math.round((result.tier3 + result.tier4Gp) * 100) / 100;
+    const hurdleCleared =
+      tier2PaidSoFar + result.tier2 >= tier2TargetNow - 0.01;
+
+    return {
+      perHolding,
+      cashHeld,
+      hypotheticalTotal,
+      tier1Amount: result.tier1,
+      tier2Amount: result.tier2,
+      tier3Amount: result.tier3,
+      tier4LpAmount: result.tier4Lp,
+      tier4GpAmount: result.tier4Gp,
+      totalToLps,
+      totalToGpGross,
+      hurdleCleared,
+      tier2Target: tier2TargetNow,
+      tier3Target,
+      note: 'Read-only — models a hypothetical distribution against the real cumulative waterfall state; nothing here is persisted.',
+    };
+  }
+}
+
+// ── LP reporting — real, per-LP assembled views built entirely from
+// data that already exists elsewhere in this file. Nothing new is
+// calculated here beyond simple period-filtering and formatting.
+// ESG/impact reporting and full annual financial statements are
+// deliberately not built: ESG metrics aren't tracked anywhere in
+// this system, and a real annual FS needs the fund run through a
+// full chart of accounts / GL / trial balance the way the tenant's
+// own accounting does — a materially different scope from what
+// exists here, not something worth faking a version of. ──────────
+
+@Injectable()
+export class LpReportingService {
+  constructor(
+    @InjectModel(CapitalCommitment.name)
+    private readonly commitmentModel: Model<CapitalCommitmentDocument>,
+    @InjectModel(CapitalAccountEntry.name)
+    private readonly entryModel: Model<CapitalAccountEntryDocument>,
+    @InjectModel(CapitalCall.name)
+    private readonly callModel: Model<CapitalCallDocument>,
+    @InjectModel(Distribution.name)
+    private readonly distributionModel: Model<DistributionDocument>,
+    @InjectModel(ManagementFeeCharge.name)
+    private readonly feeChargeModel: Model<ManagementFeeChargeDocument>,
+    @InjectModel(FundExpense.name)
+    private readonly expenseModel: Model<FundExpenseDocument>,
+  ) {}
+
+  // Real quarterly LP statement — opening/closing capital account
+  // balance built from real CapitalAccountEntry records filtered by
+  // date, plus this LP's own real DPI/RVPI/TVPI (not the fund
+  // aggregate — their own called and distributed amounts).
+  async getQuarterlyStatement(
+    tenantId: string,
+    fundId: string,
+    commitmentId: string,
+    periodStart: string,
+    periodEnd: string,
+  ) {
+    const tId = new Types.ObjectId(tenantId);
+    const fId = new Types.ObjectId(fundId);
+    const cId = new Types.ObjectId(commitmentId);
+    const from = new Date(periodStart);
+    const to = new Date(periodEnd);
+
+    const commitment = await this.commitmentModel
+      .findOne({ _id: cId, tenantId: tId, fundId: fId })
+      .lean();
+    if (!commitment) throw new NotFoundException('Commitment not found');
+
+    const [entriesBefore, entriesInPeriod, calls] = await Promise.all([
+      this.entryModel
+        .find({
+          tenantId: tId,
+          fundId: fId,
+          commitmentId: cId,
+          date: { $lt: from },
+        })
+        .lean(),
+      this.entryModel
+        .find({
+          tenantId: tId,
+          fundId: fId,
+          commitmentId: cId,
+          date: { $gte: from, $lte: to },
+        })
+        .lean(),
+      this.callModel.find({ tenantId: tId, fundId: fId }).lean(),
+    ]);
+
+    const openingBalance = entriesBefore.reduce((s, e) => s + e.amount, 0);
+    const sumType = (entries: any[], type: CapitalAccountEntryType) =>
+      entries.filter((e) => e.type === type).reduce((s, e) => s + e.amount, 0);
+    const contributionsInPeriod = sumType(
+      entriesInPeriod,
+      CapitalAccountEntryType.CONTRIBUTION,
+    );
+    const incomeAlloc = sumType(
+      entriesInPeriod,
+      CapitalAccountEntryType.INCOME,
+    );
+    const expenseAlloc = sumType(
+      entriesInPeriod,
+      CapitalAccountEntryType.EXPENSE,
+    );
+    const gainLoss = sumType(
+      entriesInPeriod,
+      CapitalAccountEntryType.GAIN_LOSS,
+    );
+    const distributionsInPeriod = -sumType(
+      entriesInPeriod,
+      CapitalAccountEntryType.DISTRIBUTION,
+    );
+    const closingBalance =
+      openingBalance + entriesInPeriod.reduce((s, e) => s + e.amount, 0);
+
+    let theirCalled = 0;
+    for (const call of calls) {
+      const alloc = (call.allocations as any[]).find(
+        (a) => String(a.commitmentId) === commitmentId,
+      );
+      if (alloc) theirCalled += alloc.fundedAmount;
+    }
+    const allEntries = await this.entryModel
+      .find({ tenantId: tId, fundId: fId, commitmentId: cId })
+      .lean();
+    const theirDistributed = -sumType(
+      allEntries,
+      CapitalAccountEntryType.DISTRIBUTION,
+    );
+    const theirDpi = theirCalled > 0 ? theirDistributed / theirCalled : 0;
+    const theirRvpi = theirCalled > 0 ? closingBalance / theirCalled : 0;
+    const theirTvpi = theirDpi + theirRvpi;
+
+    return {
+      commitmentId,
+      lpName: commitment.lpName,
+      periodStart,
+      periodEnd,
+      commitment: commitment.commitment,
+      calledToDate: theirCalled,
+      uncalled: commitment.commitment - theirCalled,
+      openingBalance,
+      contributionsInPeriod,
+      incomeAlloc,
+      expenseAlloc,
+      gainLoss,
+      distributionsInPeriod,
+      closingBalance,
+      dpi: theirDpi,
+      rvpi: theirRvpi,
+      tvpi: theirTvpi,
+    };
+  }
+
+  // Capital call / distribution notice — a real, per-LP formatted
+  // view of an existing event, not new data.
+  async getCallNotice(tenantId: string, callId: string, commitmentId: string) {
+    const call = await this.callModel
+      .findOne({ _id: callId, tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+    if (!call) throw new NotFoundException('Capital call not found');
+    const allocation = (call.allocations as any[]).find(
+      (a) => String(a.commitmentId) === commitmentId,
+    );
+    if (!allocation)
+      throw new NotFoundException('No allocation for this LP on this call');
+    return {
+      ref: call.ref,
+      purpose: call.purpose,
+      issuedOn: call.issuedOn,
+      dueOn: call.dueOn,
+      allocation,
+    };
+  }
+
+  async getDistributionNotice(
+    tenantId: string,
+    distributionId: string,
+    commitmentId: string,
+  ) {
+    const dist = await this.distributionModel
+      .findOne({ _id: distributionId, tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+    if (!dist) throw new NotFoundException('Distribution not found');
+    const allocation = (dist.allocations as any[]).find(
+      (a) => String(a.commitmentId) === commitmentId,
+    );
+    if (!allocation) {
+      throw new NotFoundException(
+        'No allocation for this LP on this distribution — likely the GP carry recipient, not an LP',
+      );
+    }
+    return {
+      ref: dist.ref,
+      date: dist.date,
+      source: dist.source,
+      sourceDescription: dist.sourceDescription,
+      allocation,
+    };
+  }
+
+  // Fee & expense disclosure — this LP's real share of a real fee
+  // charge and real fund expenses for a period.
+  async getFeeExpenseDisclosure(
+    tenantId: string,
+    fundId: string,
+    commitmentId: string,
+    period: string,
+  ) {
+    const tId = new Types.ObjectId(tenantId);
+    const fId = new Types.ObjectId(fundId);
+    const commitment = await this.commitmentModel
+      .findOne({ _id: commitmentId, tenantId: tId, fundId: fId })
+      .lean();
+    if (!commitment) throw new NotFoundException('Commitment not found');
+
+    const feeCharge = await this.feeChargeModel
+      .findOne({ tenantId: tId, fundId: fId, period })
+      .lean();
+    const theirFeeAllocation = feeCharge
+      ? ((feeCharge.allocations as any[]).find(
+          (a) => String(a.commitmentId) === commitmentId,
+        ) ?? null)
+      : null;
+
+    const allCommitments = await this.commitmentModel
+      .find({ tenantId: tId, fundId: fId })
+      .lean();
+    const totalCommitment = allCommitments.reduce(
+      (s, c) => s + c.commitment,
+      0,
+    );
+    const share =
+      totalCommitment > 0 ? commitment.commitment / totalCommitment : 0;
+
+    const expenses = await this.expenseModel
+      .find({ tenantId: tId, fundId: fId, borneBy: ExpenseBorneBy.FUND })
+      .lean();
+    const theirExpenseShare = expenses.map((e) => ({
+      category: e.category,
+      totalAmount: e.amount,
+      theirShare: Math.round(e.amount * share * 100) / 100,
+    }));
+
+    return {
+      lpName: commitment.lpName,
+      period,
+      managementFee: theirFeeAllocation,
+      expenses: theirExpenseShare,
+      totalExpenseShare:
+        Math.round(
+          theirExpenseShare.reduce((s, e) => s + e.theirShare, 0) * 100,
+        ) / 100,
+    };
   }
 }

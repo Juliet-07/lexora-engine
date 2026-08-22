@@ -62,6 +62,21 @@ export class Fund {
   // rather than distributed, and the real cap on how much.
   @Prop({ default: false }) recyclingPermitted: boolean;
   @Prop({ default: 0 }) recyclingCapPct: number;
+
+  // Real LPA investment restrictions (cl. 7 in the reference
+  // mockup) — 0 means no limit set. Real Compliance monitoring
+  // checks actual portfolio holdings against these, not example
+  // numbers.
+  @Prop({ default: 0 }) maxSingleInvestmentPct: number;
+  @Prop({ default: 0 }) maxSectorConcentrationPct: number;
+  @Prop({ default: 0 }) maxCountryConcentrationPct: number;
+  @Prop({ type: [String], default: [] }) excludedSectors: string[];
+  @Prop({ type: [String], default: [] }) allowedGeography: string[];
+
+  // A real, automatic consequence of a key person departing without
+  // a timely replacement — set by KeyPersonService, never edited
+  // directly.
+  @Prop({ default: false }) investmentPeriodSuspended: boolean;
 }
 export const FundSchema = SchemaFactory.createForClass(Fund);
 
@@ -276,6 +291,11 @@ export class PortfolioHolding {
   @Prop({ default: '' }) country: string;
   @Prop({ required: true }) entryDate: Date;
   @Prop({ required: true }) costBasis: number;
+  // The currency this holding's cost basis and valuations are
+  // actually denominated in — defaults to the fund's own currency,
+  // but a portfolio company valued in its local currency needs its
+  // own real FX translation to the fund's reporting currency.
+  @Prop({ default: '' }) currency: string;
 
   @Prop({ enum: HoldingStatus, default: HoldingStatus.ACTIVE })
   status: HoldingStatus;
@@ -450,3 +470,97 @@ export class ManagementFeeCharge {
 }
 export const ManagementFeeChargeSchema =
   SchemaFactory.createForClass(ManagementFeeCharge);
+
+// ── Key persons — real LPA key-person provisions (cl. 16 in the
+// reference mockup). Marking someone departed has a real, automatic
+// consequence: Fund.investmentPeriodSuspended flips true, exactly
+// matching what a real key-person clause does — not a display-only
+// status change. ──────────────────────────────────────────────────
+
+export enum KeyPersonStatus {
+  ACTIVE = 'Active',
+  DEPARTED = 'Departed',
+}
+
+export type KeyPersonDocument = KeyPerson & Document;
+
+@Schema({ timestamps: true, collection: 'crm_fund_key_persons' })
+export class KeyPerson {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'Fund', required: true, index: true })
+  fundId: Types.ObjectId;
+
+  @Prop({ required: true }) name: string;
+  @Prop({ required: true }) role: string;
+  // The real real LPA threshold — e.g. 75 means "must devote more
+  // than 75% of their time to the fund".
+  @Prop({ required: true }) timeThresholdPct: number;
+
+  @Prop({ enum: KeyPersonStatus, default: KeyPersonStatus.ACTIVE })
+  status: KeyPersonStatus;
+  @Prop({ default: null }) lastConfirmedAt: Date | null;
+  @Prop({ default: null }) departedAt: Date | null;
+}
+export const KeyPersonSchema = SchemaFactory.createForClass(KeyPerson);
+
+// ── Compliance calendar — real, recurring regulatory and reporting
+// deadlines from the fund's own reporting calendar (LPA-set, not
+// assumed). Status is computed live from real dates, never stored
+// as a mutable field that could drift from reality. ──────────────
+
+export enum ComplianceFrequency {
+  QUARTERLY = 'Quarterly',
+  SEMI_ANNUAL = 'Semi-annual',
+  ANNUAL = 'Annual',
+  AS_NEEDED = 'As needed',
+}
+
+export type ComplianceCalendarItemDocument = ComplianceCalendarItem & Document;
+
+@Schema({ timestamps: true, collection: 'crm_fund_compliance_calendar' })
+export class ComplianceCalendarItem {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'Fund', required: true, index: true })
+  fundId: Types.ObjectId;
+
+  @Prop({ required: true }) name: string;
+  @Prop({ enum: ComplianceFrequency, required: true })
+  frequency: ComplianceFrequency;
+  // Real deadline rule — e.g. 45 means "due 45 days after quarter
+  // end", 90 means "90 days after year end". Interpreted relative
+  // to a real period end date at completion-tracking time.
+  @Prop({ default: 0 }) daysAfterPeriodEnd: number;
+
+  @Prop({ default: null }) lastCompletedAt: Date | null;
+  @Prop({ default: null }) lastCompletedPeriod: string | null;
+}
+export const ComplianceCalendarItemSchema = SchemaFactory.createForClass(
+  ComplianceCalendarItem,
+);
+
+// ── FX rates — real, tenant-entered rate snapshots (e.g. from a
+// central bank's published daily rate). No live rate feed is
+// connected, so nothing here is auto-fetched; every rate is a real
+// figure the tenant recorded, with its own source and date. ──────
+
+export type FxRateDocument = FxRate & Document;
+
+@Schema({ timestamps: true, collection: 'crm_fund_fx_rates' })
+export class FxRate {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'Fund', required: true, index: true })
+  fundId: Types.ObjectId;
+
+  @Prop({ required: true }) fromCurrency: string;
+  @Prop({ required: true }) toCurrency: string;
+  @Prop({ required: true }) rate: number;
+  @Prop({ required: true }) asOfDate: Date;
+  @Prop({ default: '' }) source: string;
+}
+export const FxRateSchema = SchemaFactory.createForClass(FxRate);

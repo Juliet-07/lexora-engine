@@ -29,10 +29,10 @@ export const READINESS_DIMENSIONS: ReadinessDimension[] =
 export type ComputeMode = 'auto' | 'manual';
 export const DIMENSION_COMPUTE_MODE: Record<ReadinessDimension, ComputeMode> = {
   [ReadinessDimension.GOVERNANCE]: 'auto',
-  [ReadinessDimension.FINANCIAL_STATEMENTS]: 'manual',
+  [ReadinessDimension.FINANCIAL_STATEMENTS]: 'auto',
   [ReadinessDimension.LEGAL_COMPLIANCE]: 'auto',
   [ReadinessDimension.TAX_COMPLIANCE]: 'auto',
-  [ReadinessDimension.OPERATIONAL_COMMERCIAL]: 'manual',
+  [ReadinessDimension.OPERATIONAL_COMMERCIAL]: 'auto',
   [ReadinessDimension.HR_MANAGEMENT]: 'auto',
   [ReadinessDimension.ESG]: 'manual',
   [ReadinessDimension.DATA_ROOM]: 'manual',
@@ -42,11 +42,11 @@ export const DIMENSION_SOURCE: Record<ReadinessDimension, string> = {
   [ReadinessDimension.GOVERNANCE]:
     'GRC → Governance (board, committees, codes, meetings)',
   [ReadinessDimension.FINANCIAL_STATEMENTS]:
-    'Manual — no connected accounting engine yet',
+    'CRM → Accounting (chart of accounts, GL activity, period close, balance sheet balance)',
   [ReadinessDimension.LEGAL_COMPLIANCE]: 'GRC → Compliance obligations',
   [ReadinessDimension.TAX_COMPLIANCE]: 'GRC → Compliance obligations (RRA)',
   [ReadinessDimension.OPERATIONAL_COMMERCIAL]:
-    'Manual — no connected CRM/PM data yet',
+    'CRM → Mandates & Invoicing (delivery health, collection rate)',
   [ReadinessDimension.HR_MANAGEMENT]:
     'HR module (contracts, onboarding, performance reviews)',
   [ReadinessDimension.ESG]: 'Manual — no connected ESG register yet',

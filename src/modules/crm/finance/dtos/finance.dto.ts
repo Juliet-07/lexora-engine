@@ -22,6 +22,7 @@ import { TaxObligationType } from '../schemas';
 import { AccountType, AssetKind, JournalType } from '../schemas';
 import { FundStatus } from '../schemas';
 import { WaterfallType, CommitmentType, DistributionSource } from '../schemas';
+import { ComplianceFrequency } from '../schemas';
 import { ValuationMethod, IfrsLevel } from '../schemas';
 import { InterestTreatment } from '../schemas';
 import { ClientInvoiceAction } from '../schemas';
@@ -566,6 +567,56 @@ export class RecordFundExpenseDto {
 
 export class ChargeManagementFeeDto {
   @ApiProperty() @IsDateString() asOfDate: string;
+}
+
+// ── Fund compliance ──────────────────────────────────────────────
+
+export class AddKeyPersonDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiProperty() @IsString() role: string;
+  @ApiProperty() @IsNumber() @Min(0) timeThresholdPct: number;
+}
+
+export class AddComplianceCalendarItemDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiProperty({ enum: ComplianceFrequency })
+  @IsEnum(ComplianceFrequency)
+  frequency: ComplianceFrequency;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  daysAfterPeriodEnd?: number;
+}
+
+export class MarkComplianceCompleteDto {
+  @ApiProperty() @IsString() period: string;
+}
+
+// ── Fund multi-currency (FX rates) ───────────────────────────────
+
+export class RecordFxRateDto {
+  @ApiProperty() @IsString() fromCurrency: string;
+  @ApiProperty() @IsString() toCurrency: string;
+  @ApiProperty() @IsNumber() @Min(0) rate: number;
+  @ApiProperty() @IsDateString() asOfDate: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() source?: string;
+}
+
+// ── Fund scenarios ────────────────────────────────────────────────
+
+export class ScenarioHoldingValueDto {
+  @ApiProperty() @IsString() holdingId: string;
+  @ApiProperty() @IsNumber() @Min(0) exitValue: number;
+}
+
+export class RunScenarioDto {
+  @ApiPropertyOptional({ type: [ScenarioHoldingValueDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ScenarioHoldingValueDto)
+  holdingExitValues?: ScenarioHoldingValueDto[];
 }
 
 // ── Trust accounting ──────────────────────────────────────────

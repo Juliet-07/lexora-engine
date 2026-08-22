@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { FinanceModule } from 'src/modules/crm/finance/finance.module';
 import {
   PortfolioWorkspace,
   PortfolioWorkspaceSchema,
@@ -42,6 +43,15 @@ import {
   PerformanceReview,
   PerformanceReviewSchema,
 } from 'src/modules/hr/schemas';
+import {
+  LedgerAccount,
+  LedgerAccountSchema,
+  GlEntry,
+  GlEntrySchema,
+  AccountingPeriod,
+  AccountingPeriodSchema,
+} from 'src/modules/crm/finance/schemas';
+import { Mandate, MandateSchema } from 'src/modules/crm/projects/schemas';
 
 @Module({
   imports: [
@@ -62,7 +72,12 @@ import {
       { name: Employee.name, schema: EmployeeSchema },
       { name: Contract.name, schema: ContractSchema },
       { name: PerformanceReview.name, schema: PerformanceReviewSchema },
+      { name: LedgerAccount.name, schema: LedgerAccountSchema },
+      { name: GlEntry.name, schema: GlEntrySchema },
+      { name: AccountingPeriod.name, schema: AccountingPeriodSchema },
+      { name: Mandate.name, schema: MandateSchema },
     ]),
+    FinanceModule,
   ],
   providers: [ValuationService, PortfolioService, ReadinessService],
   controllers: [ValuationController, PortfolioController, ReadinessController],

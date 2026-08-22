@@ -55,6 +55,23 @@ import {
   ReviewStatus,
 } from 'src/modules/hr/schemas';
 import {
+  LedgerAccount,
+  LedgerAccountDocument,
+  AccountType,
+  GlEntry,
+  GlEntryDocument,
+  AccountingPeriod,
+  AccountingPeriodDocument,
+  InvoiceStage,
+} from 'src/modules/crm/finance/schemas';
+import {
+  Mandate,
+  MandateDocument_,
+  MandateStage,
+  Rag,
+} from 'src/modules/crm/projects/schemas';
+import { InvoiceService } from 'src/modules/crm/finance/services';
+import {
   buildReportPdf,
   ReportDefinition,
 } from 'src/common/utils/pdf/report-builder.util';
@@ -80,6 +97,15 @@ export class ReadinessService {
     private readonly contractModel: Model<ContractDocument>,
     @InjectModel(PerformanceReview.name)
     private readonly reviewModel: Model<PerformanceReviewDocument>,
+    @InjectModel(LedgerAccount.name)
+    private readonly ledgerAccountModel: Model<LedgerAccountDocument>,
+    @InjectModel(GlEntry.name)
+    private readonly glEntryModel: Model<GlEntryDocument>,
+    @InjectModel(AccountingPeriod.name)
+    private readonly periodModel: Model<AccountingPeriodDocument>,
+    @InjectModel(Mandate.name)
+    private readonly mandateModel: Model<MandateDocument_>,
+    private readonly invoiceService: InvoiceService,
   ) {}
 
   // ── Real auto-scoring — one method per connected dimension ─────
@@ -185,6 +211,114 @@ export class ReadinessService {
     );
   }
 
+  // Real balance-sheet balance check — the same Assets = Liabilities
+  // + Equity + Retained Earnings test Accounting's own balance sheet
+  // uses, recomputed here directly from raw GL data (the "infused"
+  // pattern this whole service already follows) rather than calling
+  // FinancialStatementsService cross-module.
+  private async isBalanceSheetBalanced(tenantId: string): Promise<boolean> {
+    const tId = new Types.ObjectId(tenantId);
+    const [accounts, balances] = await Promise.all([
+      this.ledgerAccountModel.find({ tenantId: tId }).lean(),
+      this.glEntryModel.aggregate([
+        { $match: { tenantId: tId } },
+        {
+          $group: {
+            _id: '$accountCode',
+            debit: { $sum: '$debit' },
+            credit: { $sum: '$credit' },
+          },
+        },
+      ]),
+    ]);
+    if (!accounts.length) return false;
+    const balanceMap = new Map(
+      balances.map((b) => [b._id, b.debit - b.credit]),
+    );
+
+    let totalAssets = 0;
+    let totalLiabilities = 0;
+    let totalEquity = 0;
+    let totalRevenue = 0;
+    let totalExpenses = 0;
+    for (const a of accounts) {
+      const net = balanceMap.get(a.code) ?? 0;
+      if (a.type === AccountType.ASSET) totalAssets += net;
+      else if (a.type === AccountType.LIABILITY) totalLiabilities += -net;
+      else if (a.type === AccountType.EQUITY) totalEquity += -net;
+      else if (a.type === AccountType.REVENUE) totalRevenue += -net;
+      else if (a.type === AccountType.EXPENSE) totalExpenses += net;
+    }
+    const retainedEarnings = totalRevenue - totalExpenses;
+    return (
+      Math.abs(
+        totalAssets - (totalLiabilities + totalEquity + retainedEarnings),
+      ) < 0.01
+    );
+  }
+
+  // Real signals a financial diligence checks first: is there even a
+  // chart of accounts, are the books being kept current, has any
+  // period ever been formally closed (real discipline, not just
+  // posted-and-forgotten), and does the balance sheet actually
+  // balance right now. No chart of accounts at all is disqualifying
+  // on its own — everything else is moot without one.
+  private async scoreFinancialStatements(tenantId: string): Promise<number> {
+    const tId = new Types.ObjectId(tenantId);
+    const accountCount = await this.ledgerAccountModel.countDocuments({
+      tenantId: tId,
+    });
+    if (accountCount === 0) return 0;
+
+    let score = 100;
+    const [recentEntry, closedPeriod, balanced] = await Promise.all([
+      this.glEntryModel.exists({
+        tenantId: tId,
+        date: { $gte: new Date(Date.now() - 90 * 86400000) },
+      }),
+      this.periodModel.exists({ tenantId: tId, locked: true }),
+      this.isBalanceSheetBalanced(tenantId),
+    ]);
+    if (!recentEntry) score -= 30;
+    if (!closedPeriod) score -= 30;
+    if (!balanced) score -= 40;
+    return Math.max(0, score);
+  }
+
+  // Blend of two real rates: what share of active client mandates
+  // are healthy (not RAG Red — genuinely at risk), and what share of
+  // invoiced amounts have actually been collected. No mandates at
+  // all means there's no real commercial activity yet to show a
+  // diligence, so this returns 0 rather than a neutral default.
+  private async scoreOperationalCommercial(tenantId: string): Promise<number> {
+    const tId = new Types.ObjectId(tenantId);
+    const mandates = await this.mandateModel
+      .find({ tenantId: tId, stage: { $ne: MandateStage.CREATE } })
+      .select('rag')
+      .lean();
+    if (mandates.length === 0) return 0;
+    const healthyMandateRate =
+      mandates.filter((m) => m.rag !== Rag.RED).length / mandates.length;
+
+    // Real payable per invoice, including VAT/WHT — via
+    // InvoiceService itself rather than re-deriving that calculation
+    // here, so this can never quietly drift from what Invoicing
+    // itself considers owed.
+    const allInvoices = await this.invoiceService.getAll(tenantId);
+    const invoices = (allInvoices as any[]).filter(
+      (i) => i.stage !== InvoiceStage.DRAFT,
+    );
+    let collectionRate = 1;
+    if (invoices.length > 0) {
+      const totalPayable = invoices.reduce((s, i) => s + i.payable, 0);
+      const totalPaid = invoices.reduce((s, i) => s + i.paidAmount, 0);
+      collectionRate =
+        totalPayable > 0 ? Math.min(1, totalPaid / totalPayable) : 1;
+    }
+
+    return Math.round(((healthyMandateRate + collectionRate) / 2) * 100);
+  }
+
   private async computeAutoScore(
     tenantId: string,
     dim: ReadinessDimension,
@@ -192,10 +326,14 @@ export class ReadinessService {
     switch (dim) {
       case ReadinessDimension.GOVERNANCE:
         return this.scoreGovernance(tenantId);
+      case ReadinessDimension.FINANCIAL_STATEMENTS:
+        return this.scoreFinancialStatements(tenantId);
       case ReadinessDimension.LEGAL_COMPLIANCE:
         return this.scoreObligations(tenantId);
       case ReadinessDimension.TAX_COMPLIANCE:
         return this.scoreObligations(tenantId, Regulator.RRA);
+      case ReadinessDimension.OPERATIONAL_COMMERCIAL:
+        return this.scoreOperationalCommercial(tenantId);
       case ReadinessDimension.HR_MANAGEMENT:
         return this.scoreHr(tenantId);
       default:

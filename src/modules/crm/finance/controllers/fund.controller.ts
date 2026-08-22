@@ -1,5 +1,18 @@
-import { Controller, Get, Post, Patch, Body, Param } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  Param,
+  Query,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+} from '@nestjs/swagger';
 import {
   FundService,
   CapitalCommitmentService,
@@ -11,6 +24,10 @@ import {
   NavService,
   FundExpenseService,
   ManagementFeeService,
+  ComplianceService,
+  FxRateService,
+  ScenarioService,
+  LpReportingService,
 } from '../services';
 import {
   CreateFundDto,
@@ -28,6 +45,11 @@ import {
   ApproveValuationDto,
   RecordFundExpenseDto,
   ChargeManagementFeeDto,
+  AddKeyPersonDto,
+  AddComplianceCalendarItemDto,
+  MarkComplianceCompleteDto,
+  RecordFxRateDto,
+  RunScenarioDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
@@ -599,5 +621,254 @@ export class ManagementFeeController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.payFee(t || u, chargeId);
+  }
+}
+
+@ApiTags('CRM — Finance — Fund Accounting')
+@ApiBearerAuth()
+@UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.CRM)
+@Controller('finance/funds/:fundId/compliance')
+export class ComplianceController {
+  constructor(private readonly service: ComplianceService) {}
+
+  @Get('key-persons')
+  @ApiOperation({
+    summary: 'Real key persons and their real active/departed status',
+  })
+  getKeyPersons(
+    @Param('fundId') fundId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getKeyPersons(t || u, fundId);
+  }
+
+  @Post('key-persons')
+  @ApiOperation({ summary: 'Add a key person under LPA cl. 16' })
+  addKeyPerson(
+    @Param('fundId') fundId: string,
+    @Body() dto: AddKeyPersonDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addKeyPerson(t || u, fundId, dto);
+  }
+
+  @Post('key-persons/:keyPersonId/confirm')
+  @ApiOperation({ summary: 'Confirm a key person is still active' })
+  confirmActive(
+    @Param('keyPersonId') keyPersonId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.confirmActive(t || u, keyPersonId);
+  }
+
+  @Post('key-persons/:keyPersonId/depart')
+  @ApiOperation({
+    summary:
+      'Mark a key person departed — real, automatic consequence: suspends the investment period',
+  })
+  markDeparted(
+    @Param('fundId') fundId: string,
+    @Param('keyPersonId') keyPersonId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.markDeparted(t || u, fundId, keyPersonId);
+  }
+
+  @Get('calendar')
+  @ApiOperation({
+    summary:
+      'Real compliance filing calendar, with status computed live from real dates',
+  })
+  getCalendar(
+    @Param('fundId') fundId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getCalendar(t || u, fundId);
+  }
+
+  @Post('calendar')
+  @ApiOperation({ summary: 'Add a real compliance filing requirement' })
+  addCalendarItem(
+    @Param('fundId') fundId: string,
+    @Body() dto: AddComplianceCalendarItemDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addCalendarItem(t || u, fundId, dto);
+  }
+
+  @Post('calendar/:calendarItemId/complete')
+  @ApiOperation({ summary: 'Mark a compliance filing complete for a period' })
+  markComplete(
+    @Param('calendarItemId') calendarItemId: string,
+    @Body() dto: MarkComplianceCompleteDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.markComplete(t || u, calendarItemId, dto);
+  }
+
+  @Get('restrictions')
+  @ApiOperation({
+    summary:
+      'Real-time investment restriction monitoring against real portfolio holdings',
+  })
+  getRestrictionMonitoring(
+    @Param('fundId') fundId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getRestrictionMonitoring(t || u, fundId);
+  }
+}
+
+@ApiTags('CRM — Finance — Fund Accounting')
+@ApiBearerAuth()
+@UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.CRM)
+@Controller('finance/funds/:fundId/fx-rates')
+export class FxRateController {
+  constructor(private readonly service: FxRateService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Real, tenant-entered FX rate snapshots' })
+  getAll(
+    @Param('fundId') fundId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getAll(t || u, fundId);
+  }
+
+  @Post()
+  @ApiOperation({ summary: 'Record a real FX rate snapshot' })
+  recordRate(
+    @Param('fundId') fundId: string,
+    @Body() dto: RecordFxRateDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.recordRate(t || u, fundId, dto);
+  }
+
+  @Get('exposure')
+  @ApiOperation({
+    summary:
+      'Real FX exposure and gain/loss, isolating currency movement from operating performance',
+  })
+  getFxExposure(
+    @Param('fundId') fundId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getFxExposure(t || u, fundId);
+  }
+}
+
+@ApiTags('CRM — Finance — Fund Accounting')
+@ApiBearerAuth()
+@UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.CRM)
+@Controller('finance/funds/:fundId/scenarios')
+export class ScenarioController {
+  constructor(private readonly service: ScenarioService) {}
+
+  @Post('run')
+  @ApiOperation({
+    summary:
+      'Real, read-only what-if calculator — runs hypothetical exit values through the real waterfall; nothing persisted',
+  })
+  runScenario(
+    @Param('fundId') fundId: string,
+    @Body() dto: RunScenarioDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.runScenario(t || u, fundId, dto);
+  }
+}
+
+@ApiTags('CRM — Finance — Fund Accounting')
+@ApiBearerAuth()
+@UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.CRM)
+@Controller('finance/funds/:fundId/lp-reporting')
+export class LpReportingController {
+  constructor(private readonly service: LpReportingService) {}
+
+  @Get('commitments/:commitmentId/statement')
+  @ApiQuery({ name: 'periodStart', required: true })
+  @ApiQuery({ name: 'periodEnd', required: true })
+  @ApiOperation({
+    summary:
+      'Real quarterly LP statement — real opening/closing capital account balance and real per-LP performance',
+  })
+  getQuarterlyStatement(
+    @Param('fundId') fundId: string,
+    @Param('commitmentId') commitmentId: string,
+    @Query('periodStart') periodStart: string,
+    @Query('periodEnd') periodEnd: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getQuarterlyStatement(
+      t || u,
+      fundId,
+      commitmentId,
+      periodStart,
+      periodEnd,
+    );
+  }
+
+  @Get('calls/:callId/notice/:commitmentId')
+  @ApiOperation({ summary: 'Real capital call notice for one LP' })
+  getCallNotice(
+    @Param('callId') callId: string,
+    @Param('commitmentId') commitmentId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getCallNotice(t || u, callId, commitmentId);
+  }
+
+  @Get('distributions/:distributionId/notice/:commitmentId')
+  @ApiOperation({ summary: 'Real distribution notice for one LP' })
+  getDistributionNotice(
+    @Param('distributionId') distributionId: string,
+    @Param('commitmentId') commitmentId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getDistributionNotice(
+      t || u,
+      distributionId,
+      commitmentId,
+    );
+  }
+
+  @Get('commitments/:commitmentId/fee-expense-disclosure/:period')
+  @ApiOperation({
+    summary:
+      "Real fee & expense disclosure — this LP's real share of a period's real fees and expenses",
+  })
+  getFeeExpenseDisclosure(
+    @Param('fundId') fundId: string,
+    @Param('commitmentId') commitmentId: string,
+    @Param('period') period: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getFeeExpenseDisclosure(
+      t || u,
+      fundId,
+      commitmentId,
+      period,
+    );
   }
 }
