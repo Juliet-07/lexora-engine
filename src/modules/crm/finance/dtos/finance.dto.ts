@@ -21,6 +21,8 @@ import { BankAccountType, TxLinkType } from '../schemas';
 import { TaxObligationType } from '../schemas';
 import { AccountType, AssetKind, JournalType } from '../schemas';
 import { FundStatus } from '../schemas';
+import { WaterfallType, CommitmentType, DistributionSource } from '../schemas';
+import { ValuationMethod, IfrsLevel } from '../schemas';
 import { InterestTreatment } from '../schemas';
 import { ClientInvoiceAction } from '../schemas';
 
@@ -405,7 +407,56 @@ export class CreateFundDto {
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) mgmtFeePct?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) carryPct?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) hurdlePct?: number;
+  @ApiPropertyOptional({ enum: WaterfallType })
+  @IsOptional()
+  @IsEnum(WaterfallType)
+  waterfallType?: WaterfallType;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  defaultInterestPct?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  curePeriodDays?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  forfeiturePct?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  equalisationInterestPct?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  carryEscrowPct?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  investmentPeriodEndDate?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  orgCostsCapAmount?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  recyclingPermitted?: boolean;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  recyclingCapPct?: number;
 }
+
+export class UpdateFundTermsDto extends CreateFundDto {}
 
 export class SetFundStatusDto {
   @ApiProperty({ enum: FundStatus }) @IsEnum(FundStatus) status: FundStatus;
@@ -415,6 +466,20 @@ export class CreateCapitalCommitmentDto {
   @ApiProperty() @IsMongoId() lpUserId: string;
   @ApiProperty() @IsString() lpName: string;
   @ApiProperty() @IsNumber() @Min(0.01) commitment: number;
+  @ApiPropertyOptional({ enum: CommitmentType })
+  @IsOptional()
+  @IsEnum(CommitmentType)
+  type?: CommitmentType;
+  @ApiPropertyOptional() @IsOptional() @IsString() closeLabel?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() closeDate?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() isGpCommitment?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() hasSideLetter?: boolean;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  mgmtFeePctOverride?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() sideLetterNotes?: string;
 }
 
 export class CreateCapitalCallDto {
@@ -426,6 +491,81 @@ export class CreateCapitalCallDto {
 
 export class RecordCallFundingDto {
   @ApiProperty() @IsNumber() @Min(0.01) amount: number;
+}
+
+export class CureDefaultDto {
+  @ApiProperty() @IsNumber() @Min(0.01) amount: number;
+}
+
+export class ApplyEqualisationDto {}
+
+export class RecordDistributionDto {
+  @ApiProperty() @IsNumber() @Min(0.01) totalAmount: number;
+  @ApiProperty() @IsDateString() date: string;
+  @ApiPropertyOptional({ enum: DistributionSource })
+  @IsOptional()
+  @IsEnum(DistributionSource)
+  source?: DistributionSource;
+  @ApiPropertyOptional() @IsOptional() @IsString() sourceDescription?: string;
+}
+
+export class CreatePortfolioHoldingDto {
+  @ApiProperty() @IsString() companyName: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() sector?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() country?: string;
+  @ApiProperty() @IsDateString() entryDate: string;
+  @ApiProperty() @IsNumber() @Min(0.01) costBasis: number;
+}
+
+export class RecordExitDto {
+  @ApiProperty() @IsDateString() exitedAt: string;
+  @ApiProperty() @IsNumber() @Min(0) exitProceeds: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  recycledAmount?: number;
+}
+
+export class ProposeValuationDto {
+  @ApiProperty({ enum: ValuationMethod })
+  @IsEnum(ValuationMethod)
+  method: ValuationMethod;
+  @ApiPropertyOptional({ enum: IfrsLevel })
+  @IsOptional()
+  @IsEnum(IfrsLevel)
+  ifrsLevel?: IfrsLevel;
+  @ApiPropertyOptional() @IsOptional() @IsString() keyInput?: string;
+  @ApiProperty() @IsNumber() @Min(0) proposedValue: number;
+  @ApiProperty() @IsString() proposedBy: string;
+}
+
+export class ReviewValuationDto {
+  @ApiProperty() @IsNumber() @Min(0) reviewedValue: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() reviewNotes?: string;
+  @ApiProperty() @IsString() reviewedBy: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  methodologyChanged?: boolean;
+}
+
+export class ApproveValuationDto {
+  @ApiProperty() @IsString() approvedBy: string;
+}
+
+export class RecordFundExpenseDto {
+  @ApiProperty() @IsString() category: string;
+  @ApiProperty() @IsNumber() @Min(0.01) amount: number;
+  @ApiProperty() @IsDateString() date: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isOrganisationalCost?: boolean;
+}
+
+export class ChargeManagementFeeDto {
+  @ApiProperty() @IsDateString() asOfDate: string;
 }
 
 // ── Trust accounting ──────────────────────────────────────────
