@@ -372,7 +372,7 @@ export class MaintenanceLogController {
 }
 
 // ── Financials — P&L, Balance Sheet, Cash Flow ─────────────────
-@ApiTags('CRM —Finance — Financials')
+@ApiTags('CRM — Finance — Financials')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
 @RequiresModule(PlatformModuleKey.CRM)

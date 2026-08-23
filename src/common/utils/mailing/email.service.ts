@@ -945,4 +945,18 @@ export class EmailService {
       html,
     });
   }
+
+  // Generic send for arbitrary content that doesn't come from a
+  // fixed template — used by Communications campaigns, where the
+  // subject/body are tenant-authored rather than one of the
+  // predefined templates above. Same real transporter as every
+  // other method in this class.
+  async sendCampaign(to: string, subject: string, html: string): Promise<void> {
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to,
+      subject,
+      html,
+    });
+  }
 }

@@ -102,10 +102,15 @@ export class ContractAmendment {
 export const ContractAmendmentSchema =
   SchemaFactory.createForClass(ContractAmendment);
 
-export type ContractDocument_ = Contract & Document;
+// Named ToolContract, not Contract — HR already has its own class
+// literally named Contract (employment contracts), and Mongoose
+// registers models by that name globally across the whole app, not
+// per-module. Two different classes both named "Contract" would
+// silently collide.
+export type ToolContractDocument_ = ToolContract & Document;
 
 @Schema({ timestamps: true, collection: 'crm_tools_contracts' })
-export class Contract {
+export class ToolContract {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   tenantId: Types.ObjectId;
 
@@ -139,4 +144,4 @@ export class Contract {
   @Prop({ type: [ContractAmendmentSchema], default: [] })
   amendments: ContractAmendment[];
 }
-export const ContractSchema = SchemaFactory.createForClass(Contract);
+export const ToolContractSchema = SchemaFactory.createForClass(ToolContract);

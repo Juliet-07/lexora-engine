@@ -140,6 +140,7 @@ import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
     TimeEntryService,
     TicketService,
     KbArticleService,
+    AdrCaseService,
   ],
 })
 export class ProjectsModule {}

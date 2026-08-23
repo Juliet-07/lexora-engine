@@ -9,8 +9,8 @@ import { Comment, CommentDocument, CommentSubjectType } from '../schemas';
 import { AddCommentDto, EditCommentDto, ToggleReactionDto } from '../dtos';
 import { EmployeeService } from 'src/modules/hr/services/employee.service';
 import {
-  Contract,
-  ContractDocument_,
+  ToolContract,
+  ToolContractDocument_,
   ContractStage,
   CONTRACT_STAGES,
 } from '../schemas';
@@ -156,8 +156,8 @@ export class CommentService {
 @Injectable()
 export class ContractService {
   constructor(
-    @InjectModel(Contract.name)
-    private readonly model: Model<ContractDocument_>,
+    @InjectModel(ToolContract.name)
+    private readonly model: Model<ToolContractDocument_>,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
