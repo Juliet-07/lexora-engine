@@ -2,13 +2,11 @@ import {
   Injectable,
   ConflictException,
   NotFoundException,
-  BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import type { QueryFilter } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
-import { v4 as uuidv4 } from 'uuid';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
 import {
   PlatformModule,

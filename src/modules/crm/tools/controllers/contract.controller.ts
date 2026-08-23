@@ -7,12 +7,22 @@ import {
   Body,
   Param,
   Query,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
+import { existsSync, mkdirSync } from 'fs';
+import { v4 as uuidv4 } from 'uuid';
 import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
   ApiQuery,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
 import { CommentService } from '../services';
 import { AddCommentDto, EditCommentDto, ToggleReactionDto } from '../dtos';
@@ -23,13 +33,20 @@ import {
   UserType,
 } from 'src/common/interfaces/user-role.enum';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
-import { ContractService } from '../services';
+import {
+  ContractService,
+  TenantContractTemplateService,
+  TenantLetterheadService,
+} from '../services';
 import {
   CreateContractDto,
   ExecuteContractDto,
   AddNegotiationRoundDto,
   AddAmendmentDto,
   AddObligationDto,
+  CreateTenantTemplateDto,
+  UpdateTenantTemplateDto,
+  UploadTenantTemplateDto,
   SetObligationDoneDto,
 } from '../dtos';
 
@@ -264,5 +281,241 @@ export class ContractController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.setObligationDone(t || u, id, obligationId, dto);
+  }
+}
+
+// ── Same real disk-storage convention already used for platform
+// templates and engagement letters — /uploads/{feature}/ with a
+// UUID filename, served back via main.ts's existing /uploads
+// static prefix. ───────────────────────────────────────────────
+const tenantTemplateStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(
+      process.cwd(),
+      'uploads',
+      'tenant-contract-templates',
+    );
+    if (!existsSync(uploadPath)) {
+      mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) => {
+    const ext = extname(file.originalname);
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
+const letterheadStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(process.cwd(), 'uploads', 'letterheads');
+    if (!existsSync(uploadPath)) {
+      mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) => {
+    const ext = extname(file.originalname);
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
+
+const templateFileFilter = (_req: any, file: Express.Multer.File, cb: any) => {
+  const allowed = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(
+      new BadRequestException(
+        'Only PDF or Word documents (.pdf, .doc, .docx) are accepted.',
+      ),
+      false,
+    );
+  }
+};
+const imageFileFilter = (_req: any, file: Express.Multer.File, cb: any) => {
+  if (file.mimetype.startsWith('image/')) {
+    cb(null, true);
+  } else {
+    cb(new BadRequestException('Only image files are accepted.'), false);
+  }
+};
+
+@ApiTags('CRM — Tools — Contracts')
+@ApiBearerAuth()
+@UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.CRM)
+@Controller('tools/contract-templates')
+export class TenantContractTemplateController {
+  constructor(private readonly service: TenantContractTemplateService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'My own contract templates' })
+  getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
+    return this.service.getAll(t || u);
+  }
+
+  @Get('available')
+  @ApiOperation({
+    summary:
+      'Real picker — published platform templates merged with my own, each tagged with a real source',
+  })
+  getAvailable(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getAvailableTemplates(t || u);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'One of my own templates' })
+  getOne(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getById(t || u, id);
+  }
+
+  @Post()
+  @ApiOperation({ summary: 'Create an authored (rich-text) template' })
+  create(
+    @Body() dto: CreateTenantTemplateDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.create(t || u, dto);
+  }
+
+  @Post('upload')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: tenantTemplateStorage,
+      fileFilter: templateFileFilter,
+      limits: { fileSize: 20 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file', 'title', 'type'],
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        title: { type: 'string' },
+        type: { type: 'string' },
+        jurisdiction: { type: 'string' },
+        description: { type: 'string' },
+      },
+    },
+  })
+  @ApiOperation({
+    summary: 'Upload an existing PDF or Word document as my own template',
+  })
+  upload(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() dto: UploadTenantTemplateDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.upload(t || u, file, dto);
+  }
+
+  @Post(':id/replace-file')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: tenantTemplateStorage,
+      fileFilter: templateFileFilter,
+      limits: { fileSize: 20 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOperation({ summary: "Replace an uploaded template's real file" })
+  replaceFile(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.replaceFile(t || u, id, file);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Edit an authored template' })
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateTenantTemplateDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.update(t || u, id, dto);
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Delete a template — real file on disk is removed too, if any',
+  })
+  delete(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.delete(t || u, id);
+  }
+}
+
+@ApiTags('CRM — Tools — Contracts')
+@ApiBearerAuth()
+@UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.CRM)
+@Controller('tools/letterhead')
+export class TenantLetterheadController {
+  constructor(private readonly service: TenantLetterheadService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'My real uploaded letterhead, if any' })
+  getMine(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
+    return this.service.getMine(t || u);
+  }
+
+  @Post('upload')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: letterheadStorage,
+      fileFilter: imageFileFilter,
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOperation({ summary: 'Upload (or replace) my letterhead' })
+  upload(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.upload(t || u, file);
+  }
+
+  @Delete()
+  @ApiOperation({ summary: 'Remove my letterhead' })
+  delete(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
+    return this.service.delete(t || u);
   }
 }

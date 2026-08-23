@@ -11,11 +11,15 @@ import {
   TenantSubscriptionSchema,
   RiskRules,
   RiskRulesSchema,
+  PlatformContractTemplate,
+  PlatformContractTemplateSchema,
 } from './schemas';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailModule } from 'src/common/utils/mailing/email.module';
 import { SubscriptionExpiryService } from './services/subscription-expiry.service';
 import { Employee, EmployeeSchema } from '../hr/schemas';
+import { PlatformContractTemplateController } from './controller/contract-template.controller';
+import { PlatformContractTemplateService } from './services/contract-template.service';
 
 @Module({
   imports: [
@@ -30,10 +34,18 @@ import { Employee, EmployeeSchema } from '../hr/schemas';
       { name: TenantSubscription.name, schema: TenantSubscriptionSchema },
       { name: RiskRules.name, schema: RiskRulesSchema },
       { name: Employee.name, schema: EmployeeSchema },
+      {
+        name: PlatformContractTemplate.name,
+        schema: PlatformContractTemplateSchema,
+      },
     ]),
   ],
-  controllers: [SuperAdminController],
-  providers: [SuperAdminService, SubscriptionExpiryService],
-  exports: [SuperAdminService, MongooseModule],
+  controllers: [SuperAdminController, PlatformContractTemplateController],
+  providers: [
+    SuperAdminService,
+    SubscriptionExpiryService,
+    PlatformContractTemplateService,
+  ],
+  exports: [SuperAdminService, PlatformContractTemplateService, MongooseModule],
 })
 export class SuperAdminModule {}

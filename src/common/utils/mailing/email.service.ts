@@ -197,6 +197,10 @@ import {
   complianceDeadlineReminderTemplate,
 } from './templates/compliance-deadline-reminder.template';
 import {
+  ContractObligationReminderEmailData,
+  contractObligationReminderTemplate,
+} from './templates/contract-obligation-reminder.template';
+import {
   PolicyAcknowledgmentEmailData,
   policyAcknowledgmentTemplate,
 } from './templates/policy-acknowledgment.template';
@@ -850,6 +854,18 @@ export class EmailService {
     data: ComplianceDeadlineReminderEmailData,
   ): Promise<void> {
     const { subject, html } = complianceDeadlineReminderTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendContractObligationReminder(
+    data: ContractObligationReminderEmailData,
+  ): Promise<void> {
+    const { subject, html } = contractObligationReminderTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

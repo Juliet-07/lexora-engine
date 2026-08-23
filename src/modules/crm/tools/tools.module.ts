@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { HrModule } from 'src/modules/hr/hr.module';
 import { ComplianceModule } from 'src/modules/grc/compliance/compliance.module';
 import { ProjectsModule } from 'src/modules/crm/projects/project.module';
+import { SuperAdminModule } from 'src/modules/super_admin/super_admin.module';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
 import {
@@ -22,6 +23,10 @@ import {
   NewsletterDraftSchema,
   CalendarEvent,
   CalendarEventSchema,
+  TenantContractTemplate,
+  TenantContractTemplateSchema,
+  TenantLetterhead,
+  TenantLetterheadSchema,
 } from './schemas';
 import {
   CommentService,
@@ -33,6 +38,8 @@ import {
   CalendarEventService,
   CalendarAggregationService,
   CampaignSchedulerService,
+  TenantContractTemplateService,
+  TenantLetterheadService,
 } from './services';
 import {
   CommentController,
@@ -42,6 +49,8 @@ import {
   NewsletterDraftController,
   ClientNewsletterController,
   CalendarController,
+  TenantContractTemplateController,
+  TenantLetterheadController,
 } from './controllers';
 
 @Module({
@@ -49,6 +58,7 @@ import {
     HrModule,
     ComplianceModule,
     ProjectsModule,
+    SuperAdminModule,
     MongooseModule.forFeature([
       { name: Comment.name, schema: CommentSchema },
       { name: ToolContract.name, schema: ToolContractSchema },
@@ -58,6 +68,11 @@ import {
       { name: CalendarEvent.name, schema: CalendarEventSchema },
       { name: User.name, schema: UserSchema },
       { name: ClientProfileRecord.name, schema: ClientProfileSchema },
+      {
+        name: TenantContractTemplate.name,
+        schema: TenantContractTemplateSchema,
+      },
+      { name: TenantLetterhead.name, schema: TenantLetterheadSchema },
     ]),
   ],
   providers: [
@@ -70,6 +85,8 @@ import {
     CalendarEventService,
     CalendarAggregationService,
     CampaignSchedulerService,
+    TenantContractTemplateService,
+    TenantLetterheadService,
     EmailService,
   ],
   controllers: [
@@ -80,6 +97,8 @@ import {
     NewsletterDraftController,
     ClientNewsletterController,
     CalendarController,
+    TenantContractTemplateController,
+    TenantLetterheadController,
   ],
   exports: [CommentService, ContractService, SegmentService, CampaignService],
 })

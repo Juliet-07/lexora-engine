@@ -145,3 +145,91 @@ export class ToolContract {
   amendments: ContractAmendment[];
 }
 export const ToolContractSchema = SchemaFactory.createForClass(ToolContract);
+
+// ── Tenant's own contract templates — mirrors PlatformContractTemplate's
+// real authored-or-uploaded shape (super_admin/schemas/contract-template.schema.ts),
+// but tenant-scoped and named distinctly (TenantContractTemplate, not
+// ContractTemplate) to avoid any Mongoose model-name collision with
+// that platform-level collection or with HR's own ContractTemplate.
+// A tenant's own template is never written into the platform
+// collection, and vice versa — the picker (getAvailableTemplates)
+// merges the two only at read time. ─────────────────────────────
+
+export enum TenantTemplateSourceType {
+  AUTHORED = 'authored',
+  UPLOADED = 'uploaded',
+}
+
+// Real merge fields for a CRM contract — drawn from ToolContract's
+// own fields, distinct from HR's employee-oriented set, since a
+// vendor/partnership/service agreement has nothing to do with
+// employeeName/jobTitle/salary.
+export const CONTRACT_MERGE_FIELDS = [
+  'counterpartyName',
+  'tenantCompanyName',
+  'contractValue',
+  'contractCurrency',
+  'effectiveDate',
+  'expiryDate',
+  'todayDate',
+] as const;
+export type ContractMergeField = (typeof CONTRACT_MERGE_FIELDS)[number];
+
+export type TenantContractTemplateDocument = TenantContractTemplate & Document;
+
+@Schema({ timestamps: true, collection: 'crm_tools_contract_templates' })
+export class TenantContractTemplate {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({ required: true, trim: true }) title: string;
+  @Prop({ enum: ContractType, required: true }) type: ContractType;
+  @Prop({ default: '' }) jurisdiction: string;
+  @Prop({ default: '' }) description: string;
+
+  @Prop({
+    enum: TenantTemplateSourceType,
+    default: TenantTemplateSourceType.AUTHORED,
+  })
+  sourceType: TenantTemplateSourceType;
+
+  // Populated only when sourceType is 'authored'.
+  @Prop({ default: '' }) content: string;
+
+  // Populated only when sourceType is 'uploaded' — same real
+  // disk-storage convention the platform template upload uses.
+  @Prop({ default: null }) fileUrl: string | null;
+  @Prop({ default: null }) fileName: string | null;
+  @Prop({ default: null }) fileMimeType: string | null;
+  @Prop({ default: null }) filePath: string | null;
+
+  @Prop({ default: true }) isActive: boolean;
+}
+export const TenantContractTemplateSchema = SchemaFactory.createForClass(
+  TenantContractTemplate,
+);
+
+// ── Letterhead — one real uploaded image per tenant, used at the
+// top of generated contract PDFs in a later stage. Re-uploading
+// replaces the existing one (same discipline as engagement letter
+// re-upload), never accumulates old files on disk. ────────────────
+
+export type TenantLetterheadDocument = TenantLetterhead & Document;
+
+@Schema({ timestamps: true, collection: 'crm_tools_letterheads' })
+export class TenantLetterhead {
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'User',
+    required: true,
+    unique: true,
+    index: true,
+  })
+  tenantId: Types.ObjectId;
+
+  @Prop({ required: true }) imageUrl: string;
+  @Prop({ required: true }) imagePath: string;
+  @Prop({ default: null }) imageMimeType: string | null;
+}
+export const TenantLetterheadSchema =
+  SchemaFactory.createForClass(TenantLetterhead);

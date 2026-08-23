@@ -66,3 +66,22 @@ export class AddObligationDto {
 export class SetObligationDoneDto {
   @ApiProperty() @IsBoolean() done: boolean;
 }
+
+// ── Tenant contract templates ─────────────────────────────────────
+
+export class CreateTenantTemplateDto {
+  @ApiProperty() @IsString() title: string;
+  @ApiProperty({ enum: ContractType }) @IsEnum(ContractType) type: ContractType;
+  @ApiPropertyOptional() @IsOptional() @IsString() jurisdiction?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
+  @ApiProperty() @IsString() content: string;
+}
+
+export class UpdateTenantTemplateDto extends CreateTenantTemplateDto {}
+
+export class UploadTenantTemplateDto {
+  @ApiProperty() @IsString() title: string;
+  @ApiProperty({ enum: ContractType }) @IsEnum(ContractType) type: ContractType;
+  @ApiPropertyOptional() @IsOptional() @IsString() jurisdiction?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
+}

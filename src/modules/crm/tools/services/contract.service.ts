@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import * as fs from 'fs';
 import { Comment, CommentDocument, CommentSubjectType } from '../schemas';
 import { AddCommentDto, EditCommentDto, ToggleReactionDto } from '../dtos';
 import { EmployeeService } from 'src/modules/hr/services/employee.service';
@@ -13,6 +14,11 @@ import {
   ToolContractDocument_,
   ContractStage,
   CONTRACT_STAGES,
+  TenantContractTemplate,
+  TenantContractTemplateDocument,
+  TenantTemplateSourceType,
+  TenantLetterhead,
+  TenantLetterheadDocument,
 } from '../schemas';
 import {
   CreateContractDto,
@@ -21,7 +27,11 @@ import {
   AddAmendmentDto,
   AddObligationDto,
   SetObligationDoneDto,
+  CreateTenantTemplateDto,
+  UpdateTenantTemplateDto,
+  UploadTenantTemplateDto,
 } from '../dtos';
+import { PlatformContractTemplateService } from 'src/modules/super_admin/services/contract-template.service';
 
 @Injectable()
 export class CommentService {
@@ -369,5 +379,211 @@ export class ContractService {
       }
     }
     return due.sort((a, b) => a.due.getTime() - b.due.getTime());
+  }
+}
+
+// Same real conversion PlatformContractTemplateService and
+// EngagementLetterService already use — filePath may be absolute or
+// relative, so only the part from 'uploads/' onwards is kept, then
+// prefixed with the real configured APP_URL.
+function toFileUrl(filePath: string): string {
+  const rawPath = filePath.replace(/\\/g, '/');
+  const uploadsIndex = rawPath.indexOf('uploads/');
+  const relativePath =
+    uploadsIndex !== -1 ? rawPath.slice(uploadsIndex) : rawPath;
+  return `${process.env.APP_URL}/${relativePath}`;
+}
+
+// ── Tenant's own contract templates — same authored-or-uploaded
+// shape as the platform's, but tenant-scoped. getAvailableTemplates
+// is the real picker: merges the tenant's own templates with
+// platform-published ones (via PlatformContractTemplateService,
+// injected from super_admin), each tagged with a real source so the
+// frontend knows where it came from. ──────────────────────────────
+
+@Injectable()
+export class TenantContractTemplateService {
+  constructor(
+    @InjectModel(TenantContractTemplate.name)
+    private readonly model: Model<TenantContractTemplateDocument>,
+    private readonly platformTemplateService: PlatformContractTemplateService,
+  ) {}
+
+  async getAll(tenantId: string) {
+    return this.model
+      .find({ tenantId: new Types.ObjectId(tenantId) })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  async getById(tenantId: string, id: string) {
+    const t = await this.model
+      .findOne({ _id: id, tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+    if (!t) throw new NotFoundException('Template not found');
+    return t;
+  }
+
+  async create(tenantId: string, dto: CreateTenantTemplateDto) {
+    const created = await this.model.create({
+      tenantId: new Types.ObjectId(tenantId),
+      title: dto.title,
+      type: dto.type,
+      jurisdiction: dto.jurisdiction ?? '',
+      description: dto.description ?? '',
+      sourceType: TenantTemplateSourceType.AUTHORED,
+      content: dto.content,
+    });
+    return created.toObject();
+  }
+
+  async upload(
+    tenantId: string,
+    file: Express.Multer.File,
+    dto: UploadTenantTemplateDto,
+  ) {
+    if (!file) throw new BadRequestException('No file uploaded.');
+    const created = await this.model.create({
+      tenantId: new Types.ObjectId(tenantId),
+      title: dto.title,
+      type: dto.type,
+      jurisdiction: dto.jurisdiction ?? '',
+      description: dto.description ?? '',
+      sourceType: TenantTemplateSourceType.UPLOADED,
+      content: '',
+      fileUrl: toFileUrl(file.path),
+      fileName: file.originalname,
+      fileMimeType: file.mimetype,
+      filePath: file.path,
+    });
+    return created.toObject();
+  }
+
+  async replaceFile(tenantId: string, id: string, file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('No file uploaded.');
+    const t = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!t) throw new NotFoundException('Template not found');
+    if (t.sourceType !== TenantTemplateSourceType.UPLOADED) {
+      throw new BadRequestException(
+        'This template is authored, not uploaded — edit its content instead of replacing a file.',
+      );
+    }
+    if (t.filePath && fs.existsSync(t.filePath)) {
+      fs.unlinkSync(t.filePath);
+    }
+    t.fileUrl = toFileUrl(file.path);
+    t.fileName = file.originalname;
+    t.fileMimeType = file.mimetype;
+    t.filePath = file.path;
+    await t.save();
+    return t.toObject();
+  }
+
+  async update(tenantId: string, id: string, dto: UpdateTenantTemplateDto) {
+    const t = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!t) throw new NotFoundException('Template not found');
+    if (t.sourceType !== TenantTemplateSourceType.AUTHORED) {
+      throw new BadRequestException(
+        'This template was uploaded as a file — replace the file instead of editing content.',
+      );
+    }
+    t.title = dto.title;
+    t.type = dto.type;
+    t.jurisdiction = dto.jurisdiction ?? '';
+    t.description = dto.description ?? '';
+    t.content = dto.content;
+    await t.save();
+    return t.toObject();
+  }
+
+  async delete(tenantId: string, id: string) {
+    const t = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!t) throw new NotFoundException('Template not found');
+    if (t.filePath && fs.existsSync(t.filePath)) {
+      fs.unlinkSync(t.filePath);
+    }
+    await t.deleteOne();
+    return { deleted: true };
+  }
+
+  // The real picker — merges real platform-published templates with
+  // the tenant's own real templates. Only Published platform
+  // templates are ever included; a tenant never sees another
+  // tenant's own templates, since getAll is already tenant-scoped.
+  async getAvailableTemplates(tenantId: string) {
+    const [platform, own] = await Promise.all([
+      this.platformTemplateService.getAll(),
+      this.getAll(tenantId),
+    ]);
+    const publishedPlatform = (platform as any[]).filter(
+      (t) => t.status === 'Published',
+    );
+    return [
+      ...publishedPlatform.map((t) => ({ ...t, source: 'platform' as const })),
+      ...(own as any[]).map((t) => ({ ...t, source: 'tenant' as const })),
+    ];
+  }
+}
+
+// ── Letterhead — one real uploaded image per tenant, used at the
+// top of generated contract PDFs in a later stage. Re-uploading
+// replaces the existing real file on disk, same discipline the
+// engagement letter upload already follows. ───────────────────────
+
+@Injectable()
+export class TenantLetterheadService {
+  constructor(
+    @InjectModel(TenantLetterhead.name)
+    private readonly model: Model<TenantLetterheadDocument>,
+  ) {}
+
+  async getMine(tenantId: string) {
+    return this.model
+      .findOne({ tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+  }
+
+  async upload(tenantId: string, file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('No file uploaded.');
+    const tId = new Types.ObjectId(tenantId);
+    const existing = await this.model.findOne({ tenantId: tId });
+    if (existing) {
+      if (existing.imagePath && fs.existsSync(existing.imagePath)) {
+        fs.unlinkSync(existing.imagePath);
+      }
+      existing.imageUrl = toFileUrl(file.path);
+      existing.imagePath = file.path;
+      existing.imageMimeType = file.mimetype;
+      await existing.save();
+      return existing.toObject();
+    }
+    const created = await this.model.create({
+      tenantId: tId,
+      imageUrl: toFileUrl(file.path),
+      imagePath: file.path,
+      imageMimeType: file.mimetype,
+    });
+    return created.toObject();
+  }
+
+  async delete(tenantId: string) {
+    const existing = await this.model.findOne({
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!existing) throw new NotFoundException('No letterhead uploaded.');
+    if (existing.imagePath && fs.existsSync(existing.imagePath)) {
+      fs.unlinkSync(existing.imagePath);
+    }
+    await existing.deleteOne();
+    return { deleted: true };
   }
 }
