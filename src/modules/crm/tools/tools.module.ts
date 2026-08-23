@@ -32,6 +32,7 @@ import {
   ClientNewsletterService,
   CalendarEventService,
   CalendarAggregationService,
+  CampaignSchedulerService,
 } from './services';
 import {
   CommentController,
@@ -68,6 +69,7 @@ import {
     ClientNewsletterService,
     CalendarEventService,
     CalendarAggregationService,
+    CampaignSchedulerService,
     EmailService,
   ],
   controllers: [

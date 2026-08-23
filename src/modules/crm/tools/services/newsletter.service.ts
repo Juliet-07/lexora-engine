@@ -1,9 +1,11 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -21,6 +23,7 @@ import {
   CreateSegmentDto,
   UpdateSegmentDto,
   CreateCampaignDto,
+  UpdateCampaignDto,
   ScheduleCampaignDto,
   SendTestDto,
 } from '../dtos';
@@ -323,6 +326,80 @@ export class CampaignService {
     return c.toObject();
   }
 
+  // Real way back from Scheduled — clears scheduledAt and returns
+  // to Draft, so a campaign scheduled by mistake (or one the sender
+  // wants to hold and re-send-now instead) isn't stuck waiting for
+  // its original time with no path except that one, fixed schedule.
+  async unschedule(tenantId: string, id: string) {
+    const c = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!c) throw new NotFoundException('Campaign not found');
+    if (c.status !== CampaignStatus.SCHEDULED) {
+      throw new BadRequestException(
+        'Only a scheduled campaign can be unscheduled',
+      );
+    }
+    c.status = CampaignStatus.DRAFT;
+    c.scheduledAt = null;
+    await c.save();
+    return c.toObject();
+  }
+
+  // Real content editing — allowed for Draft and Scheduled (nothing
+  // has actually gone out yet in either state), refused once Sending
+  // or Sent, since real recipients may already have real copies. If
+  // the target segment changed, recipients are genuinely re-resolved
+  // against it — the old snapshot would otherwise silently describe
+  // the wrong audience.
+  async update(tenantId: string, id: string, dto: UpdateCampaignDto) {
+    const c = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!c) throw new NotFoundException('Campaign not found');
+    if (
+      c.status !== CampaignStatus.DRAFT &&
+      c.status !== CampaignStatus.SCHEDULED
+    ) {
+      throw new BadRequestException(
+        'This campaign has already been sent or is sending — it can no longer be edited',
+      );
+    }
+
+    if (String(c.segmentId) !== dto.segmentId) {
+      const segment = await this.segmentService.getById(
+        tenantId,
+        dto.segmentId,
+      );
+      const members = await this.segmentService.resolveMembers(
+        tenantId,
+        segment as any,
+      );
+      c.segmentId = new Types.ObjectId(dto.segmentId);
+      c.segmentName = segment.name;
+      c.recipients = members.map((m) => ({
+        clientId: new Types.ObjectId(m._id),
+        clientName: m.name,
+        email: m.email,
+        delivered: false,
+        deliveryError: null,
+        opened: false,
+        clicked: false,
+        rsvped: false,
+      })) as any;
+    }
+
+    c.name = dto.name;
+    c.type = dto.type;
+    c.subject = dto.subject ?? '';
+    c.body = dto.body ?? '';
+    c.event = dto.type === 'Event invite' ? ((dto.event as any) ?? {}) : null;
+    await c.save();
+    return c.toObject();
+  }
+
   private renderHtml(campaign: { subject: string; body: string; event: any }) {
     if (!campaign.event) return campaign.body;
     return `
@@ -557,5 +634,46 @@ export class ClientNewsletterService {
     await this.campaignService.markOpenedByClient(tenantId, id, clientUserId);
     const updated = await this.model.findOne({ _id: id }).lean();
     return this.sanitizeForClient(updated, clientUserId);
+  }
+}
+
+// ── The piece scheduling was missing — a real background job that
+// actually sends a campaign once its scheduled time arrives, rather
+// than "Scheduled" being a status nothing ever acts on. Runs every
+// minute, which is precise enough for a firm-internal comms tool
+// without being wasteful. Reuses CampaignService.sendNow for the
+// actual send, so a scheduled send and a manual "Send now" can never
+// diverge in behaviour — one real send path, two real triggers. ────
+
+@Injectable()
+export class CampaignSchedulerService {
+  private readonly logger = new Logger(CampaignSchedulerService.name);
+
+  constructor(
+    @InjectModel(Campaign.name)
+    private readonly model: Model<CampaignDocument>,
+    private readonly campaignService: CampaignService,
+  ) {}
+
+  @Cron(CronExpression.EVERY_MINUTE)
+  async sendDueCampaigns(): Promise<void> {
+    const due = await this.model
+      .find({
+        status: CampaignStatus.SCHEDULED,
+        scheduledAt: { $lte: new Date() },
+      })
+      .select('_id tenantId')
+      .lean();
+
+    for (const c of due) {
+      try {
+        await this.campaignService.sendNow(String(c.tenantId), String(c._id));
+        this.logger.log(`Sent scheduled campaign ${c._id}`);
+      } catch (err: any) {
+        this.logger.error(
+          `Failed to send scheduled campaign ${c._id}: ${err?.message}`,
+        );
+      }
+    }
   }
 }

@@ -18,6 +18,7 @@ import {
   CreateSegmentDto,
   UpdateSegmentDto,
   CreateCampaignDto,
+  UpdateCampaignDto,
   ScheduleCampaignDto,
   SendTestDto,
   MarkDraftConvertedDto,
@@ -124,6 +125,20 @@ export class CampaignController {
     return this.service.create(t || u, dto);
   }
 
+  @Patch(':id')
+  @ApiOperation({
+    summary:
+      'Edit a campaign — allowed while Draft or Scheduled; refused once Sending or Sent',
+  })
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateCampaignDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.update(t || u, id, dto);
+  }
+
   @Post(':id/duplicate')
   @ApiOperation({ summary: 'Duplicate a campaign as a new draft' })
   duplicate(
@@ -153,6 +168,18 @@ export class CampaignController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.schedule(t || u, id, dto);
+  }
+
+  @Post(':id/unschedule')
+  @ApiOperation({
+    summary: 'Cancel a scheduled send and return the campaign to Draft',
+  })
+  unschedule(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.unschedule(t || u, id);
   }
 
   @Post(':id/send-now')

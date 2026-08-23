@@ -58,6 +58,13 @@ export class CreateCampaignDto {
   event?: CampaignEventDetailsDto;
 }
 
+// Same real fields as create — editing a draft or still-scheduled
+// campaign is genuinely the same shape of change as creating one.
+// If segmentId differs from the campaign's current one, the service
+// re-resolves real recipients against the new segment, since
+// nothing has actually been sent yet.
+export class UpdateCampaignDto extends CreateCampaignDto {}
+
 export class ScheduleCampaignDto {
   @ApiProperty() @IsDateString() scheduledAt: string;
 }
