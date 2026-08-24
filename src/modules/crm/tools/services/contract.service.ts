@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -280,13 +281,19 @@ export class ContractService {
 
   async create(tenantId: string, dto: CreateContractDto) {
     const tId = new Types.ObjectId(tenantId);
+    const { counterparty, counterpartyEmail } = await this.resolveCounterparty(
+      tenantId,
+      dto.clientId,
+      dto.counterparty,
+      dto.counterpartyEmail,
+    );
     const ref = await this.nextRef(tId);
     const created = await this.model.create({
       tenantId: tId,
       ref,
       title: dto.title,
-      counterparty: dto.counterparty,
-      counterpartyEmail: dto.counterpartyEmail,
+      counterparty,
+      counterpartyEmail,
       type: dto.type,
       value: dto.value ?? 0,
       currency: dto.currency ?? 'USD',
@@ -482,17 +489,47 @@ export class ContractService {
 
   // ── E-signature workflow (Stage 3) ──────────────────────────
 
+  // Real, tenant-scoped client lookup — without the tenantId check
+  // a tenant could pass another tenant's client id and pull their
+  // real name/email into a contract that isn't theirs.
   private async resolveClientDisplay(
+    tenantId: string,
     clientId: string | undefined,
   ): Promise<{ name: string; email: string } | null> {
     if (!clientId) return null;
-    const client = await this.userModel.findById(clientId).lean();
+    const client = await this.userModel
+      .findOne({ _id: clientId, tenantId: new Types.ObjectId(tenantId) })
+      .lean();
     if (!client) throw new NotFoundException('Client not found');
     const name =
       [client.firstName, client.lastName].filter(Boolean).join(' ') ||
       client.clientProfile?.companyName ||
       client.email;
     return { name, email: client.email };
+  }
+
+  // Two real, distinct paths for who a contract is with — a
+  // registered client (name/email derived from the real client
+  // record, authoritative, never trusted from the request body) or
+  // an external party (a vendor/consultant who isn't a platform
+  // user at all, whose name/email genuinely can only come from what
+  // the tenant typed in). Exactly one of these must be real.
+  private async resolveCounterparty(
+    tenantId: string,
+    clientId: string | undefined,
+    fallbackName: string | undefined,
+    fallbackEmail: string | undefined,
+  ): Promise<{ counterparty: string; counterpartyEmail: string }> {
+    const client = await this.resolveClientDisplay(tenantId, clientId);
+    if (client) {
+      return { counterparty: client.name, counterpartyEmail: client.email };
+    }
+    if (!fallbackName || !fallbackEmail) {
+      throw new BadRequestException(
+        'Pick a registered client, or provide both a name and email for an external party.',
+      );
+    }
+    return { counterparty: fallbackName, counterpartyEmail: fallbackEmail };
   }
 
   // Real generation from a real template — authored or uploaded,
@@ -523,13 +560,19 @@ export class ContractService {
     }
 
     const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const { counterparty, counterpartyEmail } = await this.resolveCounterparty(
+      tenantId,
+      dto.clientId,
+      dto.counterparty,
+      dto.counterpartyEmail,
+    );
 
     // Real merge-field substitution for both — an uploaded template's
     // content is now real, extracted HTML (via mammoth at upload
     // time), not a placeholder, so it gets the same treatment an
     // authored template's content does.
     const fields: Record<string, string> = {
-      counterpartyName: dto.counterparty,
+      counterpartyName: counterparty,
       tenantCompanyName: businessName,
       contractValue: dto.value != null ? String(dto.value) : '',
       contractCurrency: dto.currency ?? 'USD',
@@ -545,8 +588,8 @@ export class ContractService {
       tenantId: tId,
       ref,
       title: dto.title,
-      counterparty: dto.counterparty,
-      counterpartyEmail: dto.counterpartyEmail,
+      counterparty,
+      counterpartyEmail,
       type: dto.type,
       stage: ContractStage.DRAFT,
       value: dto.value ?? 0,
@@ -619,22 +662,42 @@ export class ContractService {
       message: null,
       tenantUserId: null,
     } as any);
+
+    // Two real, distinct delivery paths. A registered client signs
+    // through their own authenticated portal — no token needed, so
+    // none is issued for this path, and the email links to the
+    // client app rather than a public link. An external party (no
+    // clientId) genuinely has no platform account to log into, so
+    // they keep the real, token-gated public signing link.
+    const isRegisteredClient = !!contract.clientId;
+    let signingUrl: string;
+    if (isRegisteredClient) {
+      const clientBaseUrl = process.env.CLIENT_APP_URL;
+      if (!clientBaseUrl) {
+        throw new Error(
+          'CLIENT_APP_URL is not configured — cannot build a valid contract link',
+        );
+      }
+      signingUrl = `${clientBaseUrl}/contracts`;
+    } else {
+      const tenantBaseUrl = process.env.TENANT_APP_URL;
+      if (!tenantBaseUrl) {
+        throw new Error(
+          'TENANT_APP_URL is not configured — cannot build a valid signing link',
+        );
+      }
+      const token = await this.issueSigningToken(
+        contract,
+        dto.expiresInHours ?? DEFAULT_SIGNING_EXPIRY_HOURS,
+      );
+      signingUrl = `${tenantBaseUrl}/sign-tool-contract/${token}`;
+    }
+
     await contract.save();
 
-    const token = await this.issueSigningToken(
-      contract,
-      dto.expiresInHours ?? DEFAULT_SIGNING_EXPIRY_HOURS,
-    );
-
-    const baseUrl = process.env.TENANT_APP_URL;
-    if (!baseUrl) {
-      throw new Error(
-        'TENANT_APP_URL is not configured — cannot build a valid signing link',
-      );
-    }
     try {
       // Real PDF of the contract as it stands right now, attached
-      // alongside the signing link — so the counterparty has a real
+      // alongside the link — so the counterparty has a real
       // document in hand, not just a link to click through.
       const businessName = await resolveBusinessName(this.userModel, tenantId);
       const letterhead = await this.letterheadService.getMine(tenantId);
@@ -648,7 +711,7 @@ export class ContractService {
         {
           to: contract.counterpartyEmail,
           signerName: contract.counterparty,
-          signingUrl: `${baseUrl}/sign-tool-contract/${token}`,
+          signingUrl,
         },
         pdfBuffer,
       );
@@ -1159,5 +1222,195 @@ export class TenantContractTemplateService {
       ...publishedPlatform.map((t) => ({ ...t, source: 'platform' as const })),
       ...(own as any[]).map((t) => ({ ...t, source: 'tenant' as const })),
     ];
+  }
+}
+
+// ── Client-facing — a registered client viewing, signing, and
+// commenting on contracts sent to them, through their own
+// authenticated client-portal session. No token involved at all:
+// identity comes from the real, logged-in clientId, matching the
+// established crm/client-* pattern (ClientInvoiceService,
+// ClientNewsletterService). This is the counterpart to the public,
+// token-gated signing controller — that one exists specifically
+// because an external party (vendor, consultant) has no platform
+// account to log into; a registered client always does. ───────────
+
+@Injectable()
+export class ClientToolContractService {
+  constructor(
+    @InjectModel(ToolContract.name)
+    private readonly model: Model<ToolContractDocument_>,
+    private readonly emailService: EmailService,
+  ) {}
+
+  private sanitizeForClient(c: any) {
+    return {
+      _id: c._id,
+      ref: c.ref,
+      title: c.title,
+      type: c.type,
+      renderedBody: c.renderedBody,
+      signatureStatus: c.signatureStatus,
+      interactions: c.interactions,
+      signature: c.signature,
+      tenantSignature: c.tenantSignature,
+      expiresOn: c.expiresOn,
+      declinedAt: c.declinedAt,
+      declineReason: c.declineReason,
+    };
+  }
+
+  // Real ownership check on every call — a client only ever sees
+  // their own real contracts, and only once the tenant has actually
+  // sent it (a draft they haven't received yet stays invisible).
+  private async getOwnedContract(
+    tenantId: string,
+    clientUserId: string,
+    contractId: string,
+  ): Promise<ToolContractDocument_> {
+    const contract = await this.model.findOne({
+      _id: contractId,
+      tenantId: new Types.ObjectId(tenantId),
+      clientId: new Types.ObjectId(clientUserId),
+    });
+    if (!contract) throw new NotFoundException('Contract not found');
+    if (contract.signatureStatus === SignatureStatus.NOT_SENT) {
+      throw new ForbiddenException(
+        'This contract has not been sent to you yet.',
+      );
+    }
+    return contract;
+  }
+
+  async getMyContracts(tenantId: string, clientUserId: string) {
+    const contracts = await this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        clientId: new Types.ObjectId(clientUserId),
+        signatureStatus: { $ne: SignatureStatus.NOT_SENT },
+      })
+      .sort({ updatedAt: -1 })
+      .lean();
+    return contracts.map((c) => this.sanitizeForClient(c));
+  }
+
+  async getMyContract(tenantId: string, clientUserId: string, id: string) {
+    const contract = await this.getOwnedContract(tenantId, clientUserId, id);
+    contract.interactions.push({
+      type: ToolContractInteractionType.VIEWED,
+      occurredAt: new Date(),
+      actor: 'signer',
+      message: null,
+      tenantUserId: null,
+    } as any);
+    await contract.save();
+    return this.sanitizeForClient(contract.toObject());
+  }
+
+  async submitComment(
+    tenantId: string,
+    clientUserId: string,
+    id: string,
+    message: string,
+  ) {
+    const contract = await this.getOwnedContract(tenantId, clientUserId, id);
+    if (
+      contract.signatureStatus === SignatureStatus.SIGNED ||
+      contract.signatureStatus === SignatureStatus.COUNTERSIGNED ||
+      contract.signatureStatus === SignatureStatus.DECLINED
+    ) {
+      throw new ConflictException(
+        'This contract is already finalized and can no longer receive comments.',
+      );
+    }
+    contract.interactions.push({
+      type: ToolContractInteractionType.COMMENT,
+      occurredAt: new Date(),
+      actor: 'signer',
+      message,
+      tenantUserId: null,
+    } as any);
+    await contract.save();
+    return this.sanitizeForClient(contract.toObject());
+  }
+
+  async sign(
+    tenantId: string,
+    clientUserId: string,
+    id: string,
+    dto: SubmitContractSignatureDto,
+    ipAddress: string | null,
+    userAgent: string | null,
+  ) {
+    const contract = await this.getOwnedContract(tenantId, clientUserId, id);
+    if (
+      contract.signatureStatus === SignatureStatus.SIGNED ||
+      contract.signatureStatus === SignatureStatus.COUNTERSIGNED
+    ) {
+      throw new ConflictException('This contract has already been signed.');
+    }
+    if (contract.signatureStatus === SignatureStatus.DECLINED) {
+      throw new ConflictException(
+        'This contract was declined and can no longer be signed.',
+      );
+    }
+
+    const signedAt = new Date();
+    contract.signatureStatus = SignatureStatus.SIGNED;
+    contract.signature = {
+      signedAt,
+      signerName: dto.signerName,
+      signatureImageData: dto.signatureImageData ?? null,
+      ipAddress,
+      userAgent,
+    } as any;
+    contract.interactions.push({
+      type: ToolContractInteractionType.SIGNED,
+      occurredAt: signedAt,
+      actor: 'signer',
+      message: null,
+      tenantUserId: null,
+    } as any);
+    await contract.save();
+
+    try {
+      await this.emailService.sendContractSignedConfirmation({
+        to: contract.counterpartyEmail,
+        signerName: contract.counterparty,
+      });
+    } catch (err) {
+      console.error(
+        `Failed to send signed-confirmation email for contract ${id}:`,
+        err,
+      );
+    }
+    return this.sanitizeForClient(contract.toObject());
+  }
+
+  async decline(
+    tenantId: string,
+    clientUserId: string,
+    id: string,
+    reason: string | undefined,
+  ) {
+    const contract = await this.getOwnedContract(tenantId, clientUserId, id);
+    if (
+      contract.signatureStatus === SignatureStatus.SIGNED ||
+      contract.signatureStatus === SignatureStatus.COUNTERSIGNED
+    ) {
+      throw new ConflictException('This contract has already been signed.');
+    }
+    contract.signatureStatus = SignatureStatus.DECLINED;
+    contract.declinedAt = new Date();
+    contract.declineReason = reason ?? null;
+    contract.interactions.push({
+      type: ToolContractInteractionType.DECLINED,
+      occurredAt: new Date(),
+      actor: 'signer',
+      message: reason ?? null,
+      tenantUserId: null,
+    } as any);
+    await contract.save();
+    return this.sanitizeForClient(contract.toObject());
   }
 }

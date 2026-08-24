@@ -29,18 +29,20 @@ export class ToggleReactionDto {
 
 export class CreateContractDto {
   @ApiProperty() @IsString() title: string;
-  @ApiProperty() @IsString() counterparty: string;
-  @ApiProperty() @IsEmail() counterpartyEmail: string;
+  // Real link to a registered client — when set, name/email are
+  // derived from the real client record server-side, never trusted
+  // from these fields below. When not set, both fields below are
+  // required (an external party — vendor, consultant — who isn't a
+  // registered platform user at all).
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() clientId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() counterparty?: string;
+  @ApiPropertyOptional() @IsOptional() @IsEmail() counterpartyEmail?: string;
   @ApiProperty({ enum: ContractType }) @IsEnum(ContractType) type: ContractType;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) value?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiProperty() @IsDateString() expiresOn: string;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() autoRenew?: boolean;
   @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
-  // Real link to a registered client — the primary counterparty
-  // relationship. Optional, since many counterparties (vendors,
-  // suppliers) aren't registered platform clients at all.
-  @ApiPropertyOptional() @IsOptional() @IsMongoId() clientId?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() mandateName?: string;
   // Real, directly-authored contract content — lets a tenant type
@@ -114,16 +116,17 @@ export class GenerateFromTemplateDto {
   // than guess a mapping between two enums that only partially
   // overlap, the person picks the real contract type directly.
   @ApiProperty({ enum: ContractType }) @IsEnum(ContractType) type: ContractType;
-  @ApiProperty() @IsString() counterparty: string;
-  @ApiProperty() @IsEmail() counterpartyEmail: string;
+  // Real link to a registered client — when set, name/email are
+  // derived from the real client record server-side. When not set,
+  // both fields below are required (an external party).
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() clientId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() counterparty?: string;
+  @ApiPropertyOptional() @IsOptional() @IsEmail() counterpartyEmail?: string;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) value?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiProperty() @IsDateString() expiresOn: string;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() autoRenew?: boolean;
   @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
-  // Real link to a registered client — the primary counterparty
-  // relationship for a generated contract.
-  @ApiPropertyOptional() @IsOptional() @IsMongoId() clientId?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() mandateName?: string;
 }

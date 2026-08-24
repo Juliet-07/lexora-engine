@@ -42,6 +42,7 @@ import {
   ContractService,
   TenantContractTemplateService,
   TenantLetterheadService,
+  ClientToolContractService,
 } from '../services';
 import {
   CreateContractDto,
@@ -696,5 +697,85 @@ export class ToolContractSigningController {
     @Body() dto: DeclineContractSigningDto,
   ) {
     return this.service.decline(token, dto.reason);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CLIENT-FACING — a registered client's own authenticated view of
+// contracts sent to them. Same crm/client-* convention as
+// ClientInvoiceController/ClientNewsletterController: no token
+// involved, identity comes from the logged-in session. This is the
+// counterpart to ToolContractSigningController above — that one is
+// for external parties with no platform account at all.
+// ═══════════════════════════════════════════════════════════════
+
+@ApiTags('CRM — Client Contracts')
+@ApiBearerAuth()
+@UserTypes(UserType.CLIENT)
+@Controller('crm/client-contracts')
+export class ClientToolContractController {
+  constructor(private readonly service: ClientToolContractService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'My own real, sent contracts' })
+  getMyContracts(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getMyContracts(t || u, u);
+  }
+
+  @Get(':id')
+  @ApiOperation({
+    summary:
+      'One of my own contracts — marks it viewed, a real interaction on the audit trail',
+  })
+  getMyContract(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getMyContract(t || u, u, id);
+  }
+
+  @Post(':id/comment')
+  @ApiOperation({
+    summary: 'Submit a comment or requested change before signing',
+  })
+  submitComment(
+    @Param('id') id: string,
+    @Body() dto: SubmitContractCommentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.submitComment(t || u, u, id, dto.message);
+  }
+
+  @Post(':id/sign')
+  @ApiOperation({ summary: 'Sign the contract' })
+  sign(
+    @Param('id') id: string,
+    @Body() dto: SubmitContractSignatureDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Req() req: Request,
+  ) {
+    const ipAddress =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.ip ||
+      null;
+    const userAgent = req.headers['user-agent'] || null;
+    return this.service.sign(t || u, u, id, dto, ipAddress, userAgent);
+  }
+
+  @Post(':id/decline')
+  @ApiOperation({ summary: 'Decline the contract' })
+  decline(
+    @Param('id') id: string,
+    @Body() dto: DeclineContractSigningDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.decline(t || u, u, id, dto.reason);
   }
 }

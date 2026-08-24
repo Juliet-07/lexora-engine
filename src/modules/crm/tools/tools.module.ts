@@ -43,6 +43,7 @@ import {
   TenantContractTemplateService,
   TenantLetterheadService,
   ToolContractPdfService,
+  ClientToolContractService,
 } from './services';
 import {
   CommentController,
@@ -55,6 +56,7 @@ import {
   TenantContractTemplateController,
   TenantLetterheadController,
   ToolContractSigningController,
+  ClientToolContractController,
 } from './controllers';
 
 @Module({
@@ -96,6 +98,7 @@ import {
     TenantContractTemplateService,
     TenantLetterheadService,
     ToolContractPdfService,
+    ClientToolContractService,
     EmailService,
   ],
   controllers: [
@@ -109,6 +112,7 @@ import {
     TenantContractTemplateController,
     TenantLetterheadController,
     ToolContractSigningController,
+    ClientToolContractController,
   ],
   exports: [CommentService, ContractService, SegmentService, CampaignService],
 })
