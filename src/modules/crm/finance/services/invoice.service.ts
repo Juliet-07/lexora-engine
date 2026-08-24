@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import * as fs from 'fs';
 import {
   Invoice,
   InvoiceDocument,
@@ -44,6 +45,18 @@ import { WhtDirection, EbmStatus } from '../schemas';
 import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
 import { GlSource } from '../schemas';
 import { buildInvoicePdf } from 'src/common/utils/pdf/invoice.util';
+
+// Same real conversion used across the app's other upload
+// features — filePath may be absolute or relative, so only the
+// part from 'uploads/' onwards is kept, then prefixed with the
+// real configured APP_URL.
+function toFileUrl(filePath: string): string {
+  const rawPath = filePath.replace(/\\/g, '/');
+  const uploadsIndex = rawPath.indexOf('uploads/');
+  const relativePath =
+    uploadsIndex !== -1 ? rawPath.slice(uploadsIndex) : rawPath;
+  return `${process.env.APP_URL}/${relativePath}`;
+}
 
 @Injectable()
 export class InvoiceService {
@@ -510,11 +523,23 @@ export class InvoiceService {
     id: string,
     action: ClientInvoiceAction,
     note: string | null,
+    proofOfPaymentFile?: Express.Multer.File | null,
   ) {
     const i = await this.getRawDoc(tenantId, id);
     i.clientAction = action;
     i.clientActionAt = new Date();
     i.clientActionNote = note;
+    if (proofOfPaymentFile) {
+      // Real file, real proof — replaces any earlier attempt's
+      // file on disk rather than leaving orphaned uploads behind.
+      if (i.proofOfPaymentFilePath && fs.existsSync(i.proofOfPaymentFilePath)) {
+        fs.unlinkSync(i.proofOfPaymentFilePath);
+      }
+      i.proofOfPaymentUrl = toFileUrl(proofOfPaymentFile.path);
+      i.proofOfPaymentFileName = proofOfPaymentFile.originalname;
+      i.proofOfPaymentMimeType = proofOfPaymentFile.mimetype;
+      i.proofOfPaymentFilePath = proofOfPaymentFile.path;
+    }
     await i.save();
     return this.normalize(i.toObject());
   }
@@ -528,6 +553,13 @@ export class InvoiceService {
     i.clientAction = null;
     i.clientActionAt = null;
     i.clientActionNote = null;
+    if (i.proofOfPaymentFilePath && fs.existsSync(i.proofOfPaymentFilePath)) {
+      fs.unlinkSync(i.proofOfPaymentFilePath);
+    }
+    i.proofOfPaymentUrl = null;
+    i.proofOfPaymentFileName = null;
+    i.proofOfPaymentMimeType = null;
+    i.proofOfPaymentFilePath = null;
     await i.save();
     return this.normalize(i.toObject());
   }
@@ -842,6 +874,7 @@ export class ClientInvoiceService {
     clientUserId: string,
     id: string,
     dto: SetClientInvoiceStatusDto,
+    proofOfPaymentFile?: Express.Multer.File | null,
   ) {
     await this.getOwnedInvoice(tenantId, clientUserId, id);
     return this.invoiceService.setClientAction(
@@ -849,6 +882,7 @@ export class ClientInvoiceService {
       id,
       dto.action,
       dto.note ?? null,
+      proofOfPaymentFile,
     );
   }
 }

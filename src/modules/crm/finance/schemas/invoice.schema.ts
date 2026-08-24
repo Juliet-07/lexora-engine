@@ -123,6 +123,16 @@ export class Invoice {
   clientAction: ClientInvoiceAction | null;
   @Prop({ default: null }) clientActionAt: Date | null;
   @Prop({ default: null }) clientActionNote: string | null;
+
+  // Real proof-of-payment the client can attach when marking an
+  // invoice Paid — a receipt or transfer confirmation the tenant
+  // can actually see, not just a claim in words. Optional: the
+  // client may not have a file ready yet. Cleared alongside the
+  // rest of the claim when the tenant dismisses it.
+  @Prop({ default: null }) proofOfPaymentUrl: string | null;
+  @Prop({ default: null }) proofOfPaymentFileName: string | null;
+  @Prop({ default: null }) proofOfPaymentMimeType: string | null;
+  @Prop({ default: null }) proofOfPaymentFilePath: string | null;
 }
 export const InvoiceSchema = SchemaFactory.createForClass(Invoice);
 

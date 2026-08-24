@@ -7,13 +7,22 @@ import {
   Param,
   Query,
   Res,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
 import { Response } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
+import { existsSync, mkdirSync } from 'fs';
+import { v4 as uuidv4 } from 'uuid';
 import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
   ApiQuery,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
 import {
   InvoiceService,
@@ -250,6 +259,40 @@ export class PaymentPlanController {
   }
 }
 
+// Same real disk-storage convention used across the app's other
+// upload features — /uploads/{feature}/ with a UUID filename,
+// served back via main.ts's existing /uploads static route.
+const proofOfPaymentStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(process.cwd(), 'uploads', 'proof-of-payment');
+    if (!existsSync(uploadPath)) {
+      mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) => {
+    const ext = extname(file.originalname);
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
+const proofOfPaymentFileFilter = (
+  _req: any,
+  file: Express.Multer.File,
+  cb: any,
+) => {
+  const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(
+      new Error(
+        'Only PDF or image files (JPEG, PNG, WEBP) are accepted for proof of payment.',
+      ),
+      false,
+    );
+  }
+};
+
 // ── Client-facing — the tenant's own client viewing invoices
 // issued to them. Same crm/client-* URL convention client-projects,
 // client-tickets and client-kb-articles already use, so the client
@@ -307,17 +350,37 @@ export class ClientInvoiceController {
   }
 
   @Post(':id/status')
+  @UseInterceptors(
+    FileInterceptor('proofOfPayment', {
+      storage: proofOfPaymentStorage,
+      fileFilter: proofOfPaymentFileFilter,
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['action'],
+      properties: {
+        action: { type: 'string', enum: ['Paid', 'Cancelled'] },
+        note: { type: 'string' },
+        proofOfPayment: { type: 'string', format: 'binary' },
+      },
+    },
+  })
   @ApiOperation({
     summary:
-      "Mark the invoice Paid or Cancelled from the client's side — a claim the tenant sees and confirms, not a real payment by itself",
+      "Mark the invoice Paid or Cancelled from the client's side, optionally attaching proof of payment — a claim the tenant sees and confirms, not a real payment by itself",
   })
   markStatus(
     @Param('id') id: string,
     @Body() dto: SetClientInvoiceStatusDto,
+    @UploadedFile() proofOfPayment: Express.Multer.File | undefined,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.markStatus(t || u, u, id, dto);
+    return this.service.markStatus(t || u, u, id, dto, proofOfPayment);
   }
 }
 
