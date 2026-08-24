@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import { ToolContractDocument_ } from '../schemas';
+import { renderRichText } from 'src/common/utils/pdf/render-rich-text.util';
 
 const INK = '#2c2c2c';
 const MUTED = '#777777';
@@ -27,8 +28,13 @@ export class ToolContractPdfService {
   ) {
     if (letterheadPath && fs.existsSync(letterheadPath)) {
       try {
-        doc.image(letterheadPath, 50, 30, { width: 200 });
-        doc.y = 100;
+        // Bounded on both axes, not just width — a tall/narrow
+        // letterhead image scaled to a fixed width alone could run
+        // well past where the body text starts, overlapping it. fit
+        // guarantees the image never exceeds this box either way.
+        doc.image(letterheadPath, 50, 30, { fit: [200, 80] });
+        doc.x = 50;
+        doc.y = 30 + 80 + 15;
       } catch {
         this.drawPlainHeader(doc, firmName, title);
       }
@@ -53,6 +59,7 @@ export class ToolContractPdfService {
       .lineTo(doc.page.width - 50, 90)
       .strokeColor(RULE)
       .stroke();
+    doc.x = 50;
     doc.y = 105;
   }
 
@@ -75,15 +82,8 @@ export class ToolContractPdfService {
         letterheadPath,
       );
 
-      doc
-        .fillColor(INK)
-        .font('Helvetica')
-        .fontSize(11)
-        .text(contract.renderedBody, 50, doc.y, {
-          width: doc.page.width - 100,
-          align: 'left',
-          lineGap: 4,
-        });
+      doc.fillColor(INK);
+      renderRichText(doc, contract.renderedBody);
 
       if (doc.y > doc.page.height - 220) {
         doc.addPage();
@@ -212,15 +212,8 @@ export class ToolContractPdfService {
 
       this.drawHeader(doc, firmName, title, letterheadPath);
 
-      doc
-        .fillColor(INK)
-        .font('Helvetica')
-        .fontSize(11)
-        .text(renderedBody, 50, doc.y, {
-          width: doc.page.width - 100,
-          align: 'left',
-          lineGap: 4,
-        });
+      doc.fillColor(INK);
+      renderRichText(doc, renderedBody);
 
       doc
         .fontSize(8)

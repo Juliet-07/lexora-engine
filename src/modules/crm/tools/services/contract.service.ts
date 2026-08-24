@@ -906,6 +906,28 @@ export class ContractService {
     );
   }
 
+  // Real preview of the contract as a document — works at any
+  // status, so a tenant can see exactly what will be sent (real
+  // letterhead, real content) before it ever goes out. Same
+  // unsigned-layout PDF the send-for-signature email attaches, just
+  // available on demand rather than only at send time.
+  async getPreviewPdf(tenantId: string, contractId: string): Promise<Buffer> {
+    const contract = await this.getById(tenantId, contractId);
+    if (!contract.renderedBody) {
+      throw new BadRequestException(
+        'This contract has no content yet — add content or generate it from a template first.',
+      );
+    }
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const letterhead = await this.letterheadService.getMine(tenantId);
+    return this.pdfService.buildDraftContractPdf(
+      contract.renderedBody,
+      contract.title,
+      businessName,
+      (letterhead as any)?.imagePath ?? null,
+    );
+  }
+
   // ── SIGNER-FACING (public, token-gated) ──
 
   async getContractByToken(token: string): Promise<ToolContractDocument_> {

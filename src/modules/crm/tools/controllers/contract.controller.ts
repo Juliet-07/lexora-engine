@@ -398,6 +398,28 @@ export class ContractController {
     });
     res.send(buffer);
   }
+
+  @Get(':id/preview-pdf')
+  @ApiOperation({
+    summary:
+      'Preview the contract as a real document — works at any status, real letterhead, real current content',
+  })
+  async previewPdf(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.service.getPreviewPdf(t || u, id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      // Inline, not attachment — opens in a new tab as a genuine
+      // preview rather than forcing a download.
+      'Content-Disposition': `inline; filename="contract-preview-${id}.pdf"`,
+      'Content-Length': buffer.length,
+    });
+    res.send(buffer);
+  }
 }
 
 // ── Same real disk-storage convention already used for platform
