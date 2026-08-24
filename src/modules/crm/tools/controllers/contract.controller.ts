@@ -7,10 +7,15 @@ import {
   Body,
   Param,
   Query,
+  Req,
+  Res,
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
+import { Request, Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
@@ -27,7 +32,7 @@ import {
 import { CommentService } from '../services';
 import { AddCommentDto, EditCommentDto, ToggleReactionDto } from '../dtos';
 import { CommentSubjectType } from '../schemas';
-import { CurrentUser, UserTypes } from 'src/common/decorators';
+import { CurrentUser, UserTypes, Public } from 'src/common/decorators';
 import {
   PlatformModuleKey,
   UserType,
@@ -48,6 +53,14 @@ import {
   UpdateTenantTemplateDto,
   UploadTenantTemplateDto,
   SetObligationDoneDto,
+  GenerateFromTemplateDto,
+  SendForSignatureDto,
+  TenantRespondToCommentDto,
+  EditRenderedBodyDto,
+  CountersignToolContractDto,
+  SubmitContractCommentDto,
+  SubmitContractSignatureDto,
+  DeclineContractSigningDto,
 } from '../dtos';
 
 @ApiTags('CRM — Tools — Contracts')
@@ -281,6 +294,108 @@ export class ContractController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.setObligationDone(t || u, id, obligationId, dto);
+  }
+
+  // ── E-signature workflow ─────────────────────────────────
+
+  @Post('generate-from-template')
+  @ApiOperation({
+    summary:
+      'Generate a real contract from a template — authored or uploaded, platform or my own',
+  })
+  generateFromTemplate(
+    @Body() dto: GenerateFromTemplateDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.generateFromTemplate(t || u, dto);
+  }
+
+  @Post(':id/send-for-signature')
+  @ApiOperation({ summary: 'Send (or re-send) a contract for signature' })
+  sendForSignature(
+    @Param('id') id: string,
+    @Body() dto: SendForSignatureDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.sendForSignature(t || u, id, dto);
+  }
+
+  @Post(':id/respond')
+  @ApiOperation({
+    summary: "Respond to the counterparty's comment/negotiation",
+  })
+  respond(
+    @Param('id') id: string,
+    @Body() dto: TenantRespondToCommentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.respondToComment(t || u, id, u, dto);
+  }
+
+  @Patch(':id/body')
+  @ApiOperation({
+    summary:
+      'Edit the rendered body of a contract that has not yet been signed (Not Sent or Sent)',
+  })
+  editBody(
+    @Param('id') id: string,
+    @Body() dto: EditRenderedBodyDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.editRenderedBody(t || u, id, dto);
+  }
+
+  @Post(':id/countersign')
+  @ApiOperation({
+    summary:
+      'Countersign as the tenant — only after the counterparty has signed',
+  })
+  countersign(
+    @Param('id') id: string,
+    @Body() dto: CountersignToolContractDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Req() req: Request,
+  ) {
+    const ipAddress =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.ip ||
+      null;
+    const userAgent = req.headers['user-agent'] || null;
+    return this.service.countersign(t || u, id, u, dto, ipAddress, userAgent);
+  }
+
+  @Post(':id/send-signed-copy')
+  @ApiOperation({
+    summary: 'Email the fully executed copy to the counterparty',
+  })
+  sendSignedCopy(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.sendSignedCopy(t || u, id);
+  }
+
+  @Get(':id/pdf')
+  @ApiOperation({ summary: 'Download the fully executed contract as PDF' })
+  async downloadPdf(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.service.getSignedContractPdf(t || u, id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="contract-${id}.pdf"`,
+      'Content-Length': buffer.length,
+    });
+    res.send(buffer);
   }
 }
 
@@ -517,5 +632,70 @@ export class TenantLetterheadController {
   @ApiOperation({ summary: 'Remove my letterhead' })
   delete(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
     return this.service.delete(t || u);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PUBLIC, TOKEN-GATED — same reasoning HR's own ContractSigningController
+// uses: not decorated with @UserTypes or any auth guard, since the
+// counterparty is frequently not a registered platform user at all.
+// Route path deliberately distinct from HR's own 'contracts/sign'.
+// ═══════════════════════════════════════════════════════════════
+
+@ApiTags('CRM — Tools — Contracts — Public Signing (no auth)')
+@Public()
+@Controller('tools/contracts/sign')
+export class ToolContractSigningController {
+  constructor(private readonly service: ContractService) {}
+
+  @Get(':token')
+  @ApiOperation({
+    summary:
+      'View a contract via its signing token; also records a "viewed" interaction',
+  })
+  async getByToken(@Param('token') token: string) {
+    const contract = await this.service.getContractByToken(token);
+    this.service.recordView(token).catch((err) => {
+      console.error(`Failed to record view for token ${token}:`, err);
+    });
+    return contract;
+  }
+
+  @Post(':token/comment')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Submit a comment or requested change before signing',
+  })
+  submitComment(
+    @Param('token') token: string,
+    @Body() dto: SubmitContractCommentDto,
+  ) {
+    return this.service.submitComment(token, dto.message);
+  }
+
+  @Post(':token/sign')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Sign the contract — consumes the token' })
+  sign(
+    @Param('token') token: string,
+    @Body() dto: SubmitContractSignatureDto,
+    @Req() req: Request,
+  ) {
+    const ipAddress =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.ip ||
+      null;
+    const userAgent = req.headers['user-agent'] || null;
+    return this.service.sign(token, dto, ipAddress, userAgent);
+  }
+
+  @Post(':token/decline')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Decline the contract' })
+  decline(
+    @Param('token') token: string,
+    @Body() dto: DeclineContractSigningDto,
+  ) {
+    return this.service.decline(token, dto.reason);
   }
 }

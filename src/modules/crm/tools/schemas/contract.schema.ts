@@ -102,6 +102,75 @@ export class ContractAmendment {
 export const ContractAmendmentSchema =
   SchemaFactory.createForClass(ContractAmendment);
 
+// ── Real e-signature workflow — deliberately named with a Tool
+// prefix throughout (ToolContractInteraction, not ContractInteraction)
+// since HR already has its own class literally named
+// ContractInteraction on employment contracts. Mirrors HR's real,
+// working mechanics — just renamed and pointed at ToolContract
+// instead. ──────────────────────────────────────────────────────
+
+export enum SignatureStatus {
+  NOT_SENT = 'not_sent',
+  SENT = 'sent',
+  SIGNED = 'signed',
+  COUNTERSIGNED = 'countersigned',
+  DECLINED = 'declined',
+}
+export enum ToolContractInteractionType {
+  SENT = 'sent',
+  VIEWED = 'viewed',
+  COMMENT = 'comment',
+  TENANT_RESPONSE = 'tenant_response',
+  UPDATED = 'updated',
+  RESENT = 'resent',
+  SIGNED = 'signed',
+  COUNTERSIGNED = 'countersigned',
+  SIGNED_COPY_SENT = 'signed_copy_sent',
+  DECLINED = 'declined',
+}
+
+@Schema({ _id: false })
+export class ToolContractInteraction {
+  @Prop({ enum: ToolContractInteractionType, required: true })
+  type: ToolContractInteractionType;
+  @Prop({ required: true, default: () => new Date() })
+  occurredAt: Date;
+  @Prop({ enum: ['signer', 'tenant'], required: true })
+  actor: string;
+  @Prop({ default: null }) message: string | null;
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  tenantUserId: Types.ObjectId | null;
+}
+export const ToolContractInteractionSchema = SchemaFactory.createForClass(
+  ToolContractInteraction,
+);
+
+@Schema({ _id: false })
+export class ToolContractSignatureRecord {
+  @Prop({ required: true }) signedAt: Date;
+  @Prop({ required: true }) signerName: string;
+  @Prop({ default: null }) signatureImageData: string | null;
+  @Prop({ default: null }) ipAddress: string | null;
+  @Prop({ default: null }) userAgent: string | null;
+}
+export const ToolContractSignatureRecordSchema = SchemaFactory.createForClass(
+  ToolContractSignatureRecord,
+);
+
+@Schema({ _id: false })
+export class ToolContractTenantSignatureRecord {
+  @Prop({ required: true }) signedAt: Date;
+  @Prop({ required: true }) signerName: string;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  signedByUserId: Types.ObjectId;
+  @Prop({ default: null }) signatureImageData: string | null;
+  @Prop({ default: null }) stampImageData: string | null;
+  @Prop({ default: null }) ipAddress: string | null;
+  @Prop({ default: null }) userAgent: string | null;
+}
+export const ToolContractTenantSignatureRecordSchema =
+  SchemaFactory.createForClass(ToolContractTenantSignatureRecord);
+
 // Named ToolContract, not Contract — HR already has its own class
 // literally named Contract (employment contracts), and Mongoose
 // registers models by that name globally across the whole app, not
@@ -133,6 +202,16 @@ export class ToolContract {
 
   @Prop({ default: '' }) owner: string;
 
+  // Real link to a registered client (a User with userType Client),
+  // the primary counterparty relationship for a CRM contract —
+  // distinct from mandateId, which ties a contract to a specific
+  // engagement/project rather than to who the other party actually
+  // is. Optional: many contracts (vendor/supplier agreements) are
+  // with a counterparty who isn't a registered platform client at
+  // all, so this can't be required.
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null, index: true })
+  clientId: Types.ObjectId | null;
+
   @Prop({ type: Types.ObjectId, ref: 'Mandate', default: null })
   mandateId: Types.ObjectId | null;
   @Prop({ default: '' }) mandateName: string;
@@ -143,6 +222,34 @@ export class ToolContract {
   obligations: ContractObligation[];
   @Prop({ type: [ContractAmendmentSchema], default: [] })
   amendments: ContractAmendment[];
+
+  // ── E-signature workflow (Stage 3) ────────────────────────────
+  @Prop({ type: Types.ObjectId, ref: 'TenantContractTemplate', default: null })
+  templateId: Types.ObjectId | null;
+  @Prop({ default: null }) templateName: string | null;
+  // Real recipient for send-for-signature — distinct from
+  // `counterparty` (a free-text display name), since actually
+  // sending an email needs a real address.
+  @Prop({ default: '', lowercase: true }) counterpartyEmail: string;
+  // Merge-field-substituted (or directly authored) body — this is
+  // the contract's real, editable content.
+  @Prop({ default: '' }) renderedBody: string;
+  @Prop({ default: true }) requiresSignature: boolean;
+  @Prop({
+    enum: SignatureStatus,
+    default: SignatureStatus.NOT_SENT,
+    index: true,
+  })
+  signatureStatus: SignatureStatus;
+  @Prop({ type: [ToolContractInteractionSchema], default: [] })
+  interactions: ToolContractInteraction[];
+  @Prop({ type: ToolContractSignatureRecordSchema, default: null })
+  signature: ToolContractSignatureRecord | null;
+  @Prop({ type: ToolContractTenantSignatureRecordSchema, default: null })
+  tenantSignature: ToolContractTenantSignatureRecord | null;
+  @Prop({ default: null }) signedCopySentAt: Date | null;
+  @Prop({ default: null }) declinedAt: Date | null;
+  @Prop({ default: null }) declineReason: string | null;
 }
 export const ToolContractSchema = SchemaFactory.createForClass(ToolContract);
 
@@ -233,3 +340,30 @@ export class TenantLetterhead {
 }
 export const TenantLetterheadSchema =
   SchemaFactory.createForClass(TenantLetterhead);
+
+// ── Signing token — a separate document from ToolContract, same
+// reasoning HR's own SigningToken uses: a token has its own
+// lifecycle (issued, expires, consumed) distinct from the
+// contract's own signatureStatus. Named with a Tool prefix to avoid
+// colliding with HR's own SigningToken class. ──────────────────────
+
+export type ToolContractSigningTokenDocument = ToolContractSigningToken &
+  Document;
+
+@Schema({ timestamps: true, collection: 'crm_tools_contract_signing_tokens' })
+export class ToolContractSigningToken {
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'ToolContract',
+    required: true,
+    index: true,
+  })
+  contractId: Types.ObjectId;
+  @Prop({ required: true, unique: true, index: true }) token: string;
+  @Prop({ required: true }) expiresAt: Date;
+  @Prop({ default: null }) consumedAt: Date | null;
+  @Prop({ required: true, lowercase: true }) issuedToEmail: string;
+}
+export const ToolContractSigningTokenSchema = SchemaFactory.createForClass(
+  ToolContractSigningToken,
+);

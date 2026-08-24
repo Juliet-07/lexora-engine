@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import { Comment, CommentDocument, CommentSubjectType } from '../schemas';
 import { AddCommentDto, EditCommentDto, ToggleReactionDto } from '../dtos';
 import { EmployeeService } from 'src/modules/hr/services/employee.service';
@@ -19,6 +21,10 @@ import {
   TenantTemplateSourceType,
   TenantLetterhead,
   TenantLetterheadDocument,
+  ToolContractSigningToken,
+  ToolContractSigningTokenDocument,
+  ToolContractInteractionType,
+  SignatureStatus,
 } from '../schemas';
 import {
   CreateContractDto,
@@ -30,8 +36,21 @@ import {
   CreateTenantTemplateDto,
   UpdateTenantTemplateDto,
   UploadTenantTemplateDto,
+  GenerateFromTemplateDto,
+  SendForSignatureDto,
+  TenantRespondToCommentDto,
+  EditRenderedBodyDto,
+  CountersignToolContractDto,
+  SubmitContractSignatureDto,
 } from '../dtos';
 import { PlatformContractTemplateService } from 'src/modules/super_admin/services/contract-template.service';
+import { ToolContractPdfService } from './contract-pdf.service';
+import { EmailService } from 'src/common/utils/mailing/email.service';
+import { renderContractBody } from 'src/common/utils/contract-fields.util';
+import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+
+const DEFAULT_SIGNING_EXPIRY_HOURS = 168; // 7 days
 
 @Injectable()
 export class CommentService {
@@ -163,11 +182,75 @@ export class CommentService {
   }
 }
 
+// ── Letterhead — one real uploaded image per tenant, used at the
+// top of generated contract PDFs in a later stage. Re-uploading
+// replaces the existing real file on disk, same discipline the
+// engagement letter upload already follows. ───────────────────────
+
+@Injectable()
+export class TenantLetterheadService {
+  constructor(
+    @InjectModel(TenantLetterhead.name)
+    private readonly model: Model<TenantLetterheadDocument>,
+  ) {}
+
+  async getMine(tenantId: string) {
+    return this.model
+      .findOne({ tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+  }
+
+  async upload(tenantId: string, file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('No file uploaded.');
+    const tId = new Types.ObjectId(tenantId);
+    const existing = await this.model.findOne({ tenantId: tId });
+    if (existing) {
+      if (existing.imagePath && fs.existsSync(existing.imagePath)) {
+        fs.unlinkSync(existing.imagePath);
+      }
+      existing.imageUrl = toFileUrl(file.path);
+      existing.imagePath = file.path;
+      existing.imageMimeType = file.mimetype;
+      await existing.save();
+      return existing.toObject();
+    }
+    const created = await this.model.create({
+      tenantId: tId,
+      imageUrl: toFileUrl(file.path),
+      imagePath: file.path,
+      imageMimeType: file.mimetype,
+    });
+    return created.toObject();
+  }
+
+  async delete(tenantId: string) {
+    const existing = await this.model.findOne({
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!existing) throw new NotFoundException('No letterhead uploaded.');
+    if (existing.imagePath && fs.existsSync(existing.imagePath)) {
+      fs.unlinkSync(existing.imagePath);
+    }
+    await existing.deleteOne();
+    return { deleted: true };
+  }
+}
+
 @Injectable()
 export class ContractService {
   constructor(
     @InjectModel(ToolContract.name)
     private readonly model: Model<ToolContractDocument_>,
+    @InjectModel(TenantContractTemplate.name)
+    private readonly templateModel: Model<TenantContractTemplateDocument>,
+    @InjectModel(ToolContractSigningToken.name)
+    private readonly tokenModel: Model<ToolContractSigningTokenDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
+    private readonly letterheadService: TenantLetterheadService,
+    private readonly platformTemplateService: PlatformContractTemplateService,
+    private readonly pdfService: ToolContractPdfService,
+    private readonly emailService: EmailService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -202,14 +285,22 @@ export class ContractService {
       ref,
       title: dto.title,
       counterparty: dto.counterparty,
+      counterpartyEmail: dto.counterpartyEmail,
       type: dto.type,
       value: dto.value ?? 0,
       currency: dto.currency ?? 'USD',
       expiresOn: new Date(dto.expiresOn),
       autoRenew: dto.autoRenew ?? false,
       owner: dto.owner ?? '',
+      clientId: dto.clientId ? new Types.ObjectId(dto.clientId) : null,
       mandateId: dto.mandateId ? new Types.ObjectId(dto.mandateId) : null,
       mandateName: dto.mandateName ?? '',
+      // Real, directly-authored content — a contract doesn't need a
+      // template to have real text a tenant can review, edit, and
+      // eventually send for signature.
+      renderedBody: dto.content ?? '',
+      requiresSignature: true,
+      signatureStatus: SignatureStatus.NOT_SENT,
     });
     return created.toObject();
   }
@@ -298,6 +389,10 @@ export class ContractService {
     return c.toObject();
   }
 
+  // Real edit — when newBody is provided, the amendment doesn't
+  // just log a summary, it directly replaces the contract's real
+  // renderedBody. The amendment record is the audit trail of what
+  // changed, not a substitute for the change itself.
   async addAmendment(tenantId: string, id: string, dto: AddAmendmentDto) {
     const c = await this.model.findOne({
       _id: id,
@@ -306,6 +401,9 @@ export class ContractService {
     if (!c) throw new NotFoundException('Contract not found');
     const ref = `AMD-${String(c.amendments.length + 1).padStart(2, '0')}`;
     c.amendments.push({ ref, at: new Date(), summary: dto.summary } as any);
+    if (dto.newBody != null) {
+      c.renderedBody = dto.newBody;
+    }
     await c.save();
     return c.toObject();
   }
@@ -379,6 +477,485 @@ export class ContractService {
       }
     }
     return due.sort((a, b) => a.due.getTime() - b.due.getTime());
+  }
+
+  // ── E-signature workflow (Stage 3) ──────────────────────────
+
+  private async resolveClientDisplay(
+    clientId: string | undefined,
+  ): Promise<{ name: string; email: string } | null> {
+    if (!clientId) return null;
+    const client = await this.userModel.findById(clientId).lean();
+    if (!client) throw new NotFoundException('Client not found');
+    const name =
+      [client.firstName, client.lastName].filter(Boolean).join(' ') ||
+      client.clientProfile?.companyName ||
+      client.email;
+    return { name, email: client.email };
+  }
+
+  // Real generation from a real template — authored or uploaded,
+  // either a tenant's own or a published platform one. Authored
+  // templates get real merge-field substitution; uploaded ones
+  // (no text content to substitute) get an honest placeholder body
+  // the tenant is expected to fill in themselves — see the edit
+  // guard below, which allows editing immediately, before sending.
+  async generateFromTemplate(
+    tenantId: string,
+    dto: GenerateFromTemplateDto,
+  ): Promise<ToolContractDocument_> {
+    const tId = new Types.ObjectId(tenantId);
+
+    let template: any;
+    if (dto.templateSource === 'tenant') {
+      template = await this.templateModel
+        .findOne({ _id: dto.templateId, tenantId: tId })
+        .lean();
+      if (!template) throw new NotFoundException('Template not found');
+    } else {
+      template = await this.platformTemplateService.getById(dto.templateId);
+      if (template.status !== 'Published') {
+        throw new BadRequestException(
+          'This platform template is not published and cannot be used.',
+        );
+      }
+    }
+
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+
+    let renderedBody: string;
+    if (template.sourceType === 'authored') {
+      const fields: Record<string, string> = {
+        counterpartyName: dto.counterparty,
+        tenantCompanyName: businessName,
+        contractValue: dto.value != null ? String(dto.value) : '',
+        contractCurrency: dto.currency ?? 'USD',
+        effectiveDate: new Date().toISOString().slice(0, 10),
+        expiryDate: dto.expiresOn,
+        todayDate: new Date().toISOString().slice(0, 10),
+      };
+      renderedBody = renderContractBody(template.content, fields);
+    } else {
+      // Uploaded template — no text content exists to merge-field
+      // substitute. Real, honest placeholder rather than pretending
+      // there's real generated content; the tenant fills this in
+      // themselves (editing is allowed immediately, while Not Sent).
+      renderedBody = `<p><em>This contract was started from the uploaded template "${template.title}"${template.fileUrl ? ` (<a href="${template.fileUrl}" target="_blank" rel="noreferrer">download the original file</a>)` : ''}. Replace this placeholder with your real contract text before sending.</em></p>`;
+    }
+
+    const ref = await this.nextRef(tId);
+
+    const created = await this.model.create({
+      tenantId: tId,
+      ref,
+      title: dto.title,
+      counterparty: dto.counterparty,
+      counterpartyEmail: dto.counterpartyEmail,
+      type: dto.type,
+      stage: ContractStage.DRAFT,
+      value: dto.value ?? 0,
+      currency: dto.currency ?? 'USD',
+      expiresOn: new Date(dto.expiresOn),
+      autoRenew: dto.autoRenew ?? false,
+      owner: dto.owner ?? '',
+      clientId: dto.clientId ? new Types.ObjectId(dto.clientId) : null,
+      mandateId: dto.mandateId ? new Types.ObjectId(dto.mandateId) : null,
+      mandateName: dto.mandateName ?? '',
+      templateId: dto.templateSource === 'tenant' ? template._id : null,
+      templateName: template.title,
+      renderedBody,
+      requiresSignature: true,
+      signatureStatus: SignatureStatus.NOT_SENT,
+    });
+    return created;
+  }
+
+  private async issueSigningToken(
+    contract: ToolContractDocument_,
+    expiresInHours: number,
+  ): Promise<string> {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000);
+    await this.tokenModel.create({
+      contractId: contract._id,
+      token,
+      expiresAt,
+      issuedToEmail: contract.counterpartyEmail,
+    });
+    return token;
+  }
+
+  async sendForSignature(
+    tenantId: string,
+    contractId: string,
+    dto: SendForSignatureDto,
+  ): Promise<ToolContractDocument_> {
+    const contract = await this.getById(tenantId, contractId);
+    if (!contract.renderedBody) {
+      throw new BadRequestException(
+        'This contract has no content yet — add content or generate it from a template first.',
+      );
+    }
+    if (!contract.counterpartyEmail) {
+      throw new BadRequestException(
+        'This contract has no counterparty email on file — add one before sending.',
+      );
+    }
+    if (
+      contract.signatureStatus === SignatureStatus.SIGNED ||
+      contract.signatureStatus === SignatureStatus.COUNTERSIGNED
+    ) {
+      throw new ConflictException('This contract has already been signed.');
+    }
+
+    const wasAlreadySent = contract.signatureStatus === SignatureStatus.SENT;
+    contract.signatureStatus = SignatureStatus.SENT;
+    contract.interactions.push({
+      type: wasAlreadySent
+        ? ToolContractInteractionType.RESENT
+        : ToolContractInteractionType.SENT,
+      occurredAt: new Date(),
+      actor: 'tenant',
+      message: null,
+      tenantUserId: null,
+    } as any);
+    await contract.save();
+
+    const token = await this.issueSigningToken(
+      contract,
+      dto.expiresInHours ?? DEFAULT_SIGNING_EXPIRY_HOURS,
+    );
+
+    const baseUrl = process.env.TENANT_APP_URL;
+    if (!baseUrl) {
+      throw new Error(
+        'TENANT_APP_URL is not configured — cannot build a valid signing link',
+      );
+    }
+    try {
+      await this.emailService.sendContractForSignature({
+        to: contract.counterpartyEmail,
+        signerName: contract.counterparty,
+        signingUrl: `${baseUrl}/sign-tool-contract/${token}`,
+      });
+    } catch (err) {
+      console.error(`Failed to send contract email for ${contractId}:`, err);
+    }
+    return contract;
+  }
+
+  async respondToComment(
+    tenantId: string,
+    contractId: string,
+    tenantUserId: string,
+    dto: TenantRespondToCommentDto,
+  ): Promise<ToolContractDocument_> {
+    const contract = await this.getById(tenantId, contractId);
+    contract.interactions.push({
+      type: ToolContractInteractionType.TENANT_RESPONSE,
+      occurredAt: new Date(),
+      actor: 'tenant',
+      message: dto.message,
+      tenantUserId: new Types.ObjectId(tenantUserId),
+    } as any);
+    await contract.save();
+    return contract;
+  }
+
+  // Allowed while Not Sent or Sent — a tenant should be able to
+  // review and edit content immediately after generating, not only
+  // after sending it. Blocked once Signed/Countersigned/Declined,
+  // since real recipients may already have real copies by then.
+  async editRenderedBody(
+    tenantId: string,
+    contractId: string,
+    dto: EditRenderedBodyDto,
+  ): Promise<ToolContractDocument_> {
+    const contract = await this.getById(tenantId, contractId);
+    if (
+      contract.signatureStatus !== SignatureStatus.NOT_SENT &&
+      contract.signatureStatus !== SignatureStatus.SENT
+    ) {
+      throw new ConflictException(
+        contract.signatureStatus === SignatureStatus.SIGNED ||
+          contract.signatureStatus === SignatureStatus.COUNTERSIGNED
+          ? 'This contract has already been signed and can no longer be edited.'
+          : 'This contract was declined and can no longer be edited.',
+      );
+    }
+    contract.renderedBody = dto.renderedBody;
+    contract.interactions.push({
+      type: ToolContractInteractionType.UPDATED,
+      occurredAt: new Date(),
+      actor: 'tenant',
+      message: dto.changeNote ?? null,
+      tenantUserId: null,
+    } as any);
+    await contract.save();
+    return contract;
+  }
+
+  async countersign(
+    tenantId: string,
+    contractId: string,
+    signedByUserId: string,
+    dto: CountersignToolContractDto,
+    ipAddress: string | null,
+    userAgent: string | null,
+  ): Promise<ToolContractDocument_> {
+    const contract = await this.getById(tenantId, contractId);
+    if (contract.signatureStatus !== SignatureStatus.SIGNED) {
+      throw new ConflictException(
+        contract.signatureStatus === SignatureStatus.COUNTERSIGNED
+          ? 'This contract has already been fully executed.'
+          : 'The counterparty must sign first before you can countersign.',
+      );
+    }
+
+    const signedAt = new Date();
+    contract.tenantSignature = {
+      signedAt,
+      signerName: dto.signerName,
+      signedByUserId: new Types.ObjectId(signedByUserId),
+      signatureImageData: dto.signatureImageData ?? null,
+      stampImageData: dto.stampImageData ?? null,
+      ipAddress,
+      userAgent,
+    } as any;
+    contract.signatureStatus = SignatureStatus.COUNTERSIGNED;
+    contract.interactions.push({
+      type: ToolContractInteractionType.COUNTERSIGNED,
+      occurredAt: signedAt,
+      actor: 'tenant',
+      message: null,
+      tenantUserId: new Types.ObjectId(signedByUserId),
+    } as any);
+    if (!contract.executedOn) contract.executedOn = signedAt;
+    if (!contract.effectiveOn) contract.effectiveOn = signedAt;
+    if (contract.stage !== ContractStage.ACTIVE) {
+      contract.stage = ContractStage.ACTIVE;
+    }
+
+    await contract.save();
+    return contract;
+  }
+
+  async sendSignedCopy(
+    tenantId: string,
+    contractId: string,
+  ): Promise<ToolContractDocument_> {
+    const contract = await this.getById(tenantId, contractId);
+    if (contract.signatureStatus !== SignatureStatus.COUNTERSIGNED) {
+      throw new ConflictException(
+        'Both parties must sign before the fully-executed copy can be sent.',
+      );
+    }
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const letterhead = await this.letterheadService.getMine(tenantId);
+    const pdfBuffer = await this.pdfService.buildSignedContractPdf(
+      contract,
+      businessName,
+      (letterhead as any)?.imagePath ?? null,
+    );
+
+    try {
+      await this.emailService.sendSignedContractCopy(
+        {
+          to: contract.counterpartyEmail,
+          signerName: contract.counterparty,
+          contractBody: contract.renderedBody,
+          signerSignatureName: contract.signature!.signerName,
+          signerSignedAt: contract.signature!.signedAt,
+          tenantSignatureName: contract.tenantSignature!.signerName,
+          tenantSignedAt: contract.tenantSignature!.signedAt,
+          tenantSignatureImageData:
+            contract.tenantSignature!.signatureImageData,
+          tenantStampImageData: contract.tenantSignature!.stampImageData,
+        },
+        pdfBuffer,
+      );
+    } catch (err) {
+      console.error(
+        `Failed to send signed copy for contract ${contractId}:`,
+        err,
+      );
+      throw err;
+    }
+
+    contract.signedCopySentAt = new Date();
+    contract.interactions.push({
+      type: ToolContractInteractionType.SIGNED_COPY_SENT,
+      occurredAt: contract.signedCopySentAt,
+      actor: 'tenant',
+      message: null,
+      tenantUserId: null,
+    } as any);
+    await contract.save();
+    return contract;
+  }
+
+  async getSignedContractPdf(
+    tenantId: string,
+    contractId: string,
+  ): Promise<Buffer> {
+    const contract = await this.getById(tenantId, contractId);
+    if (contract.signatureStatus !== SignatureStatus.COUNTERSIGNED) {
+      throw new ConflictException(
+        'Only a fully executed (countersigned) contract can be downloaded as PDF.',
+      );
+    }
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const letterhead = await this.letterheadService.getMine(tenantId);
+    return this.pdfService.buildSignedContractPdf(
+      contract,
+      businessName,
+      (letterhead as any)?.imagePath ?? null,
+    );
+  }
+
+  // ── SIGNER-FACING (public, token-gated) ──
+
+  async getContractByToken(token: string): Promise<ToolContractDocument_> {
+    const tokenDoc = await this.tokenModel.findOne({ token });
+    if (!tokenDoc)
+      throw new NotFoundException('Invalid or unknown signing link.');
+    if (tokenDoc.expiresAt < new Date()) {
+      throw new BadRequestException(
+        'This signing link has expired. Ask the sender to resend it.',
+      );
+    }
+    const contract = await this.model.findById(tokenDoc.contractId);
+    if (!contract) throw new NotFoundException('Contract not found.');
+    return contract;
+  }
+
+  async recordView(token: string): Promise<void> {
+    const contract = await this.getContractByToken(token);
+    contract.interactions.push({
+      type: ToolContractInteractionType.VIEWED,
+      occurredAt: new Date(),
+      actor: 'signer',
+      message: null,
+      tenantUserId: null,
+    } as any);
+    await contract.save();
+  }
+
+  async submitComment(
+    token: string,
+    message: string,
+  ): Promise<ToolContractDocument_> {
+    const contract = await this.getContractByToken(token);
+    if (
+      contract.signatureStatus === SignatureStatus.SIGNED ||
+      contract.signatureStatus === SignatureStatus.COUNTERSIGNED ||
+      contract.signatureStatus === SignatureStatus.DECLINED
+    ) {
+      throw new ConflictException(
+        'This contract is already finalized and can no longer receive comments.',
+      );
+    }
+    contract.interactions.push({
+      type: ToolContractInteractionType.COMMENT,
+      occurredAt: new Date(),
+      actor: 'signer',
+      message,
+      tenantUserId: null,
+    } as any);
+    await contract.save();
+    return contract;
+  }
+
+  async sign(
+    token: string,
+    dto: SubmitContractSignatureDto,
+    ipAddress: string | null,
+    userAgent: string | null,
+  ): Promise<ToolContractDocument_> {
+    const tokenDoc = await this.tokenModel.findOne({ token });
+    if (!tokenDoc)
+      throw new NotFoundException('Invalid or unknown signing link.');
+    if (tokenDoc.expiresAt < new Date()) {
+      throw new BadRequestException(
+        'This signing link has expired. Ask the sender to resend it.',
+      );
+    }
+    if (tokenDoc.consumedAt) {
+      throw new ConflictException('This signing link has already been used.');
+    }
+
+    const contract = await this.model.findById(tokenDoc.contractId);
+    if (!contract) throw new NotFoundException('Contract not found.');
+    if (
+      contract.signatureStatus === SignatureStatus.SIGNED ||
+      contract.signatureStatus === SignatureStatus.COUNTERSIGNED
+    ) {
+      throw new ConflictException('This contract has already been signed.');
+    }
+    if (contract.signatureStatus === SignatureStatus.DECLINED) {
+      throw new ConflictException(
+        'This contract was declined and can no longer be signed.',
+      );
+    }
+
+    const signedAt = new Date();
+    contract.signatureStatus = SignatureStatus.SIGNED;
+    contract.signature = {
+      signedAt,
+      signerName: dto.signerName,
+      signatureImageData: dto.signatureImageData ?? null,
+      ipAddress,
+      userAgent,
+    } as any;
+    contract.interactions.push({
+      type: ToolContractInteractionType.SIGNED,
+      occurredAt: signedAt,
+      actor: 'signer',
+      message: null,
+      tenantUserId: null,
+    } as any);
+    await contract.save();
+
+    tokenDoc.consumedAt = signedAt;
+    await tokenDoc.save();
+
+    try {
+      await this.emailService.sendContractSignedConfirmation({
+        to: contract.counterpartyEmail,
+        signerName: contract.counterparty,
+      });
+    } catch (err) {
+      console.error(
+        `Failed to send signed-confirmation email for contract ${contract._id}:`,
+        err,
+      );
+    }
+    return contract;
+  }
+
+  async decline(
+    token: string,
+    reason: string | undefined,
+  ): Promise<ToolContractDocument_> {
+    const contract = await this.getContractByToken(token);
+    if (
+      contract.signatureStatus === SignatureStatus.SIGNED ||
+      contract.signatureStatus === SignatureStatus.COUNTERSIGNED
+    ) {
+      throw new ConflictException('This contract has already been signed.');
+    }
+    contract.signatureStatus = SignatureStatus.DECLINED;
+    contract.declinedAt = new Date();
+    contract.declineReason = reason ?? null;
+    contract.interactions.push({
+      type: ToolContractInteractionType.DECLINED,
+      occurredAt: new Date(),
+      actor: 'signer',
+      message: reason ?? null,
+      tenantUserId: null,
+    } as any);
+    await contract.save();
+    return contract;
   }
 }
 
@@ -531,59 +1108,5 @@ export class TenantContractTemplateService {
       ...publishedPlatform.map((t) => ({ ...t, source: 'platform' as const })),
       ...(own as any[]).map((t) => ({ ...t, source: 'tenant' as const })),
     ];
-  }
-}
-
-// ── Letterhead — one real uploaded image per tenant, used at the
-// top of generated contract PDFs in a later stage. Re-uploading
-// replaces the existing real file on disk, same discipline the
-// engagement letter upload already follows. ───────────────────────
-
-@Injectable()
-export class TenantLetterheadService {
-  constructor(
-    @InjectModel(TenantLetterhead.name)
-    private readonly model: Model<TenantLetterheadDocument>,
-  ) {}
-
-  async getMine(tenantId: string) {
-    return this.model
-      .findOne({ tenantId: new Types.ObjectId(tenantId) })
-      .lean();
-  }
-
-  async upload(tenantId: string, file: Express.Multer.File) {
-    if (!file) throw new BadRequestException('No file uploaded.');
-    const tId = new Types.ObjectId(tenantId);
-    const existing = await this.model.findOne({ tenantId: tId });
-    if (existing) {
-      if (existing.imagePath && fs.existsSync(existing.imagePath)) {
-        fs.unlinkSync(existing.imagePath);
-      }
-      existing.imageUrl = toFileUrl(file.path);
-      existing.imagePath = file.path;
-      existing.imageMimeType = file.mimetype;
-      await existing.save();
-      return existing.toObject();
-    }
-    const created = await this.model.create({
-      tenantId: tId,
-      imageUrl: toFileUrl(file.path),
-      imagePath: file.path,
-      imageMimeType: file.mimetype,
-    });
-    return created.toObject();
-  }
-
-  async delete(tenantId: string) {
-    const existing = await this.model.findOne({
-      tenantId: new Types.ObjectId(tenantId),
-    });
-    if (!existing) throw new NotFoundException('No letterhead uploaded.');
-    if (existing.imagePath && fs.existsSync(existing.imagePath)) {
-      fs.unlinkSync(existing.imagePath);
-    }
-    await existing.deleteOne();
-    return { deleted: true };
   }
 }

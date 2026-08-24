@@ -27,6 +27,8 @@ import {
   TenantContractTemplateSchema,
   TenantLetterhead,
   TenantLetterheadSchema,
+  ToolContractSigningToken,
+  ToolContractSigningTokenSchema,
 } from './schemas';
 import {
   CommentService,
@@ -40,6 +42,7 @@ import {
   CampaignSchedulerService,
   TenantContractTemplateService,
   TenantLetterheadService,
+  ToolContractPdfService,
 } from './services';
 import {
   CommentController,
@@ -51,6 +54,7 @@ import {
   CalendarController,
   TenantContractTemplateController,
   TenantLetterheadController,
+  ToolContractSigningController,
 } from './controllers';
 
 @Module({
@@ -73,6 +77,10 @@ import {
         schema: TenantContractTemplateSchema,
       },
       { name: TenantLetterhead.name, schema: TenantLetterheadSchema },
+      {
+        name: ToolContractSigningToken.name,
+        schema: ToolContractSigningTokenSchema,
+      },
     ]),
   ],
   providers: [
@@ -87,6 +95,7 @@ import {
     CampaignSchedulerService,
     TenantContractTemplateService,
     TenantLetterheadService,
+    ToolContractPdfService,
     EmailService,
   ],
   controllers: [
@@ -99,6 +108,7 @@ import {
     CalendarController,
     TenantContractTemplateController,
     TenantLetterheadController,
+    ToolContractSigningController,
   ],
   exports: [CommentService, ContractService, SegmentService, CampaignService],
 })
