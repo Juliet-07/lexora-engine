@@ -192,4 +192,48 @@ export class ToolContractPdfService {
       doc.end();
     });
   }
+
+  // Real PDF of the contract as it stands when sent for review/
+  // signature — no signature blocks, since nobody has signed yet.
+  // Attached to the send-for-signature email so the counterparty
+  // has a real document to read, not just a link to click through.
+  async buildDraftContractPdf(
+    renderedBody: string,
+    title: string,
+    firmName: string,
+    letterheadPath: string | null,
+  ): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: 'A4', margin: 50 });
+      const chunks: Buffer[] = [];
+      doc.on('data', (chunk) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      this.drawHeader(doc, firmName, title, letterheadPath);
+
+      doc
+        .fillColor(INK)
+        .font('Helvetica')
+        .fontSize(11)
+        .text(renderedBody, 50, doc.y, {
+          width: doc.page.width - 100,
+          align: 'left',
+          lineGap: 4,
+        });
+
+      doc
+        .fontSize(8)
+        .fillColor(MUTED)
+        .font('Helvetica')
+        .text(
+          `${firmName} · For review — not yet signed · Generated ${new Date().toLocaleDateString()}`,
+          50,
+          doc.page.height - 40,
+          { width: doc.page.width - 100, align: 'center' },
+        );
+
+      doc.end();
+    });
+  }
 }

@@ -547,6 +547,7 @@ export class EmailService {
 
   async sendContractForSignature(
     data: ContractForSignatureEmailData,
+    pdfBuffer?: Buffer,
   ): Promise<void> {
     const { subject, html } = contractForSignatureTemplate(data);
     await this.transporter.sendMail({
@@ -554,6 +555,15 @@ export class EmailService {
       to: data.to,
       subject,
       html,
+      attachments: pdfBuffer
+        ? [
+            {
+              filename: 'contract-for-review.pdf',
+              content: pdfBuffer,
+              contentType: 'application/pdf',
+            },
+          ]
+        : undefined,
     });
   }
 

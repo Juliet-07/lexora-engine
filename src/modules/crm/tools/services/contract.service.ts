@@ -7,6 +7,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as fs from 'fs';
+import * as mammoth from 'mammoth';
 import * as crypto from 'crypto';
 import { Comment, CommentDocument, CommentSubjectType } from '../schemas';
 import { AddCommentDto, EditCommentDto, ToggleReactionDto } from '../dtos';
@@ -523,25 +524,20 @@ export class ContractService {
 
     const businessName = await resolveBusinessName(this.userModel, tenantId);
 
-    let renderedBody: string;
-    if (template.sourceType === 'authored') {
-      const fields: Record<string, string> = {
-        counterpartyName: dto.counterparty,
-        tenantCompanyName: businessName,
-        contractValue: dto.value != null ? String(dto.value) : '',
-        contractCurrency: dto.currency ?? 'USD',
-        effectiveDate: new Date().toISOString().slice(0, 10),
-        expiryDate: dto.expiresOn,
-        todayDate: new Date().toISOString().slice(0, 10),
-      };
-      renderedBody = renderContractBody(template.content, fields);
-    } else {
-      // Uploaded template — no text content exists to merge-field
-      // substitute. Real, honest placeholder rather than pretending
-      // there's real generated content; the tenant fills this in
-      // themselves (editing is allowed immediately, while Not Sent).
-      renderedBody = `<p><em>This contract was started from the uploaded template "${template.title}"${template.fileUrl ? ` (<a href="${template.fileUrl}" target="_blank" rel="noreferrer">download the original file</a>)` : ''}. Replace this placeholder with your real contract text before sending.</em></p>`;
-    }
+    // Real merge-field substitution for both — an uploaded template's
+    // content is now real, extracted HTML (via mammoth at upload
+    // time), not a placeholder, so it gets the same treatment an
+    // authored template's content does.
+    const fields: Record<string, string> = {
+      counterpartyName: dto.counterparty,
+      tenantCompanyName: businessName,
+      contractValue: dto.value != null ? String(dto.value) : '',
+      contractCurrency: dto.currency ?? 'USD',
+      effectiveDate: new Date().toISOString().slice(0, 10),
+      expiryDate: dto.expiresOn,
+      todayDate: new Date().toISOString().slice(0, 10),
+    };
+    const renderedBody = renderContractBody(template.content, fields);
 
     const ref = await this.nextRef(tId);
 
@@ -590,7 +586,11 @@ export class ContractService {
     contractId: string,
     dto: SendForSignatureDto,
   ): Promise<ToolContractDocument_> {
-    const contract = await this.getById(tenantId, contractId);
+    const contract = await this.model.findOne({
+      _id: contractId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!contract) throw new NotFoundException('Contract not found');
     if (!contract.renderedBody) {
       throw new BadRequestException(
         'This contract has no content yet — add content or generate it from a template first.',
@@ -633,11 +633,25 @@ export class ContractService {
       );
     }
     try {
-      await this.emailService.sendContractForSignature({
-        to: contract.counterpartyEmail,
-        signerName: contract.counterparty,
-        signingUrl: `${baseUrl}/sign-tool-contract/${token}`,
-      });
+      // Real PDF of the contract as it stands right now, attached
+      // alongside the signing link — so the counterparty has a real
+      // document in hand, not just a link to click through.
+      const businessName = await resolveBusinessName(this.userModel, tenantId);
+      const letterhead = await this.letterheadService.getMine(tenantId);
+      const pdfBuffer = await this.pdfService.buildDraftContractPdf(
+        contract.renderedBody,
+        contract.title,
+        businessName,
+        (letterhead as any)?.imagePath ?? null,
+      );
+      await this.emailService.sendContractForSignature(
+        {
+          to: contract.counterpartyEmail,
+          signerName: contract.counterparty,
+          signingUrl: `${baseUrl}/sign-tool-contract/${token}`,
+        },
+        pdfBuffer,
+      );
     } catch (err) {
       console.error(`Failed to send contract email for ${contractId}:`, err);
     }
@@ -650,7 +664,11 @@ export class ContractService {
     tenantUserId: string,
     dto: TenantRespondToCommentDto,
   ): Promise<ToolContractDocument_> {
-    const contract = await this.getById(tenantId, contractId);
+    const contract = await this.model.findOne({
+      _id: contractId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!contract) throw new NotFoundException('Contract not found');
     contract.interactions.push({
       type: ToolContractInteractionType.TENANT_RESPONSE,
       occurredAt: new Date(),
@@ -671,7 +689,11 @@ export class ContractService {
     contractId: string,
     dto: EditRenderedBodyDto,
   ): Promise<ToolContractDocument_> {
-    const contract = await this.getById(tenantId, contractId);
+    const contract = await this.model.findOne({
+      _id: contractId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!contract) throw new NotFoundException('Contract not found');
     if (
       contract.signatureStatus !== SignatureStatus.NOT_SENT &&
       contract.signatureStatus !== SignatureStatus.SENT
@@ -703,7 +725,11 @@ export class ContractService {
     ipAddress: string | null,
     userAgent: string | null,
   ): Promise<ToolContractDocument_> {
-    const contract = await this.getById(tenantId, contractId);
+    const contract = await this.model.findOne({
+      _id: contractId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!contract) throw new NotFoundException('Contract not found');
     if (contract.signatureStatus !== SignatureStatus.SIGNED) {
       throw new ConflictException(
         contract.signatureStatus === SignatureStatus.COUNTERSIGNED
@@ -744,7 +770,11 @@ export class ContractService {
     tenantId: string,
     contractId: string,
   ): Promise<ToolContractDocument_> {
-    const contract = await this.getById(tenantId, contractId);
+    const contract = await this.model.findOne({
+      _id: contractId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!contract) throw new NotFoundException('Contract not found');
     if (contract.signatureStatus !== SignatureStatus.COUNTERSIGNED) {
       throw new ConflictException(
         'Both parties must sign before the fully-executed copy can be sent.',
@@ -971,6 +1001,25 @@ function toFileUrl(filePath: string): string {
   return `${process.env.APP_URL}/${relativePath}`;
 }
 
+// Real docx-to-HTML extraction — an uploaded Word document's real
+// text becomes real, editable content (the same field authored
+// templates use), so a tenant can preview and edit it, and it can
+// be merge-field substituted the same way an authored template is
+// when generating a contract. A corrupt/unusual .docx shouldn't
+// block the upload outright — falls back to an honest note instead
+// of failing the whole request.
+async function extractDocxHtml(filePath: string): Promise<string> {
+  try {
+    const result = await mammoth.convertToHtml({ path: filePath });
+    return result.value;
+  } catch (err: any) {
+    console.error(
+      `Failed to extract content from ${filePath}: ${err?.message}`,
+    );
+    return "<p><em>This document's content could not be automatically extracted. Download the original file to view it.</em></p>";
+  }
+}
+
 // ── Tenant's own contract templates — same authored-or-uploaded
 // shape as the platform's, but tenant-scoped. getAvailableTemplates
 // is the real picker: merges the tenant's own templates with
@@ -1020,6 +1069,7 @@ export class TenantContractTemplateService {
     dto: UploadTenantTemplateDto,
   ) {
     if (!file) throw new BadRequestException('No file uploaded.');
+    const content = await extractDocxHtml(file.path);
     const created = await this.model.create({
       tenantId: new Types.ObjectId(tenantId),
       title: dto.title,
@@ -1027,7 +1077,7 @@ export class TenantContractTemplateService {
       jurisdiction: dto.jurisdiction ?? '',
       description: dto.description ?? '',
       sourceType: TenantTemplateSourceType.UPLOADED,
-      content: '',
+      content,
       fileUrl: toFileUrl(file.path),
       fileName: file.originalname,
       fileMimeType: file.mimetype,
@@ -1055,6 +1105,7 @@ export class TenantContractTemplateService {
     t.fileName = file.originalname;
     t.fileMimeType = file.mimetype;
     t.filePath = file.path;
+    t.content = await extractDocxHtml(file.path);
     await t.save();
     return t.toObject();
   }

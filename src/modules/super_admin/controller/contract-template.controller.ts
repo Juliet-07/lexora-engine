@@ -50,7 +50,6 @@ const templateStorage = diskStorage({
 });
 
 const ALLOWED_MIME_TYPES = [
-  'application/pdf',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ];
@@ -60,7 +59,7 @@ const templateFileFilter = (_req: any, file: Express.Multer.File, cb: any) => {
   } else {
     cb(
       new BadRequestException(
-        'Only PDF or Word documents (.pdf, .doc, .docx) are accepted.',
+        'Only Word documents (.doc, .docx) are accepted.',
       ),
       false,
     );

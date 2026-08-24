@@ -1,11 +1,13 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as fs from 'fs';
+import * as mammoth from 'mammoth';
 import {
   PlatformContractTemplate,
   PlatformContractTemplateDocument,
@@ -20,10 +22,31 @@ import {
 
 @Injectable()
 export class PlatformContractTemplateService {
+  private readonly logger = new Logger(PlatformContractTemplateService.name);
+
   constructor(
     @InjectModel(PlatformContractTemplate.name)
     private readonly model: Model<PlatformContractTemplateDocument>,
   ) {}
+
+  // Real docx-to-HTML extraction — an uploaded Word document's real
+  // text becomes real, editable content (same field authored
+  // templates use), so a tenant can preview and edit it just like
+  // an authored one, and it can be merge-field substituted when
+  // generating a contract. A corrupt/unusual .docx shouldn't block
+  // the upload outright — falls back to an honest note instead of
+  // failing the whole request.
+  private async extractDocxHtml(filePath: string): Promise<string> {
+    try {
+      const result = await mammoth.convertToHtml({ path: filePath });
+      return result.value;
+    } catch (err) {
+      this.logger.error(
+        `Failed to extract content from ${filePath}: ${err?.message}`,
+      );
+      return "<p><em>This document's content could not be automatically extracted. Download the original file to view it.</em></p>";
+    }
+  }
 
   // Same real conversion EngagementLetterService already uses —
   // filePath may be absolute or relative, so only the part from
@@ -71,6 +94,7 @@ export class PlatformContractTemplateService {
     createdBy: string,
   ) {
     if (!file) throw new BadRequestException('No file uploaded.');
+    const content = await this.extractDocxHtml(file.path);
 
     const created = await this.model.create({
       title: dto.title,
@@ -78,7 +102,7 @@ export class PlatformContractTemplateService {
       jurisdiction: dto.jurisdiction ?? '',
       description: dto.description ?? '',
       sourceType: TemplateSourceType.UPLOADED,
-      content: '',
+      content,
       fileUrl: this.toFileUrl(file.path),
       fileName: file.originalname,
       fileMimeType: file.mimetype,
@@ -109,6 +133,7 @@ export class PlatformContractTemplateService {
     t.fileName = file.originalname;
     t.fileMimeType = file.mimetype;
     t.filePath = file.path;
+    t.content = await this.extractDocxHtml(file.path);
     await t.save();
     return t.toObject();
   }
