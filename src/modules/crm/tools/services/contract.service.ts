@@ -8,7 +8,6 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as fs from 'fs';
-import * as mammoth from 'mammoth';
 import * as crypto from 'crypto';
 import { Comment, CommentDocument, CommentSubjectType } from '../schemas';
 import { AddCommentDto, EditCommentDto, ToggleReactionDto } from '../dtos';
@@ -45,7 +44,10 @@ import {
   CountersignToolContractDto,
   SubmitContractSignatureDto,
 } from '../dtos';
-import { PlatformContractTemplateService } from 'src/modules/super_admin/services/contract-template.service';
+import {
+  PlatformContractTemplateService,
+  PlatformTemplateFolderService,
+} from 'src/modules/super_admin/services/contract-template.service';
 import { ToolContractPdfService } from './contract-pdf.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { renderContractBody } from 'src/common/utils/contract-fields.util';
@@ -1086,38 +1088,24 @@ function toFileUrl(filePath: string): string {
   return `${process.env.APP_URL}/${relativePath}`;
 }
 
-// Real docx-to-HTML extraction — an uploaded Word document's real
-// text becomes real, editable content (the same field authored
-// templates use), so a tenant can preview and edit it, and it can
-// be merge-field substituted the same way an authored template is
-// when generating a contract. A corrupt/unusual .docx shouldn't
-// block the upload outright — falls back to an honest note instead
-// of failing the whole request.
-async function extractDocxHtml(filePath: string): Promise<string> {
-  try {
-    const result = await mammoth.convertToHtml({ path: filePath });
-    return result.value;
-  } catch (err: any) {
-    console.error(
-      `Failed to extract content from ${filePath}: ${err?.message}`,
-    );
-    return "<p><em>This document's content could not be automatically extracted. Download the original file to view it.</em></p>";
-  }
-}
+// ── Tenant's own contract templates — template CREATION was
+// retired for tenants (see below); this schema/model is kept only
+// so contracts already generated from a tenant-authored template
+// built before that change stay fully readable. ───────────────────
 
-// ── Tenant's own contract templates — same authored-or-uploaded
-// shape as the platform's, but tenant-scoped. getAvailableTemplates
-// is the real picker: merges the tenant's own templates with
-// platform-published ones (via PlatformContractTemplateService,
-// injected from super_admin), each tagged with a real source so the
-// frontend knows where it came from. ──────────────────────────────
-
+// Template creation was retired for tenants — every template a
+// tenant can pick from now comes from the super admin's real,
+// folder-organized library. getAll/getById are kept, read-only, so
+// contracts already generated from a tenant-authored template built
+// before this change stay fully readable — no data is deleted, the
+// ability to create more is just gone.
 @Injectable()
 export class TenantContractTemplateService {
   constructor(
     @InjectModel(TenantContractTemplate.name)
     private readonly model: Model<TenantContractTemplateDocument>,
     private readonly platformTemplateService: PlatformContractTemplateService,
+    private readonly platformFolderService: PlatformTemplateFolderService,
   ) {}
 
   async getAll(tenantId: string) {
@@ -1135,115 +1123,23 @@ export class TenantContractTemplateService {
     return t;
   }
 
-  async create(tenantId: string, dto: CreateTenantTemplateDto) {
-    const created = await this.model.create({
-      tenantId: new Types.ObjectId(tenantId),
-      title: dto.title,
-      type: dto.type,
-      jurisdiction: dto.jurisdiction ?? '',
-      description: dto.description ?? '',
-      sourceType: TenantTemplateSourceType.AUTHORED,
-      content: dto.content,
-    });
-    return created.toObject();
+  // The real picker for generating a new contract — published
+  // platform templates only, each carrying its real folderId so the
+  // tenant UI can group them exactly the way the super admin
+  // organized them. Legacy tenant-authored templates (from before
+  // creation was retired) are deliberately left out of this list —
+  // they still exist and remain readable via getAll/getById for any
+  // contract already generated from one, but a tenant can no longer
+  // start a new contract from one going forward.
+  async getAvailableTemplates(_tenantId: string) {
+    const platform = await this.platformTemplateService.getAll();
+    return (platform as any[])
+      .filter((t) => t.status === 'Published')
+      .map((t) => ({ ...t, source: 'platform' as const }));
   }
 
-  async upload(
-    tenantId: string,
-    file: Express.Multer.File,
-    dto: UploadTenantTemplateDto,
-  ) {
-    if (!file) throw new BadRequestException('No file uploaded.');
-    const content = await extractDocxHtml(file.path);
-    const created = await this.model.create({
-      tenantId: new Types.ObjectId(tenantId),
-      title: dto.title,
-      type: dto.type,
-      jurisdiction: dto.jurisdiction ?? '',
-      description: dto.description ?? '',
-      sourceType: TenantTemplateSourceType.UPLOADED,
-      content,
-      fileUrl: toFileUrl(file.path),
-      fileName: file.originalname,
-      fileMimeType: file.mimetype,
-      filePath: file.path,
-    });
-    return created.toObject();
-  }
-
-  async replaceFile(tenantId: string, id: string, file: Express.Multer.File) {
-    if (!file) throw new BadRequestException('No file uploaded.');
-    const t = await this.model.findOne({
-      _id: id,
-      tenantId: new Types.ObjectId(tenantId),
-    });
-    if (!t) throw new NotFoundException('Template not found');
-    if (t.sourceType !== TenantTemplateSourceType.UPLOADED) {
-      throw new BadRequestException(
-        'This template is authored, not uploaded — edit its content instead of replacing a file.',
-      );
-    }
-    if (t.filePath && fs.existsSync(t.filePath)) {
-      fs.unlinkSync(t.filePath);
-    }
-    t.fileUrl = toFileUrl(file.path);
-    t.fileName = file.originalname;
-    t.fileMimeType = file.mimetype;
-    t.filePath = file.path;
-    t.content = await extractDocxHtml(file.path);
-    await t.save();
-    return t.toObject();
-  }
-
-  async update(tenantId: string, id: string, dto: UpdateTenantTemplateDto) {
-    const t = await this.model.findOne({
-      _id: id,
-      tenantId: new Types.ObjectId(tenantId),
-    });
-    if (!t) throw new NotFoundException('Template not found');
-    if (t.sourceType !== TenantTemplateSourceType.AUTHORED) {
-      throw new BadRequestException(
-        'This template was uploaded as a file — replace the file instead of editing content.',
-      );
-    }
-    t.title = dto.title;
-    t.type = dto.type;
-    t.jurisdiction = dto.jurisdiction ?? '';
-    t.description = dto.description ?? '';
-    t.content = dto.content;
-    await t.save();
-    return t.toObject();
-  }
-
-  async delete(tenantId: string, id: string) {
-    const t = await this.model.findOne({
-      _id: id,
-      tenantId: new Types.ObjectId(tenantId),
-    });
-    if (!t) throw new NotFoundException('Template not found');
-    if (t.filePath && fs.existsSync(t.filePath)) {
-      fs.unlinkSync(t.filePath);
-    }
-    await t.deleteOne();
-    return { deleted: true };
-  }
-
-  // The real picker — merges real platform-published templates with
-  // the tenant's own real templates. Only Published platform
-  // templates are ever included; a tenant never sees another
-  // tenant's own templates, since getAll is already tenant-scoped.
-  async getAvailableTemplates(tenantId: string) {
-    const [platform, own] = await Promise.all([
-      this.platformTemplateService.getAll(),
-      this.getAll(tenantId),
-    ]);
-    const publishedPlatform = (platform as any[]).filter(
-      (t) => t.status === 'Published',
-    );
-    return [
-      ...publishedPlatform.map((t) => ({ ...t, source: 'platform' as const })),
-      ...(own as any[]).map((t) => ({ ...t, source: 'tenant' as const })),
-    ];
+  async getAvailableFolders() {
+    return this.platformFolderService.getAll();
   }
 }
 

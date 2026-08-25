@@ -50,9 +50,6 @@ import {
   AddNegotiationRoundDto,
   AddAmendmentDto,
   AddObligationDto,
-  CreateTenantTemplateDto,
-  UpdateTenantTemplateDto,
-  UploadTenantTemplateDto,
   SetObligationDoneDto,
   GenerateFromTemplateDto,
   SendForSignatureDto,
@@ -426,23 +423,6 @@ export class ContractController {
 // templates and engagement letters — /uploads/{feature}/ with a
 // UUID filename, served back via main.ts's existing /uploads
 // static prefix. ───────────────────────────────────────────────
-const tenantTemplateStorage = diskStorage({
-  destination: (_req, _file, cb) => {
-    const uploadPath = join(
-      process.cwd(),
-      'uploads',
-      'tenant-contract-templates',
-    );
-    if (!existsSync(uploadPath)) {
-      mkdirSync(uploadPath, { recursive: true });
-    }
-    cb(null, uploadPath);
-  },
-  filename: (_req, file, cb) => {
-    const ext = extname(file.originalname);
-    cb(null, `${uuidv4()}${ext}`);
-  },
-});
 const letterheadStorage = diskStorage({
   destination: (_req, _file, cb) => {
     const uploadPath = join(process.cwd(), 'uploads', 'letterheads');
@@ -490,7 +470,10 @@ export class TenantContractTemplateController {
   constructor(private readonly service: TenantContractTemplateService) {}
 
   @Get()
-  @ApiOperation({ summary: 'My own contract templates' })
+  @ApiOperation({
+    summary:
+      'My own templates from before template creation was retired — read-only, kept for continuity with contracts already generated from one. No new ones can be created.',
+  })
   getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
     return this.service.getAll(t || u);
   }
@@ -498,7 +481,7 @@ export class TenantContractTemplateController {
   @Get('available')
   @ApiOperation({
     summary:
-      'Real picker — published platform templates merged with my own, each tagged with a real source',
+      "The real picker — every published platform template, grouped by the super admin's real folders",
   })
   getAvailable(
     @CurrentUser('sub') u: string,
@@ -507,107 +490,23 @@ export class TenantContractTemplateController {
     return this.service.getAvailableTemplates(t || u);
   }
 
+  @Get('folders')
+  @ApiOperation({
+    summary:
+      'Real folder structure for the template picker — same folders the super admin manages',
+  })
+  getFolders() {
+    return this.service.getAvailableFolders();
+  }
+
   @Get(':id')
-  @ApiOperation({ summary: 'One of my own templates' })
+  @ApiOperation({ summary: 'One of my own (legacy) templates' })
   getOne(
     @Param('id') id: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.getById(t || u, id);
-  }
-
-  @Post()
-  @ApiOperation({ summary: 'Create an authored (rich-text) template' })
-  create(
-    @Body() dto: CreateTenantTemplateDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.create(t || u, dto);
-  }
-
-  @Post('upload')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: tenantTemplateStorage,
-      fileFilter: templateFileFilter,
-      limits: { fileSize: 20 * 1024 * 1024 },
-    }),
-  )
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['file', 'title', 'type'],
-      properties: {
-        file: { type: 'string', format: 'binary' },
-        title: { type: 'string' },
-        type: { type: 'string' },
-        jurisdiction: { type: 'string' },
-        description: { type: 'string' },
-      },
-    },
-  })
-  @ApiOperation({
-    summary: 'Upload an existing PDF or Word document as my own template',
-  })
-  upload(
-    @UploadedFile() file: Express.Multer.File,
-    @Body() dto: UploadTenantTemplateDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.upload(t || u, file, dto);
-  }
-
-  @Post(':id/replace-file')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: tenantTemplateStorage,
-      fileFilter: templateFileFilter,
-      limits: { fileSize: 20 * 1024 * 1024 },
-    }),
-  )
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['file'],
-      properties: { file: { type: 'string', format: 'binary' } },
-    },
-  })
-  @ApiOperation({ summary: "Replace an uploaded template's real file" })
-  replaceFile(
-    @Param('id') id: string,
-    @UploadedFile() file: Express.Multer.File,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.replaceFile(t || u, id, file);
-  }
-
-  @Patch(':id')
-  @ApiOperation({ summary: 'Edit an authored template' })
-  update(
-    @Param('id') id: string,
-    @Body() dto: UpdateTenantTemplateDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.update(t || u, id, dto);
-  }
-
-  @Delete(':id')
-  @ApiOperation({
-    summary: 'Delete a template — real file on disk is removed too, if any',
-  })
-  delete(
-    @Param('id') id: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.delete(t || u, id);
   }
 }
 
