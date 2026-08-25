@@ -4,6 +4,7 @@ import { HrModule } from 'src/modules/hr/hr.module';
 import { ComplianceModule } from 'src/modules/grc/compliance/compliance.module';
 import { ProjectsModule } from 'src/modules/crm/projects/project.module';
 import { SuperAdminModule } from 'src/modules/super_admin/super_admin.module';
+import { DealsModule } from 'src/modules/grc/deals/deals.module';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
 import {
@@ -65,6 +66,7 @@ import {
     ComplianceModule,
     ProjectsModule,
     SuperAdminModule,
+    DealsModule,
     MongooseModule.forFeature([
       { name: Comment.name, schema: CommentSchema },
       { name: ToolContract.name, schema: ToolContractSchema },

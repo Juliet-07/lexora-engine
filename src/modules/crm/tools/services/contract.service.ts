@@ -26,23 +26,28 @@ import {
   ToolContractSigningTokenDocument,
   ToolContractInteractionType,
   SignatureStatus,
+  ApprovalStepStatus,
+  ClauseChangeStatus,
 } from '../schemas';
 import {
   CreateContractDto,
   ExecuteContractDto,
   AddNegotiationRoundDto,
+  UpdateClauseChangeStatusDto,
   AddAmendmentDto,
   AddObligationDto,
   SetObligationDoneDto,
-  CreateTenantTemplateDto,
-  UpdateTenantTemplateDto,
-  UploadTenantTemplateDto,
   GenerateFromTemplateDto,
   SendForSignatureDto,
   TenantRespondToCommentDto,
   EditRenderedBodyDto,
   CountersignToolContractDto,
   SubmitContractSignatureDto,
+  UpdateContractGovernanceDto,
+  AddConditionPrecedentDto,
+  SetConditionPrecedentSatisfiedDto,
+  SetApprovalChainDto,
+  DecideApprovalStepDto,
 } from '../dtos';
 import {
   PlatformContractTemplateService,
@@ -53,6 +58,12 @@ import { EmailService } from 'src/common/utils/mailing/email.service';
 import { renderContractBody } from 'src/common/utils/contract-fields.util';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+import {
+  ClientProfileRecord,
+  ClientProfileDocument,
+} from 'src/modules/tenant/schemas/client-profile.schema';
+import { PortfolioRiskService } from 'src/modules/crm/projects/services/portfolio-risk.service';
+import { ClauseService } from 'src/modules/grc/deals/services/clause.service';
 
 const DEFAULT_SIGNING_EXPIRY_HOURS = 168; // 7 days
 
@@ -251,10 +262,14 @@ export class ContractService {
     private readonly tokenModel: Model<ToolContractSigningTokenDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    @InjectModel(ClientProfileRecord.name)
+    private readonly clientProfileModel: Model<ClientProfileDocument>,
     private readonly letterheadService: TenantLetterheadService,
     private readonly platformTemplateService: PlatformContractTemplateService,
     private readonly pdfService: ToolContractPdfService,
     private readonly emailService: EmailService,
+    private readonly portfolioRiskService: PortfolioRiskService,
+    private readonly clauseService: ClauseService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -278,7 +293,50 @@ export class ContractService {
       .findOne({ _id: id, tenantId: new Types.ObjectId(tenantId) })
       .lean();
     if (!c) throw new NotFoundException('Contract not found');
-    return c;
+    return this.withLiveGovernanceData(tenantId, c as any);
+  }
+
+  // Real cross-references computed live at read time — never stored
+  // on the contract itself, so they can never drift from the actual
+  // client/mandate/tenant records they describe. Replaces what used
+  // to be entirely fabricated placeholder data (fake KYC status, a
+  // hardcoded tenant name, made-up risk records) with the genuine
+  // thing wherever a real link exists, and honestly omits it
+  // (null/empty) where no real link exists rather than inventing one.
+  private async withLiveGovernanceData(tenantId: string, c: any) {
+    const tenantBusinessName = await resolveBusinessName(
+      this.userModel,
+      tenantId,
+    );
+
+    let counterpartyKycStatus: string | null = null;
+    let counterpartyRegistrationNumber: string | null = null;
+    if (c.clientId) {
+      const profile = await this.clientProfileModel
+        .findOne({ userId: c.clientId })
+        .lean();
+      if (profile) {
+        counterpartyKycStatus = (profile as any).kycStatus ?? null;
+        counterpartyRegistrationNumber =
+          (profile as any).entityProfile?.companyRegistrationNumber ?? null;
+      }
+    }
+
+    let linkedRisks: any[] = [];
+    if (c.mandateId) {
+      const allRisks = await this.portfolioRiskService.getAll(tenantId);
+      linkedRisks = (allRisks as any[]).filter(
+        (r) => String(r.mandateId) === String(c.mandateId),
+      );
+    }
+
+    return {
+      ...c,
+      tenantBusinessName,
+      counterpartyKycStatus,
+      counterpartyRegistrationNumber,
+      linkedRisks,
+    };
   }
 
   async create(tenantId: string, dto: CreateContractDto) {
@@ -394,7 +452,35 @@ export class ContractService {
       by: dto.by,
       at: new Date(dto.at),
       summary: dto.summary,
+      changes: (dto.changes ?? []).map((ch) => ({
+        clauseRef: ch.clauseRef,
+        change: ch.change,
+        note: ch.note ?? '',
+        status: ClauseChangeStatus.PENDING,
+      })),
     } as any);
+    await c.save();
+    return c.toObject();
+  }
+
+  async updateClauseChangeStatus(
+    tenantId: string,
+    id: string,
+    roundId: string,
+    changeId: string,
+    dto: UpdateClauseChangeStatusDto,
+  ) {
+    const c = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!c) throw new NotFoundException('Contract not found');
+    const round = (c.rounds as any).id(roundId);
+    if (!round) throw new NotFoundException('Negotiation round not found');
+    const change = (round.changes as any).id(changeId);
+    if (!change) throw new NotFoundException('Clause change not found');
+    change.status = dto.status;
+    c.markModified('rounds');
     await c.save();
     return c.toObject();
   }
@@ -453,6 +539,146 @@ export class ContractService {
     obligation.doneAt = dto.done ? new Date() : null;
     await c.save();
     return c.toObject();
+  }
+
+  // ── Governance panel — real, tenant-entered fields. ────────────
+  async updateGovernance(
+    tenantId: string,
+    id: string,
+    dto: UpdateContractGovernanceDto,
+  ) {
+    const c = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!c) throw new NotFoundException('Contract not found');
+    if (dto.governingLaw !== undefined) c.governingLaw = dto.governingLaw;
+    if (dto.adrClause !== undefined) c.adrClause = dto.adrClause;
+    if (dto.leadDrafterUserId !== undefined) {
+      c.leadDrafterUserId = dto.leadDrafterUserId as any;
+    }
+    if (dto.leadDrafterName !== undefined)
+      c.leadDrafterName = dto.leadDrafterName;
+    if (dto.noticeDays !== undefined) c.noticeDays = dto.noticeDays;
+    if (dto.conflictCheckStatus !== undefined)
+      c.conflictCheckStatus = dto.conflictCheckStatus;
+    if (dto.riskClassification !== undefined)
+      c.riskClassification = dto.riskClassification;
+    await c.save();
+    return this.withLiveGovernanceData(tenantId, c.toObject());
+  }
+
+  // ── Conditions precedent — real, tenant-defined checklist. ─────
+  async addConditionPrecedent(
+    tenantId: string,
+    id: string,
+    dto: AddConditionPrecedentDto,
+  ) {
+    const c = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!c) throw new NotFoundException('Contract not found');
+    c.conditionsPrecedent.push({
+      label: dto.label,
+      detail: dto.detail ?? '',
+      satisfied: false,
+    } as any);
+    await c.save();
+    return c.toObject();
+  }
+
+  async setConditionPrecedentSatisfied(
+    tenantId: string,
+    id: string,
+    conditionId: string,
+    dto: SetConditionPrecedentSatisfiedDto,
+  ) {
+    const c = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!c) throw new NotFoundException('Contract not found');
+    const condition = (c.conditionsPrecedent as any).id(conditionId);
+    if (!condition) throw new NotFoundException('Condition not found');
+    condition.satisfied = dto.satisfied;
+    await c.save();
+    return c.toObject();
+  }
+
+  // ── Approval chain — a real, sequential internal workflow. ─────
+  // Setting the chain (re)starts it: the first step becomes "In
+  // review", every other step resets to "Waiting" — a genuinely new
+  // chain, not a partial edit of one already in progress.
+  async setApprovalChain(
+    tenantId: string,
+    id: string,
+    dto: SetApprovalChainDto,
+  ) {
+    const c = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!c) throw new NotFoundException('Contract not found');
+    c.approvalChain = dto.steps.map((s, i) => ({
+      userId: s.userId ? (s.userId as any) : null,
+      name: s.name,
+      role: s.role,
+      status:
+        i === 0 ? ApprovalStepStatus.IN_REVIEW : ApprovalStepStatus.WAITING,
+      decidedAt: null,
+      note: '',
+    })) as any;
+    await c.save();
+    return c.toObject();
+  }
+
+  // Only the step currently "In review" can be decided — a real
+  // sequential gate, not just a status label anyone can flip. On
+  // approval, the next Waiting step becomes In review; on rejection,
+  // the chain stops there (no further step auto-advances).
+  async decideApprovalStep(
+    tenantId: string,
+    id: string,
+    stepId: string,
+    dto: DecideApprovalStepDto,
+  ) {
+    const c = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!c) throw new NotFoundException('Contract not found');
+    const steps = c.approvalChain as any;
+    const step = steps.id(stepId);
+    if (!step) throw new NotFoundException('Approval step not found');
+    if (step.status !== ApprovalStepStatus.IN_REVIEW) {
+      throw new ConflictException(
+        'Only the step currently in review can be decided.',
+      );
+    }
+    step.status = dto.decision;
+    step.decidedAt = new Date();
+    step.note = dto.note ?? '';
+    if (dto.decision === ApprovalStepStatus.APPROVED) {
+      const idx = c.approvalChain.findIndex(
+        (s: any) => String(s._id) === String(stepId),
+      );
+      const next = c.approvalChain[idx + 1] as any;
+      if (next && next.status === ApprovalStepStatus.WAITING) {
+        next.status = ApprovalStepStatus.IN_REVIEW;
+      }
+    }
+    c.markModified('approvalChain');
+    await c.save();
+    return c.toObject();
+  }
+
+  // Real clause library — the same tenant-scoped collection the
+  // Deals & Transactions module manages, exposed here under a
+  // CRM-gated route so a tenant without the Deals module enabled
+  // can still browse it when drafting a contract.
+  async getClauseLibrary(tenantId: string) {
+    return this.clauseService.getAll(tenantId);
   }
 
   // Real, live-computed views — never separately stored, so they

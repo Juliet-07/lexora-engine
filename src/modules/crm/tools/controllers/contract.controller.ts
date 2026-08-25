@@ -59,6 +59,12 @@ import {
   SubmitContractCommentDto,
   SubmitContractSignatureDto,
   DeclineContractSigningDto,
+  UpdateClauseChangeStatusDto,
+  UpdateContractGovernanceDto,
+  AddConditionPrecedentDto,
+  SetConditionPrecedentSatisfiedDto,
+  SetApprovalChainDto,
+  DecideApprovalStepDto,
 } from '../dtos';
 
 @ApiTags('CRM — Tools — Contracts')
@@ -185,6 +191,18 @@ export class ContractController {
     );
   }
 
+  @Get('clause-library')
+  @ApiOperation({
+    summary:
+      'Real clause library — same tenant-scoped collection the Deals module manages',
+  })
+  getClauseLibrary(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getClauseLibrary(t || u);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'One contract' })
   getById(
@@ -250,7 +268,9 @@ export class ContractController {
   }
 
   @Post(':id/rounds')
-  @ApiOperation({ summary: 'Add a negotiation round' })
+  @ApiOperation({
+    summary: 'Add a negotiation round, optionally with clause-level changes',
+  })
   addNegotiationRound(
     @Param('id') id: string,
     @Body() dto: AddNegotiationRoundDto,
@@ -258,6 +278,25 @@ export class ContractController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.addNegotiationRound(t || u, id, dto);
+  }
+
+  @Patch(':id/rounds/:roundId/changes/:changeId')
+  @ApiOperation({ summary: 'Accept, reject, or reset a single clause change' })
+  updateClauseChangeStatus(
+    @Param('id') id: string,
+    @Param('roundId') roundId: string,
+    @Param('changeId') changeId: string,
+    @Body() dto: UpdateClauseChangeStatusDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateClauseChangeStatus(
+      t || u,
+      id,
+      roundId,
+      changeId,
+      dto,
+    );
   }
 
   @Post(':id/amendments')
@@ -292,6 +331,79 @@ export class ContractController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.setObligationDone(t || u, id, obligationId, dto);
+  }
+
+  // ── Governance panel ──────────────────────────────────────
+  @Patch(':id/governance')
+  @ApiOperation({
+    summary: 'Update the governance panel — real, tenant-entered fields',
+  })
+  updateGovernance(
+    @Param('id') id: string,
+    @Body() dto: UpdateContractGovernanceDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateGovernance(t || u, id, dto);
+  }
+
+  // ── Conditions precedent ──────────────────────────────────
+  @Post(':id/conditions-precedent')
+  @ApiOperation({ summary: 'Add a condition precedent' })
+  addConditionPrecedent(
+    @Param('id') id: string,
+    @Body() dto: AddConditionPrecedentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addConditionPrecedent(t || u, id, dto);
+  }
+
+  @Patch(':id/conditions-precedent/:conditionId')
+  @ApiOperation({ summary: 'Mark a condition precedent satisfied or not' })
+  setConditionPrecedentSatisfied(
+    @Param('id') id: string,
+    @Param('conditionId') conditionId: string,
+    @Body() dto: SetConditionPrecedentSatisfiedDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.setConditionPrecedentSatisfied(
+      t || u,
+      id,
+      conditionId,
+      dto,
+    );
+  }
+
+  // ── Approval chain ─────────────────────────────────────────
+  @Post(':id/approval-chain')
+  @ApiOperation({
+    summary:
+      'Set (or restart) the approval chain — first step becomes In review',
+  })
+  setApprovalChain(
+    @Param('id') id: string,
+    @Body() dto: SetApprovalChainDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.setApprovalChain(t || u, id, dto);
+  }
+
+  @Post(':id/approval-chain/:stepId/decide')
+  @ApiOperation({
+    summary:
+      'Approve or reject the step currently in review — advances the chain on approval',
+  })
+  decideApprovalStep(
+    @Param('id') id: string,
+    @Param('stepId') stepId: string,
+    @Body() dto: DecideApprovalStepDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.decideApprovalStep(t || u, id, stepId, dto);
   }
 
   // ── E-signature workflow ─────────────────────────────────

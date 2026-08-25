@@ -71,12 +71,32 @@ export class Comment {
 }
 export const CommentSchema = SchemaFactory.createForClass(Comment);
 
+// A negotiation round's real clause-by-clause changes — status is
+// tracked per change (not just per round), since a round is rarely
+// fully accepted or fully rejected at once.
+export enum ClauseChangeStatus {
+  PENDING = 'Pending',
+  ACCEPTED = 'Accepted',
+  REJECTED = 'Rejected',
+}
+@Schema({ _id: true })
+export class ClauseChange {
+  @Prop({ required: true }) clauseRef: string;
+  @Prop({ required: true }) change: string;
+  @Prop({ default: '' }) note: string;
+  @Prop({ enum: ClauseChangeStatus, default: ClauseChangeStatus.PENDING })
+  status: ClauseChangeStatus;
+}
+export const ClauseChangeSchema = SchemaFactory.createForClass(ClauseChange);
+
 @Schema({ timestamps: true })
 export class NegotiationRound {
   @Prop({ required: true }) round: number;
   @Prop({ required: true }) by: string;
   @Prop({ required: true }) at: Date;
   @Prop({ required: true }) summary: string;
+  @Prop({ type: [ClauseChangeSchema], default: [] })
+  changes: ClauseChange[];
 }
 export const NegotiationRoundSchema =
   SchemaFactory.createForClass(NegotiationRound);
@@ -101,6 +121,41 @@ export class ContractAmendment {
 }
 export const ContractAmendmentSchema =
   SchemaFactory.createForClass(ContractAmendment);
+
+// Real, tenant-defined checklist gating execution — same pattern
+// Mandate's closureChecklist and ADR's prep checklist already use.
+@Schema({ _id: true })
+export class ConditionPrecedent {
+  @Prop({ required: true }) label: string;
+  @Prop({ default: '' }) detail: string;
+  @Prop({ default: false }) satisfied: boolean;
+}
+export const ConditionPrecedentSchema =
+  SchemaFactory.createForClass(ConditionPrecedent);
+
+// A real, sequential internal approval workflow — only the current
+// "In review" step can be acted on; approving it advances the next
+// Waiting step to In review. userId is set when the approver is a
+// real employee on the platform; left null for an approver who
+// isn't (rare, but the role label alone should still be recordable).
+export enum ApprovalStepStatus {
+  WAITING = 'Waiting',
+  IN_REVIEW = 'In review',
+  APPROVED = 'Approved',
+  REJECTED = 'Rejected',
+}
+@Schema({ _id: true })
+export class ApprovalStep {
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  userId: Types.ObjectId | null;
+  @Prop({ required: true }) name: string;
+  @Prop({ required: true }) role: string;
+  @Prop({ enum: ApprovalStepStatus, default: ApprovalStepStatus.WAITING })
+  status: ApprovalStepStatus;
+  @Prop({ default: null }) decidedAt: Date | null;
+  @Prop({ default: '' }) note: string;
+}
+export const ApprovalStepSchema = SchemaFactory.createForClass(ApprovalStep);
 
 // ── Real e-signature workflow — deliberately named with a Tool
 // prefix throughout (ToolContractInteraction, not ContractInteraction)
@@ -222,6 +277,30 @@ export class ToolContract {
   obligations: ContractObligation[];
   @Prop({ type: [ContractAmendmentSchema], default: [] })
   amendments: ContractAmendment[];
+
+  // ── Governance panel — real fields, tenant-entered. Risk
+  // classification and conflict-check are recorded here directly
+  // rather than inferred, since a contract's own risk framing is a
+  // real legal judgment call the tenant makes, not something
+  // derivable purely from other data. Linked KYC status and linked
+  // portfolio risk are deliberately NOT stored here — they're
+  // computed live from the real client/mandate records at read
+  // time, so they can never drift from the source of truth.
+  @Prop({ default: '' }) governingLaw: string;
+  @Prop({ default: '' }) adrClause: string;
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  leadDrafterUserId: Types.ObjectId | null;
+  @Prop({ default: '' }) leadDrafterName: string;
+  @Prop({ default: 60 }) noticeDays: number;
+  @Prop({ enum: ['Pending', 'Clear', 'Flagged'], default: 'Pending' })
+  conflictCheckStatus: string;
+  @Prop({ enum: ['Low', 'Medium', 'High'], default: null })
+  riskClassification: string | null;
+
+  @Prop({ type: [ConditionPrecedentSchema], default: [] })
+  conditionsPrecedent: ConditionPrecedent[];
+  @Prop({ type: [ApprovalStepSchema], default: [] })
+  approvalChain: ApprovalStep[];
 
   // ── E-signature workflow (Stage 3) ────────────────────────────
   @Prop({ type: Types.ObjectId, ref: 'TenantContractTemplate', default: null })
