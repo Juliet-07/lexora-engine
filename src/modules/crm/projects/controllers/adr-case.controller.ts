@@ -3,10 +3,18 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AdrCaseService } from '../services';
 import {
   CreateAdrCaseDto,
+  UpdateAdrCaseDetailsDto,
   UpdateAdrStageDto,
   AddAdrSessionDto,
+  UpdateAdrSessionDto,
   RecordAdrSettlementDto,
   RecordAdrOutcomeDto,
+  RestartAdrAsTypeDto,
+  WithdrawAdrCaseDto,
+  AddAdrTimelineEntryDto,
+  AddAdrChecklistItemDto,
+  SetAdrChecklistItemDoneDto,
+  AddAdrDisbursementDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
@@ -49,8 +57,23 @@ export class AdrCaseController {
     return this.service.getById(t || u, id);
   }
 
+  @Patch(':id/details')
+  @ApiOperation({
+    summary: 'Update case-detail fields (category, venue, parties, etc.)',
+  })
+  updateDetails(
+    @Param('id') id: string,
+    @Body() dto: UpdateAdrCaseDetailsDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateDetails(t || u, id, dto);
+  }
+
   @Patch(':id/stage')
-  @ApiOperation({ summary: 'Move stage' })
+  @ApiOperation({
+    summary: 'Move stage — logs a real, narrated timeline entry',
+  })
   setStage(
     @Param('id') id: string,
     @Body() dto: UpdateAdrStageDto,
@@ -61,7 +84,7 @@ export class AdrCaseController {
   }
 
   @Post(':id/sessions')
-  @ApiOperation({ summary: 'Add a session' })
+  @ApiOperation({ summary: 'Schedule a session' })
   addSession(
     @Param('id') id: string,
     @Body() dto: AddAdrSessionDto,
@@ -69,6 +92,20 @@ export class AdrCaseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.addSession(t || u, id, dto);
+  }
+
+  @Patch(':id/sessions/:sessionId')
+  @ApiOperation({
+    summary: 'Mark a session held / cancelled, record its outcome',
+  })
+  updateSession(
+    @Param('id') id: string,
+    @Param('sessionId') sessionId: string,
+    @Body() dto: UpdateAdrSessionDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateSession(t || u, id, sessionId, dto);
   }
 
   @Post(':id/settlement')
@@ -91,5 +128,77 @@ export class AdrCaseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.recordOutcome(t || u, id, dto);
+  }
+
+  @Post(':id/restart-as')
+  @ApiOperation({
+    summary:
+      'Restart as a different ADR type after a failed round (e.g. mediation → arbitration) — resets to Notice stage',
+  })
+  restartAsType(
+    @Param('id') id: string,
+    @Body() dto: RestartAdrAsTypeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.restartAsType(t || u, id, dto);
+  }
+
+  @Post(':id/withdraw')
+  @ApiOperation({ summary: 'Withdraw the case' })
+  withdraw(
+    @Param('id') id: string,
+    @Body() dto: WithdrawAdrCaseDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.withdraw(t || u, id, dto);
+  }
+
+  @Post(':id/timeline')
+  @ApiOperation({
+    summary: 'Add a manual timeline entry for a real-world milestone',
+  })
+  addTimelineEntry(
+    @Param('id') id: string,
+    @Body() dto: AddAdrTimelineEntryDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addTimelineEntry(t || u, id, dto);
+  }
+
+  @Post(':id/checklist')
+  @ApiOperation({ summary: 'Add a prep checklist item' })
+  addChecklistItem(
+    @Param('id') id: string,
+    @Body() dto: AddAdrChecklistItemDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addChecklistItem(t || u, id, dto);
+  }
+
+  @Patch(':id/checklist/:itemId')
+  @ApiOperation({ summary: 'Check / uncheck a prep checklist item' })
+  setChecklistItemDone(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() dto: SetAdrChecklistItemDoneDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.setChecklistItemDone(t || u, id, itemId, dto);
+  }
+
+  @Post(':id/disbursements')
+  @ApiOperation({ summary: 'Record a disbursement' })
+  addDisbursement(
+    @Param('id') id: string,
+    @Body() dto: AddAdrDisbursementDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addDisbursement(t || u, id, dto);
   }
 }
