@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 // ── Platform contract templates — deliberately NOT tenant-scoped
 // (no tenantId). Owned and authored by the super admin, published
@@ -42,6 +42,17 @@ export class PlatformContractTemplate {
   @Prop({ default: '' }) jurisdiction: string;
   @Prop({ default: '' }) description: string;
 
+  // Null means uncategorized — templates existed before folders did,
+  // so this can't be required without breaking every template
+  // created before this change.
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'PlatformTemplateFolder',
+    default: null,
+    index: true,
+  })
+  folderId: Types.ObjectId | null;
+
   @Prop({ enum: TemplateSourceType, default: TemplateSourceType.AUTHORED })
   sourceType: TemplateSourceType;
 
@@ -68,4 +79,21 @@ export class PlatformContractTemplate {
 }
 export const PlatformContractTemplateSchema = SchemaFactory.createForClass(
   PlatformContractTemplate,
+);
+
+// Folders exist purely to organize the platform template library for
+// browsing — a template's real content and status are unaffected by
+// which folder it sits in. Not tenant-scoped, same as
+// PlatformContractTemplate itself: owned and authored by the super
+// admin, folder structure shown identically to every tenant.
+export type PlatformTemplateFolderDocument = PlatformTemplateFolder & Document;
+
+@Schema({ timestamps: true, collection: 'platform_template_folders' })
+export class PlatformTemplateFolder {
+  @Prop({ required: true, trim: true, unique: true }) name: string;
+  @Prop({ default: '' }) description: string;
+  @Prop({ default: '' }) createdBy: string;
+}
+export const PlatformTemplateFolderSchema = SchemaFactory.createForClass(
+  PlatformTemplateFolder,
 );

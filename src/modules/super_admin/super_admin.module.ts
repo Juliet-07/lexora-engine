@@ -13,13 +13,21 @@ import {
   RiskRulesSchema,
   PlatformContractTemplate,
   PlatformContractTemplateSchema,
+  PlatformTemplateFolder,
+  PlatformTemplateFolderSchema,
 } from './schemas';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailModule } from 'src/common/utils/mailing/email.module';
 import { SubscriptionExpiryService } from './services/subscription-expiry.service';
 import { Employee, EmployeeSchema } from '../hr/schemas';
-import { PlatformContractTemplateController } from './controller/contract-template.controller';
-import { PlatformContractTemplateService } from './services/contract-template.service';
+import {
+  PlatformContractTemplateController,
+  PlatformTemplateFolderController,
+} from './controller/contract-template.controller';
+import {
+  PlatformContractTemplateService,
+  PlatformTemplateFolderService,
+} from './services/contract-template.service';
 
 @Module({
   imports: [
@@ -38,14 +46,28 @@ import { PlatformContractTemplateService } from './services/contract-template.se
         name: PlatformContractTemplate.name,
         schema: PlatformContractTemplateSchema,
       },
+      {
+        name: PlatformTemplateFolder.name,
+        schema: PlatformTemplateFolderSchema,
+      },
     ]),
   ],
-  controllers: [SuperAdminController, PlatformContractTemplateController],
+  controllers: [
+    SuperAdminController,
+    PlatformContractTemplateController,
+    PlatformTemplateFolderController,
+  ],
   providers: [
     SuperAdminService,
     SubscriptionExpiryService,
     PlatformContractTemplateService,
+    PlatformTemplateFolderService,
   ],
-  exports: [SuperAdminService, PlatformContractTemplateService, MongooseModule],
+  exports: [
+    SuperAdminService,
+    PlatformContractTemplateService,
+    PlatformTemplateFolderService,
+    MongooseModule,
+  ],
 })
 export class SuperAdminModule {}

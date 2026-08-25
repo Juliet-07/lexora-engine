@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsEnum } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsMongoId } from 'class-validator';
 import { PlatformTemplateCategory, PlatformTemplateStatus } from '../schemas';
 
 export class CreatePlatformContractTemplateDto {
@@ -11,6 +11,7 @@ export class CreatePlatformContractTemplateDto {
   @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
   @ApiProperty() @IsString() content: string;
   @ApiPropertyOptional() @IsOptional() @IsString() version?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() folderId?: string;
 }
 
 export class UpdatePlatformContractTemplateDto extends CreatePlatformContractTemplateDto {}
@@ -31,4 +32,17 @@ export class UploadPlatformContractTemplateDto {
   @ApiPropertyOptional() @IsOptional() @IsString() jurisdiction?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() version?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() folderId?: string;
 }
+
+export class SetTemplateFolderDto {
+  // Empty string clears it back to uncategorized — a real,
+  // deliberate choice distinct from omitting the field entirely.
+  @ApiPropertyOptional() @IsOptional() @IsString() folderId?: string;
+}
+
+export class CreatePlatformTemplateFolderDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
+}
+export class UpdatePlatformTemplateFolderDto extends CreatePlatformTemplateFolderDto {}

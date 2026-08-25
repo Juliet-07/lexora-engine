@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -13,12 +14,88 @@ import {
   PlatformContractTemplateDocument,
   PlatformTemplateStatus,
   TemplateSourceType,
+  PlatformTemplateFolder,
+  PlatformTemplateFolderDocument,
 } from '../schemas';
 import {
   CreatePlatformContractTemplateDto,
+  CreatePlatformTemplateFolderDto,
   UpdatePlatformContractTemplateDto,
+  UpdatePlatformTemplateFolderDto,
   UploadPlatformContractTemplateDto,
 } from '../dto/contract-template.dto';
+
+@Injectable()
+export class PlatformTemplateFolderService {
+  constructor(
+    @InjectModel(PlatformTemplateFolder.name)
+    private readonly model: Model<PlatformTemplateFolderDocument>,
+    @InjectModel(PlatformContractTemplate.name)
+    private readonly templateModel: Model<PlatformContractTemplateDocument>,
+  ) {}
+
+  async getAll() {
+    const folders = await this.model.find().sort({ name: 1 }).lean();
+    // Real counts per folder, computed live from the actual template
+    // collection — not a stored number that could drift as templates
+    // move in and out.
+    const counts = await this.templateModel.aggregate([
+      { $match: { folderId: { $ne: null } } },
+      { $group: { _id: '$folderId', count: { $sum: 1 } } },
+    ]);
+    const countByFolder = new Map(counts.map((c) => [String(c._id), c.count]));
+    return folders.map((f) => ({
+      ...f,
+      templateCount: countByFolder.get(String(f._id)) ?? 0,
+    }));
+  }
+
+  async create(dto: CreatePlatformTemplateFolderDto, createdBy: string) {
+    const existing = await this.model.findOne({ name: dto.name });
+    if (existing) {
+      throw new ConflictException('A folder with this name already exists.');
+    }
+    const created = await this.model.create({
+      name: dto.name,
+      description: dto.description ?? '',
+      createdBy,
+    });
+    return created.toObject();
+  }
+
+  async update(id: string, dto: UpdatePlatformTemplateFolderDto) {
+    const f = await this.model.findById(id);
+    if (!f) throw new NotFoundException('Folder not found');
+    if (dto.name !== f.name) {
+      const existing = await this.model.findOne({ name: dto.name });
+      if (existing) {
+        throw new ConflictException('A folder with this name already exists.');
+      }
+    }
+    f.name = dto.name;
+    f.description = dto.description ?? '';
+    await f.save();
+    return f.toObject();
+  }
+
+  // Deliberately refuses to delete a non-empty folder rather than
+  // silently orphaning its templates to "uncategorized" — moving
+  // them out is a real decision the admin should make explicitly.
+  async delete(id: string) {
+    const f = await this.model.findById(id);
+    if (!f) throw new NotFoundException('Folder not found');
+    const templateCount = await this.templateModel.countDocuments({
+      folderId: id,
+    });
+    if (templateCount > 0) {
+      throw new ConflictException(
+        `This folder has ${templateCount} template(s) in it. Move or delete them first.`,
+      );
+    }
+    await f.deleteOne();
+    return { deleted: true };
+  }
+}
 
 @Injectable()
 export class PlatformContractTemplateService {
@@ -60,8 +137,11 @@ export class PlatformContractTemplateService {
     return `${process.env.APP_URL}/${relativePath}`;
   }
 
-  async getAll() {
-    return this.model.find().sort({ updatedAt: -1 }).lean();
+  async getAll(folderId?: string) {
+    const query: any = {};
+    if (folderId === 'uncategorized') query.folderId = null;
+    else if (folderId) query.folderId = folderId;
+    return this.model.find(query).sort({ updatedAt: -1 }).lean();
   }
 
   async getById(id: string) {
@@ -76,6 +156,7 @@ export class PlatformContractTemplateService {
       category: dto.category,
       jurisdiction: dto.jurisdiction ?? '',
       description: dto.description ?? '',
+      folderId: dto.folderId ?? null,
       sourceType: TemplateSourceType.AUTHORED,
       content: dto.content,
       version: dto.version ?? '1.0',
@@ -101,6 +182,7 @@ export class PlatformContractTemplateService {
       category: dto.category,
       jurisdiction: dto.jurisdiction ?? '',
       description: dto.description ?? '',
+      folderId: dto.folderId ?? null,
       sourceType: TemplateSourceType.UPLOADED,
       content,
       fileUrl: this.toFileUrl(file.path),
@@ -152,6 +234,20 @@ export class PlatformContractTemplateService {
     t.description = dto.description ?? '';
     t.content = dto.content;
     t.version = dto.version ?? t.version;
+    if (dto.folderId !== undefined) {
+      t.folderId = dto.folderId ? (dto.folderId as any) : null;
+    }
+    await t.save();
+    return t.toObject();
+  }
+
+  // Works for either source type — folder placement is orthogonal
+  // to a template's real content, so this doesn't share update()'s
+  // authored-only guard.
+  async setFolder(id: string, folderId: string | null) {
+    const t = await this.model.findById(id);
+    if (!t) throw new NotFoundException('Template not found');
+    t.folderId = (folderId || null) as any;
     await t.save();
     return t.toObject();
   }
