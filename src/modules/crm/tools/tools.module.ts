@@ -4,13 +4,20 @@ import { HrModule } from 'src/modules/hr/hr.module';
 import { ComplianceModule } from 'src/modules/grc/compliance/compliance.module';
 import { ProjectsModule } from 'src/modules/crm/projects/project.module';
 import { SuperAdminModule } from 'src/modules/super_admin/super_admin.module';
-import { DealsModule } from 'src/modules/grc/deals/deals.module';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
 import {
   ClientProfileRecord,
   ClientProfileSchema,
 } from 'src/modules/tenant/schemas/client-profile.schema';
+import {
+  PortfolioRisk,
+  PortfolioRiskSchema,
+} from 'src/modules/crm/projects/schemas/portfolio-risk.schema';
+import {
+  Clause,
+  ClauseSchema,
+} from 'src/modules/grc/deals/schemas/clause.schema';
 import {
   Comment,
   CommentSchema,
@@ -66,7 +73,6 @@ import {
     ComplianceModule,
     ProjectsModule,
     SuperAdminModule,
-    DealsModule,
     MongooseModule.forFeature([
       { name: Comment.name, schema: CommentSchema },
       { name: ToolContract.name, schema: ToolContractSchema },
@@ -76,6 +82,8 @@ import {
       { name: CalendarEvent.name, schema: CalendarEventSchema },
       { name: User.name, schema: UserSchema },
       { name: ClientProfileRecord.name, schema: ClientProfileSchema },
+      { name: PortfolioRisk.name, schema: PortfolioRiskSchema },
+      { name: Clause.name, schema: ClauseSchema },
       {
         name: TenantContractTemplate.name,
         schema: TenantContractTemplateSchema,

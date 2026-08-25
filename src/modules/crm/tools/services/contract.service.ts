@@ -62,8 +62,14 @@ import {
   ClientProfileRecord,
   ClientProfileDocument,
 } from 'src/modules/tenant/schemas/client-profile.schema';
-import { PortfolioRiskService } from 'src/modules/crm/projects/services/portfolio-risk.service';
-import { ClauseService } from 'src/modules/grc/deals/services/clause.service';
+import {
+  PortfolioRisk,
+  PortfolioRiskDocument,
+} from 'src/modules/crm/projects/schemas/portfolio-risk.schema';
+import {
+  Clause,
+  ClauseDocument,
+} from 'src/modules/grc/deals/schemas/clause.schema';
 
 const DEFAULT_SIGNING_EXPIRY_HOURS = 168; // 7 days
 
@@ -268,8 +274,10 @@ export class ContractService {
     private readonly platformTemplateService: PlatformContractTemplateService,
     private readonly pdfService: ToolContractPdfService,
     private readonly emailService: EmailService,
-    private readonly portfolioRiskService: PortfolioRiskService,
-    private readonly clauseService: ClauseService,
+    @InjectModel(PortfolioRisk.name)
+    private readonly portfolioRiskModel: Model<PortfolioRiskDocument>,
+    @InjectModel(Clause.name)
+    private readonly clauseModel: Model<ClauseDocument>,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -324,10 +332,12 @@ export class ContractService {
 
     let linkedRisks: any[] = [];
     if (c.mandateId) {
-      const allRisks = await this.portfolioRiskService.getAll(tenantId);
-      linkedRisks = (allRisks as any[]).filter(
-        (r) => String(r.mandateId) === String(c.mandateId),
-      );
+      linkedRisks = await this.portfolioRiskModel
+        .find({
+          tenantId: new Types.ObjectId(tenantId),
+          mandateId: c.mandateId,
+        })
+        .lean();
     }
 
     return {
@@ -676,9 +686,16 @@ export class ContractService {
   // Real clause library — the same tenant-scoped collection the
   // Deals & Transactions module manages, exposed here under a
   // CRM-gated route so a tenant without the Deals module enabled
-  // can still browse it when drafting a contract.
+  // can still browse it when drafting a contract. Queries the model
+  // directly rather than depending on ClauseService as an injected
+  // provider, since that requires DealsModule's exports to reach
+  // this module cleanly — a real dependency to avoid when a direct,
+  // read-only query does the same job.
   async getClauseLibrary(tenantId: string) {
-    return this.clauseService.getAll(tenantId);
+    return this.clauseModel
+      .find({ tenantId: new Types.ObjectId(tenantId) })
+      .sort({ category: 1, title: 1 })
+      .lean();
   }
 
   // Real, live-computed views — never separately stored, so they
