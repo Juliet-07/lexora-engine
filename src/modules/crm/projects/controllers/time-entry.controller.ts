@@ -50,15 +50,25 @@ export class TimeEntryController {
   @ApiQuery({ name: 'mandateId', required: false })
   @ApiQuery({ name: 'memberUserId', required: false })
   @ApiQuery({ name: 'status', required: false, enum: TimesheetStatus })
+  @ApiQuery({ name: 'adrCaseId', required: false })
+  @ApiQuery({ name: 'litigationCaseId', required: false })
   @ApiOperation({ summary: 'List time entries, optionally filtered' })
   getAll(
     @Query('mandateId') mandateId: string | undefined,
     @Query('memberUserId') memberUserId: string | undefined,
     @Query('status') status: TimesheetStatus | undefined,
+    @Query('adrCaseId') adrCaseId: string | undefined,
+    @Query('litigationCaseId') litigationCaseId: string | undefined,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.getAll(t || u, { mandateId, memberUserId, status });
+    return this.service.getAll(t || u, {
+      mandateId,
+      memberUserId,
+      status,
+      adrCaseId,
+      litigationCaseId,
+    });
   }
 
   @Patch(':id')

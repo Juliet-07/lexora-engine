@@ -32,6 +32,8 @@ export class TimeEntryService {
       mandateId?: string;
       memberUserId?: string;
       status?: TimesheetStatus;
+      adrCaseId?: string;
+      litigationCaseId?: string;
     } = {},
   ) {
     const query: any = { tenantId: new Types.ObjectId(tenantId) };
@@ -40,6 +42,10 @@ export class TimeEntryService {
     if (filters.memberUserId)
       query.memberUserId = new Types.ObjectId(filters.memberUserId);
     if (filters.status) query.status = filters.status;
+    if (filters.adrCaseId)
+      query.adrCaseId = new Types.ObjectId(filters.adrCaseId);
+    if (filters.litigationCaseId)
+      query.litigationCaseId = new Types.ObjectId(filters.litigationCaseId);
     return this.model.find(query).sort({ date: -1, createdAt: -1 }).lean();
   }
 
@@ -64,6 +70,10 @@ export class TimeEntryService {
       mandateName: dto.mandateName,
       taskId: dto.taskId ? new Types.ObjectId(dto.taskId) : null,
       taskTitle: dto.taskTitle ?? 'Ad-hoc work',
+      adrCaseId: dto.adrCaseId ? new Types.ObjectId(dto.adrCaseId) : null,
+      litigationCaseId: dto.litigationCaseId
+        ? new Types.ObjectId(dto.litigationCaseId)
+        : null,
       narrative: dto.narrative ?? '',
       date: new Date(dto.date),
       hours: dto.hours,

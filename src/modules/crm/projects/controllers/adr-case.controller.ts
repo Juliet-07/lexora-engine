@@ -15,6 +15,7 @@ import {
   AddAdrChecklistItemDto,
   SetAdrChecklistItemDoneDto,
   AddAdrDisbursementDto,
+  EscalateToLitigationDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
@@ -200,5 +201,19 @@ export class AdrCaseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.addDisbursement(t || u, id, dto);
+  }
+
+  @Post(':id/escalate')
+  @ApiOperation({
+    summary:
+      'Escalate to litigation — creates the linked litigation case, preserves ADR history',
+  })
+  escalate(
+    @Param('id') id: string,
+    @Body() dto: EscalateToLitigationDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.escalateToLitigation(t || u, id, dto);
   }
 }

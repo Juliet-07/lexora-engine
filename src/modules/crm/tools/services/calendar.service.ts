@@ -10,6 +10,7 @@ import { CreateCalendarEventDto, UpdateCalendarEventDto } from '../dtos';
 import { ContractService } from './contract.service';
 import { ComplianceObligationService } from 'src/modules/grc/compliance/services/obligation.service';
 import { AdrCaseService } from 'src/modules/crm/projects/services/adr-case.service';
+import { LitigationCaseService } from 'src/modules/crm/projects/services/litigation-case.service';
 
 // ── Real manual events — Personal/Team/Client, or an ad-hoc one-off
 // under any layer. Standard CRUD, nothing derived here. ───────────
@@ -86,6 +87,7 @@ export class CalendarAggregationService {
     private readonly contractService: ContractService,
     private readonly complianceObligationService: ComplianceObligationService,
     private readonly adrCaseService: AdrCaseService,
+    private readonly litigationCaseService: LitigationCaseService,
   ) {}
 
   private splitDateTime(d: Date | string): { date: string; time: string } {
@@ -169,14 +171,41 @@ export class CalendarAggregationService {
     return events;
   }
 
+  private async getLitigationEvents(tenantId: string) {
+    const cases = await this.litigationCaseService.getAll(tenantId);
+    const events: any[] = [];
+    for (const c of cases as any[]) {
+      for (const d of c.courtDates ?? []) {
+        const { date, time } = this.splitDateTime(d.date);
+        events.push({
+          id: `litigation-${c._id}-${d._id ?? d.date}`,
+          title: `${d.title} — ${c.title}`,
+          date,
+          time: d.time || time,
+          layer: CalendarLayer.LITIGATION,
+          source: c.ref,
+          location: d.location || '—',
+          editable: false,
+        });
+      }
+    }
+    return events;
+  }
+
   async getAll(tenantId: string) {
-    const [manual, contractEvents, complianceEvents, adrEvents] =
-      await Promise.all([
-        this.eventService.getAll(tenantId),
-        this.getContractEvents(tenantId),
-        this.getComplianceEvents(tenantId),
-        this.getAdrEvents(tenantId),
-      ]);
+    const [
+      manual,
+      contractEvents,
+      complianceEvents,
+      adrEvents,
+      litigationEvents,
+    ] = await Promise.all([
+      this.eventService.getAll(tenantId),
+      this.getContractEvents(tenantId),
+      this.getComplianceEvents(tenantId),
+      this.getAdrEvents(tenantId),
+      this.getLitigationEvents(tenantId),
+    ]);
 
     const manualEvents = (manual as any[]).map((e) => ({
       id: e._id,
@@ -197,6 +226,7 @@ export class CalendarAggregationService {
       ...contractEvents,
       ...complianceEvents,
       ...adrEvents,
+      ...litigationEvents,
     ].sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
   }
 }

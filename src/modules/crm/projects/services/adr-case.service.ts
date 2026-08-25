@@ -26,8 +26,11 @@ import {
   AddAdrChecklistItemDto,
   SetAdrChecklistItemDoneDto,
   AddAdrDisbursementDto,
+  EscalateToLitigationDto,
 } from '../dtos';
 import { MandateService } from './mandate.service';
+import { TimeEntryService } from './time-entry.service';
+import { LitigationCaseService } from './litigation-case.service';
 
 @Injectable()
 export class AdrCaseService {
@@ -35,6 +38,8 @@ export class AdrCaseService {
     @InjectModel(AdrCase.name)
     private readonly model: Model<AdrCaseDocument>,
     private readonly mandateService: MandateService,
+    private readonly timeEntryService: TimeEntryService,
+    private readonly litigationCaseService: LitigationCaseService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -54,7 +59,30 @@ export class AdrCaseService {
       .findOne({ _id: id, tenantId: new Types.ObjectId(tenantId) })
       .lean();
     if (!c) throw new NotFoundException('Case not found');
-    return c;
+    return this.withTotals(c as any);
+  }
+
+  // Real hours/fees for this dispute specifically, not the whole
+  // mandate it may sit under — computed live from TimeEntry records
+  // linked via adrCaseId, same reasoning the mandate's own WIP
+  // figure uses real time entries rather than a stored number.
+  private async withTotals(c: any) {
+    const disbursed = (c.disbursements ?? []).reduce(
+      (s: number, d: any) => s + d.amount,
+      0,
+    );
+    const entries = await this.timeEntryService.getAll(String(c.tenantId), {
+      adrCaseId: String(c._id),
+    });
+    const hours = entries.reduce((s, e: any) => s + e.hours, 0);
+    const fees = entries.reduce((s, e: any) => s + e.hours * e.rate, 0);
+    const ageDays = Math.floor(
+      (Date.now() - new Date(c.filedOn).getTime()) / 86_400_000,
+    );
+    return {
+      ...c,
+      totals: { hours, fees, disbursed, total: fees + disbursed, ageDays },
+    };
   }
 
   private async getRawDoc(tenantId: string, id: string) {
@@ -351,5 +379,67 @@ export class AdrCaseService {
     } as any);
     await c.save();
     return c.toObject();
+  }
+
+  // The real link between the two phases the product owner asked
+  // for — escalation is a real, reasoned event, not a status flip.
+  // A new LitigationCase is created and linked both ways: forward
+  // via litigationCaseId here, back via adrCaseId there, so the
+  // full ADR history stays reachable and combined age/fees can be
+  // computed live from both real records.
+  async escalateToLitigation(
+    tenantId: string,
+    id: string,
+    dto: EscalateToLitigationDto,
+  ) {
+    const c = await this.getRawDoc(tenantId, id);
+    if (c.status !== AdrCaseStatus.ACTIVE) {
+      throw new ConflictException(
+        `This case is ${c.status.toLowerCase()} and cannot be escalated.`,
+      );
+    }
+
+    // Neutrals (mediator/arbitrator) don't carry over — a judge is a
+    // real, separate court appointment, not a continuation of the
+    // ADR neutral's role. Counsel defaults to plaintiff-side, since
+    // the tenant's own client was almost always the ADR claimant
+    // too; the tenant can correct this on the litigation case after.
+    const roleMap: Record<string, string> = {
+      Claimant: 'Plaintiff',
+      Respondent: 'Defendant',
+      Counsel: 'Plaintiff counsel',
+      Expert: 'Other',
+      Other: 'Other',
+    };
+    const litigationParties = c.parties
+      .filter((p) => p.role !== 'Mediator' && p.role !== 'Arbitrator')
+      .map((p) => ({
+        name: p.name,
+        role: (roleMap[p.role] ?? 'Other') as any,
+        organisation: p.organisation,
+        userId: p.userId ? String(p.userId) : undefined,
+      }));
+
+    const litigationCase = await this.litigationCaseService.create(tenantId, {
+      title: c.title,
+      adrCaseId: String(c._id),
+      mandateId: c.mandateId ? String(c.mandateId) : undefined,
+      mandateName: c.mandateName,
+      parties: litigationParties as any,
+      claimValue: c.claimValue,
+      currency: c.currency,
+      court: dto.court,
+      courtDivision: dto.courtDivision,
+      registry: dto.registry,
+      openingTimelineTitle: `Escalated from ADR: ${c.type} concluded without resolution`,
+      openingTimelineDescription: dto.reason,
+    });
+
+    c.status = AdrCaseStatus.ESCALATED;
+    c.litigationCaseId = new Types.ObjectId((litigationCase as any)._id);
+    this.logTimeline(c, 'Escalated to litigation', dto.reason);
+    await c.save();
+
+    return { adrCase: c.toObject(), litigationCase };
   }
 }

@@ -55,6 +55,24 @@ export class TimeEntry {
   taskId: Types.ObjectId | null;
   @Prop({ default: 'Ad-hoc work' }) taskTitle: string;
 
+  // Optional — set when this time was worked specifically on a
+  // dispute (ADR or litigation phase) sitting under the mandate
+  // above, rather than the mandate's other work generally. A
+  // mandate can cover more than the dispute itself (e.g. broader
+  // governance advisory), so the case's own real "hours logged"
+  // figure needs this distinction to be accurate. At most one of
+  // the two is ever set, matching whichever phase the work was
+  // actually for.
+  @Prop({ type: Types.ObjectId, ref: 'AdrCase', default: null, index: true })
+  adrCaseId: Types.ObjectId | null;
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'LitigationCase',
+    default: null,
+    index: true,
+  })
+  litigationCaseId: Types.ObjectId | null;
+
   @Prop({ default: '' }) narrative: string;
   @Prop({ required: true }) date: Date;
   @Prop({ required: true }) hours: number;

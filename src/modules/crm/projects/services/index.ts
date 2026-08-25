@@ -2,6 +2,7 @@ export * from './adr-case.service';
 export * from './client-projects.service';
 export * from './employee-projects.service';
 export * from './kb-article.service';
+export * from './litigation-case.service';
 export * from './mandate-workspace.service';
 export * from './mandate.service';
 export * from './portfolio-risk.service';

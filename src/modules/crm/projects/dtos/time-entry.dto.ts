@@ -21,6 +21,13 @@ export class CreateTimeEntryDto {
   @ApiPropertyOptional() @IsOptional() @IsMongoId() taskId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() taskTitle?: string;
 
+  // Optional — set when this time was worked specifically on a
+  // dispute (ADR or litigation) under the mandate above, so the
+  // case's own real "hours logged" figure is accurate. At most one
+  // should be set.
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() adrCaseId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() litigationCaseId?: string;
+
   @ApiPropertyOptional() @IsOptional() @IsString() narrative?: string;
   @ApiProperty() @IsDateString() date: string;
   @ApiProperty() @IsNumber() @Min(0.01) hours: number;

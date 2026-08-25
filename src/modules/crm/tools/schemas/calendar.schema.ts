@@ -18,6 +18,7 @@ export enum CalendarLayer {
   CLIENT = 'Client',
   COMPLIANCE = 'Compliance',
   ADR = 'ADR',
+  LITIGATION = 'Litigation',
   CONTRACT = 'Contract',
 }
 export enum RecurrenceRule {

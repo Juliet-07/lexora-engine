@@ -61,9 +61,15 @@ export enum AdrPartyRole {
   OTHER = 'Other',
 }
 
+// Shared across both ADR and litigation disbursements — the costs
+// tracker combines both phases into one real total, so a single
+// category vocabulary covering both is more honest than two
+// separately-typed lists that happen to look similar.
 export enum DisbursementCategory {
   FILING_FEE = 'Filing fee',
   MEDIATOR_ARBITRATOR_FEE = 'Mediator / arbitrator fee',
+  COURT_FEE = 'Court fee',
+  BAILIFF_SERVICE = 'Bailiff / service',
   EXPERT = 'Expert',
   VENUE = 'Venue',
   OTHER = 'Other',

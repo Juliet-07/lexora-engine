@@ -2,6 +2,7 @@ export * from './adr-case.controller';
 export * from './client-projects.controller';
 export * from './employee-projects.controller';
 export * from './kb-article.controller';
+export * from './litigation-case.controller';
 export * from './mandate-workspace.controller';
 export * from './mandate.controller';
 export * from './portfolio-risk.controller';
