@@ -1,10 +1,17 @@
 import { parse, HTMLElement, Node } from 'node-html-parser';
 
+type FontCategory = 'sans' | 'serif' | 'mono';
+
 interface TextStyle {
   bold: boolean;
   italic: boolean;
   underline: boolean;
   align: 'left' | 'center' | 'right';
+  fontCategory: FontCategory;
+  // Real point size, already converted from the editor's CSS px —
+  // null means "use whatever size the enclosing block chose"
+  // (11pt body text, or the heading's own size).
+  fontSize: number | null;
 }
 
 const DEFAULT_STYLE: TextStyle = {
@@ -12,30 +19,107 @@ const DEFAULT_STYLE: TextStyle = {
   italic: false,
   underline: false,
   align: 'left',
+  fontCategory: 'sans',
+  fontSize: null,
 };
 const HEADING_SIZES: Record<string, number> = { h1: 18, h2: 15, h3: 13 };
 
-function fontFor(style: TextStyle): string {
-  if (style.bold && style.italic) return 'Helvetica-BoldOblique';
-  if (style.bold) return 'Helvetica-Bold';
-  if (style.italic) return 'Helvetica-Oblique';
-  return 'Helvetica';
+// PDFKit ships exactly 14 built-in fonts: Helvetica, Times, Courier
+// (each with Bold/Oblique/BoldOblique), Symbol, and ZapfDingbats —
+// nothing else is available without embedding a real TTF file.
+// Arial, Calibri, Trebuchet MS, Georgia, and Verdana are proprietary
+// Microsoft fonts we have no license to embed, so a tenant's exact
+// typeface choice maps to the closest of the three real families
+// (sans-serif, serif, or monospace) rather than being silently
+// dropped — the category the tenant picked survives, even if the
+// exact glyphs don't.
+function fontCategoryFor(fontFamilyValue: string): FontCategory {
+  const v = fontFamilyValue.toLowerCase();
+  if (
+    v.includes('times') ||
+    v.includes('georgia') ||
+    v.includes('garamond') ||
+    v.includes('serif')
+  ) {
+    return 'serif';
+  }
+  if (v.includes('courier') || v.includes('mono')) {
+    return 'mono';
+  }
+  return 'sans';
 }
 
-function extractAlign(
-  el: HTMLElement,
-  inherited: TextStyle['align'],
-): TextStyle['align'] {
+const FONT_FAMILIES: Record<
+  FontCategory,
+  { regular: string; bold: string; italic: string; boldItalic: string }
+> = {
+  sans: {
+    regular: 'Helvetica',
+    bold: 'Helvetica-Bold',
+    italic: 'Helvetica-Oblique',
+    boldItalic: 'Helvetica-BoldOblique',
+  },
+  serif: {
+    regular: 'Times-Roman',
+    bold: 'Times-Bold',
+    italic: 'Times-Italic',
+    boldItalic: 'Times-BoldItalic',
+  },
+  mono: {
+    regular: 'Courier',
+    bold: 'Courier-Bold',
+    italic: 'Courier-Oblique',
+    boldItalic: 'Courier-BoldOblique',
+  },
+};
+
+function fontFor(style: TextStyle): string {
+  const set = FONT_FAMILIES[style.fontCategory];
+  if (style.bold && style.italic) return set.boldItalic;
+  if (style.bold) return set.bold;
+  if (style.italic) return set.italic;
+  return set.regular;
+}
+
+// CSS px and PDF pt are both real, fixed-ratio units — a CSS pixel
+// is defined as 1/96 inch, a point as 1/72 inch, so 1px = 0.75pt
+// exactly. Treating the editor's px values as pt directly (skipping
+// this conversion) would render everything a third too large.
+const PX_TO_PT = 0.75;
+
+// Reads every inline style this editor can actually produce —
+// alignment, font-size, and font-family (as a real CSS value, or as
+// the face="" attribute execCommand('fontName', …) writes on a
+// <font> tag in most browsers) — falling back to whatever the
+// enclosing block already resolved to.
+function extractInlineStyle(el: HTMLElement, inherited: TextStyle): TextStyle {
   const styleAttr = el.getAttribute?.('style') ?? '';
-  const match = styleAttr.match(/text-align:\s*(left|center|right)/);
-  return (match?.[1] as TextStyle['align']) ?? inherited;
+  const alignMatch = styleAttr.match(/text-align:\s*(left|center|right)/);
+  const sizeMatch = styleAttr.match(/font-size:\s*(\d+(?:\.\d+)?)px/);
+  const familyMatch = styleAttr.match(/font-family:\s*([^;]+)/);
+  const faceAttr =
+    el.tagName?.toLowerCase() === 'font' ? el.getAttribute?.('face') : null;
+
+  return {
+    ...inherited,
+    align: (alignMatch?.[1] as TextStyle['align']) ?? inherited.align,
+    fontSize: sizeMatch
+      ? parseFloat(sizeMatch[1]) * PX_TO_PT
+      : inherited.fontSize,
+    fontCategory: familyMatch
+      ? fontCategoryFor(familyMatch[1])
+      : faceAttr
+        ? fontCategoryFor(faceAttr)
+        : inherited.fontCategory,
+  };
 }
 
 // Renders the formatting this editor's toolbar exposes: bold/italic/
-// underline, 3 alignments, bulleted/numbered lists, H1-H3 headings, and
-// simple bordered tables. Table cell text renders as PLAIN TEXT — inline
-// bold/italic inside a cell is not preserved, a deliberate scope limit.
-// Not a general HTML-to-PDF renderer.
+// underline, 3 alignments, font family and size, bulleted/numbered
+// lists, H1-H3 headings, and simple bordered tables. Table cell text
+// renders as PLAIN TEXT — inline bold/italic/font styling inside a
+// cell is not preserved, a deliberate scope limit. Not a general
+// HTML-to-PDF renderer.
 export function renderRichText(doc: PDFKit.PDFDocument, html: string): void {
   if (!html?.trim()) {
     doc
@@ -61,19 +145,19 @@ function renderBlock(
   if (!tag) {
     const text = node.text?.trim();
     if (text) {
-      doc.font(fontFor(inheritedStyle)).fontSize(11).text(text, {
-        align: inheritedStyle.align,
-        underline: inheritedStyle.underline,
-      });
+      doc
+        .font(fontFor(inheritedStyle))
+        .fontSize(inheritedStyle.fontSize ?? 11)
+        .text(text, {
+          align: inheritedStyle.align,
+          underline: inheritedStyle.underline,
+        });
       doc.moveDown(0.5);
     }
     return;
   }
 
-  const style = {
-    ...inheritedStyle,
-    align: extractAlign(el, inheritedStyle.align),
-  };
+  const style = extractInlineStyle(el, inheritedStyle);
 
   if (tag === 'h1' || tag === 'h2' || tag === 'h3') {
     doc.moveDown(0.4);
@@ -82,7 +166,7 @@ function renderBlock(
       el,
       { ...style, bold: true },
       undefined,
-      HEADING_SIZES[tag],
+      style.fontSize ?? HEADING_SIZES[tag],
     );
     doc.moveDown(0.2);
     return;
@@ -100,7 +184,8 @@ function renderBlock(
       if (childEl.tagName?.toLowerCase() === 'li') {
         idx++;
         const prefix = tag === 'ul' ? '•  ' : `${idx}.  `;
-        renderInlineParagraph(doc, childEl, style, prefix);
+        const liStyle = extractInlineStyle(childEl, style);
+        renderInlineParagraph(doc, childEl, liStyle, prefix);
       }
     }
     return;
@@ -124,36 +209,41 @@ function renderInlineParagraph(
   el: HTMLElement,
   style: TextStyle,
   prefix?: string,
-  fontSize = 11,
+  blockFontSize?: number,
 ): void {
   const runs: { text: string; style: TextStyle }[] = [];
   collectInlineRuns(el, style, runs);
   const hasText = runs.some((r) => r.text.trim());
   if (!hasText && !prefix) return;
 
-  doc.fontSize(fontSize);
+  const defaultSize = blockFontSize ?? style.fontSize ?? 11;
 
   if (prefix && !hasText) {
     doc
-      .font('Helvetica')
+      .font(fontFor(style))
+      .fontSize(defaultSize)
       .text(prefix, { continued: false, indent: 20, align: style.align });
-    doc.moveDown(fontSize > 11 ? 0.3 : 0.5);
+    doc.moveDown(defaultSize > 11 ? 0.3 : 0.5);
     return;
   }
   if (prefix) {
     doc
-      .font('Helvetica')
+      .font(fontFor(style))
+      .fontSize(defaultSize)
       .text(prefix, { continued: true, indent: 20, align: style.align });
   }
+  let largestSize = defaultSize;
   runs.forEach((run, i) => {
     const isLast = i === runs.length - 1;
-    doc.font(fontFor(run.style)).text(run.text, {
+    const runSize = run.style.fontSize ?? defaultSize;
+    largestSize = Math.max(largestSize, runSize);
+    doc.font(fontFor(run.style)).fontSize(runSize).text(run.text, {
       continued: !isLast,
       underline: run.style.underline,
       align: style.align,
     });
   });
-  doc.moveDown(fontSize > 11 ? 0.3 : 0.5);
+  doc.moveDown(largestSize > 11 ? 0.3 : 0.5);
 }
 
 function collectInlineRuns(
@@ -168,10 +258,12 @@ function collectInlineRuns(
       if (child.text) out.push({ text: child.text, style });
       continue;
     }
-    const childStyle = { ...style };
-    if (tag === 'b' || tag === 'strong') childStyle.bold = true;
-    if (tag === 'i' || tag === 'em') childStyle.italic = true;
-    if (tag === 'u') childStyle.underline = true;
+    let childStyle = extractInlineStyle(el, style);
+    if (tag === 'b' || tag === 'strong')
+      childStyle = { ...childStyle, bold: true };
+    if (tag === 'i' || tag === 'em')
+      childStyle = { ...childStyle, italic: true };
+    if (tag === 'u') childStyle = { ...childStyle, underline: true };
     collectInlineRuns(el, childStyle, out);
   }
 }
