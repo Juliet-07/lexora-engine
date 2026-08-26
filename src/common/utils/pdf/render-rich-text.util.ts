@@ -114,6 +114,31 @@ function extractInlineStyle(el: HTMLElement, inherited: TextStyle): TextStyle {
   };
 }
 
+const BLOCK_TAGS = new Set([
+  'p',
+  'div',
+  'ul',
+  'ol',
+  'li',
+  'h1',
+  'h2',
+  'h3',
+  'table',
+  'blockquote',
+]);
+
+// A container only counts as "transparent" (its children rendered
+// as separate blocks) if it actually has a block-level child.
+// <p>Some <b>bold</b> text</p> must still render as one inline
+// paragraph — only a wrapper that itself contains a <p>, <div>,
+// <ul>, etc. should be split apart instead of flattened.
+function hasBlockChild(el: HTMLElement): boolean {
+  return el.childNodes.some((child) => {
+    const tag = (child as HTMLElement).tagName?.toLowerCase();
+    return tag ? BLOCK_TAGS.has(tag) : false;
+  });
+}
+
 // Renders the formatting this editor's toolbar exposes: bold/italic/
 // underline, 3 alignments, font family and size, bulleted/numbered
 // lists, H1-H3 headings, and simple bordered tables. Table cell text
@@ -181,12 +206,24 @@ function renderBlock(
     let idx = 0;
     for (const child of el.childNodes) {
       const childEl = child as HTMLElement;
-      if (childEl.tagName?.toLowerCase() === 'li') {
-        idx++;
-        const prefix = tag === 'ul' ? '•  ' : `${idx}.  `;
-        const liStyle = extractInlineStyle(childEl, style);
-        renderInlineParagraph(doc, childEl, liStyle, prefix);
-      }
+      const childTag = childEl.tagName?.toLowerCase();
+      // An actual nested sub-list isn't handled here (this editor's
+      // toolbar has no way to create one) — better left alone than
+      // mis-rendered as a flat item.
+      if (childTag === 'ul' || childTag === 'ol') continue;
+      // A stray whitespace text node between <li> tags (common in
+      // formatted HTML) isn't a real item — only count it if it's
+      // an actual element, or non-whitespace text.
+      if (!childTag && !child.text?.trim()) continue;
+      // Real <li> is the normal case, but a browser occasionally
+      // wraps list content in something else (a stray <div>, say) —
+      // rendering it as a list item anyway beats silently dropping
+      // it, since anything directly inside a <ul>/<ol> is
+      // semantically a list item regardless of the exact tag used.
+      idx++;
+      const prefix = tag === 'ul' ? '•  ' : `${idx}.  `;
+      const liStyle = extractInlineStyle(childEl, style);
+      renderInlineParagraph(doc, childEl, liStyle, prefix);
     }
     return;
   }
@@ -198,6 +235,19 @@ function renderBlock(
 
   if (tag === 'br') {
     doc.moveDown(0.5);
+    return;
+  }
+
+  // A wrapper that itself contains block-level content — almost
+  // always a <div>, which is what most browsers' contenteditable
+  // uses for line breaks — is transparent: each child renders as
+  // its own block instead of every line being flattened into one
+  // run-on paragraph. This is what makes a paragraph or a list
+  // survive being wrapped in a <div>.
+  if (hasBlockChild(el)) {
+    for (const child of el.childNodes) {
+      renderBlock(doc, child, style);
+    }
     return;
   }
 
