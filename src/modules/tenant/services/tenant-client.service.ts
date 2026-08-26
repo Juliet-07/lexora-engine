@@ -174,7 +174,19 @@ export class TenantClientsService {
     tenantId: string,
     pagination: PaginationDto,
     filters: ClientFilterDto,
+    callerId: string,
+    callerUserType: string,
+    callerRoles: string[],
   ) {
+    // Same admin-access rule the frontend uses to decide which view
+    // to show (tenant owner, or tagged staff with real roles) —
+    // replicated here so it's real access control, not just a UI
+    // choice the caller could ignore by editing the query string.
+    const callerHasAdminAccess =
+      callerUserType === 'tenant' ||
+      (callerUserType === 'employee' && callerRoles.length > 0);
+    const assignedTo = callerHasAdminAccess ? filters.assignedTo : callerId;
+
     const userQuery: QueryFilter<UserDocument> = {
       userType: UserType.CLIENT,
       tenantId: new Types.ObjectId(tenantId),
@@ -206,6 +218,15 @@ export class TenantClientsService {
             {
               $match: {
                 'profile.classifications': { $in: [filters.classification] },
+              },
+            },
+          ]
+        : []),
+      ...(assignedTo
+        ? [
+            {
+              $match: {
+                'profile.assignedTo': new Types.ObjectId(assignedTo),
               },
             },
           ]

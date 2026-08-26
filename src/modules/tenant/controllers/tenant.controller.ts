@@ -108,10 +108,19 @@ export class TenantController {
   findAll(
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+    @CurrentUser('roles') roles: string[],
     @Query() pagination: PaginationDto,
     @Query() filters: ClientFilterDto,
   ) {
-    return this.tenantClientService.getClients(t || u, pagination, filters);
+    return this.tenantClientService.getClients(
+      t || u,
+      pagination,
+      filters,
+      u,
+      userType,
+      roles ?? [],
+    );
   }
 
   // ── Get Client Report ────────────────────────────────────────────────
