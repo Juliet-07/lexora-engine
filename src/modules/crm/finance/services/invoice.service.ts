@@ -45,6 +45,7 @@ import { WhtDirection, EbmStatus } from '../schemas';
 import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
 import { GlSource } from '../schemas';
 import { buildInvoicePdf } from 'src/common/utils/pdf/invoice.util';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 // Same real conversion used across the app's other upload
 // features — filePath may be absolute or relative, so only the
@@ -74,6 +75,7 @@ export class InvoiceService {
     private readonly expenseClaimService: ExpenseClaimService,
     private readonly whtService: WhtService,
     private readonly glPostingService: GlPostingService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // A client can't be told where to send money if the tenant hasn't
@@ -454,6 +456,16 @@ export class InvoiceService {
         })
         .catch(() => undefined);
     }
+
+    this.eventEmitter.emit('client.invoice.sent', {
+      tenantId,
+      clientUserId: String(invoice.clientUserId),
+      invoiceId: String(invoice._id),
+      ref: invoice.ref,
+      amount: invoice.payable,
+      currency: invoice.currency,
+    });
+
     return invoice;
   }
 
@@ -624,6 +636,15 @@ export class InvoiceService {
         sourceId: i._id,
       },
     ]);
+
+    this.eventEmitter.emit('client.invoice.paid', {
+      tenantId,
+      clientUserId: String(i.clientUserId),
+      invoiceId: String(i._id),
+      ref: i.ref,
+      amount,
+      currency: i.currency,
+    });
 
     return this.normalize(i.toObject());
   }

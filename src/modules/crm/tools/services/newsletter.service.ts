@@ -8,6 +8,7 @@ import {
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Segment,
   SegmentDocument,
@@ -224,6 +225,7 @@ export class CampaignService {
     private readonly model: Model<CampaignDocument>,
     private readonly segmentService: SegmentService,
     private readonly emailService: EmailService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async getAll(tenantId: string) {
@@ -439,6 +441,12 @@ export class CampaignService {
         );
         r.delivered = true;
         r.deliveryError = null;
+        this.eventEmitter.emit('client.newsletter.sent', {
+          tenantId,
+          clientUserId: String(r.clientId),
+          campaignId: String(c._id),
+          subject: c.subject || c.name,
+        });
       } catch (err: any) {
         r.delivered = false;
         r.deliveryError = err?.message ?? 'Send failed';

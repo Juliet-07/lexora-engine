@@ -6,7 +6,6 @@ import {
   Delete,
   Body,
   Param,
-  Query,
   Req,
   HttpCode,
   HttpStatus,
@@ -18,28 +17,26 @@ import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
-  ApiQuery,
   ApiConsumes,
   ApiBody,
 } from '@nestjs/swagger';
 import { Request } from 'express';
 
-import { OnboardingService } from './services/onboarding.service';
-import { ClientDashboardService } from './services/client-dashboard.service';
+import { OnboardingService } from '../services/onboarding.service';
+import { ClientDashboardService } from '../services/client-dashboard.service';
 import {
   SaveOnboardingDto,
   SubmitOnboardingDto,
   AddDocumentDto,
   RemoveDocumentDto,
-} from './dto/onboarding.dto';
-import { OnboardingStatus } from './schemas/onboarding.schema';
-import { UserTypes, Roles, CurrentUser } from '../../common/decorators/index';
-import { UserType, TenantRole } from '../../common/interfaces/user-role.enum';
+} from '../dto/onboarding.dto';
 import { extname, join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { diskStorage } from 'multer';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { IsOptional, IsString, MinLength } from 'class-validator';
+import { CurrentUser, UserTypes } from 'src/common/decorators';
+import { UserType } from 'src/common/interfaces/user-role.enum';
 
 // ─────────────────────────────────────────────────────────────
 // MULTER CONFIG — saves to ./uploads/onboarding/

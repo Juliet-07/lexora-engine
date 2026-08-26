@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Ticket,
   TicketDocument,
@@ -23,6 +24,7 @@ import {
 export class TicketService {
   constructor(
     @InjectModel(Ticket.name) private readonly model: Model<TicketDocument>,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -163,6 +165,19 @@ export class TicketService {
       at: new Date(),
     } as any);
     await t.save();
+
+    // Only a real, client-visible reply notifies the client — an
+    // internal staff note must never leak to them.
+    if (dto.internal === false) {
+      this.eventEmitter.emit('client.ticket.replied', {
+        tenantId,
+        clientUserId: String(t.clientUserId),
+        ticketId: String(t._id),
+        ref: t.ref,
+        subject: t.subject,
+      });
+    }
+
     return this.normalize(t.toObject());
   }
 

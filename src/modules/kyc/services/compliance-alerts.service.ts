@@ -20,6 +20,7 @@ import {
 import { paginate, PaginationDto } from '../../../common/pagination.dto';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
 import { EmailService } from 'src/common/utils/mailing/email.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 @Injectable()
 export class ComplianceAlertsService {
@@ -29,6 +30,7 @@ export class ComplianceAlertsService {
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly mailService: EmailService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // ── Shared: notify client when an alert is raised ─────────
@@ -37,6 +39,13 @@ export class ComplianceAlertsService {
   ): Promise<void> {
     // Only notify if alert is linked to a specific client
     if (!alert.clientId) return;
+
+    this.eventEmitter.emit('client.alert.created', {
+      tenantId: String(alert.tenantId),
+      clientUserId: String(alert.clientId),
+      alertId: String(alert._id),
+      title: alert.title,
+    });
 
     try {
       const [client, tenant] = await Promise.all([

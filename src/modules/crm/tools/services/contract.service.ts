@@ -57,6 +57,7 @@ import { ToolContractPdfService } from './contract-pdf.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { renderContractBody } from 'src/common/utils/contract-fields.util';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import {
   ClientProfileRecord,
@@ -278,6 +279,7 @@ export class ContractService {
     private readonly portfolioRiskModel: Model<PortfolioRiskDocument>,
     @InjectModel(Clause.name)
     private readonly clauseModel: Model<ClauseDocument>,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -940,6 +942,18 @@ export class ContractService {
 
     await contract.save();
 
+    // Only a registered client has a clientUserId to notify — an
+    // external counterparty has no platform account and gets the
+    // email itself as their only signal, same as before.
+    if (isRegisteredClient) {
+      this.eventEmitter.emit('client.document.sent_for_signature', {
+        tenantId,
+        clientUserId: String(contract.clientId),
+        contractId: String(contract._id),
+        title: contract.title,
+      });
+    }
+
     try {
       // Real PDF of the contract as it stands right now, attached
       // alongside the link — so the counterparty has a real
@@ -1071,6 +1085,16 @@ export class ContractService {
     }
 
     await contract.save();
+
+    if (contract.clientId) {
+      this.eventEmitter.emit('client.document.countersigned', {
+        tenantId,
+        clientUserId: String(contract.clientId),
+        contractId: String(contract._id),
+        title: contract.title,
+      });
+    }
+
     return contract;
   }
 
