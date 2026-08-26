@@ -20,6 +20,60 @@ import {
   PlatformModuleDocument,
 } from 'src/modules/super_admin/schemas';
 import { Employee, EmployeeDocument } from 'src/modules/hr/schemas';
+import {
+  ClientProfileRecord,
+  ClientProfileDocument,
+} from '../schemas/client-profile.schema';
+import { Risk, RiskDocument } from '../../grc/risk/schemas/risk.schema';
+import {
+  Incident,
+  IncidentDocument,
+} from '../../grc/risk/schemas/incident.schema';
+import {
+  ComplianceObligation,
+  ComplianceObligationDocument,
+  ObligationStatus,
+} from '../../grc/compliance/schemas/obligation.schema';
+import {
+  Deal,
+  DealDocument,
+  DealStatus,
+} from '../../grc/deals/schemas/deal.schema';
+import {
+  Mandate,
+  MandateDocument_,
+  MandateStage,
+} from '../../crm/projects/schemas/mandate.schema';
+import {
+  Task,
+  TaskDocument_,
+  TaskStatus,
+} from '../../crm/projects/schemas/task.schema';
+import {
+  Ticket,
+  TicketDocument,
+  TicketStatus,
+} from '../../crm/projects/schemas/ticket.schema';
+import {
+  Invoice,
+  InvoiceDocument,
+  InvoiceStage,
+} from '../../crm/finance/schemas/invoice.schema';
+import {
+  LeaveRequest,
+  LeaveRequestDocument,
+  LeaveStatus,
+} from '../../hr/schemas/leave-request.schema';
+import {
+  TimeEntry,
+  TimeEntryDocument,
+  TimesheetStatus,
+} from '../../crm/projects/schemas/time-entry.schema';
+import {
+  RiskStatus,
+  ControlEffectiveness,
+} from '../../grc/risk/schemas/risk.schema';
+import { IncidentStatus } from '../../grc/risk/schemas/incident.schema';
 
 // Role hierarchy — members can only assign roles below their own level
 const ROLE_HIERARCHY: Record<string, number> = {
@@ -43,6 +97,28 @@ export class TenantService {
     private readonly moduleModel: Model<PlatformModuleDocument>,
     @InjectModel(Employee.name)
     private readonly employeeModel: Model<EmployeeDocument>,
+    @InjectModel(ClientProfileRecord.name)
+    private readonly clientProfileModel: Model<ClientProfileDocument>,
+    @InjectModel(Risk.name)
+    private readonly riskModel: Model<RiskDocument>,
+    @InjectModel(Incident.name)
+    private readonly incidentModel: Model<IncidentDocument>,
+    @InjectModel(ComplianceObligation.name)
+    private readonly obligationModel: Model<ComplianceObligationDocument>,
+    @InjectModel(Deal.name)
+    private readonly dealModel: Model<DealDocument>,
+    @InjectModel(Mandate.name)
+    private readonly mandateModel: Model<MandateDocument_>,
+    @InjectModel(Task.name)
+    private readonly taskModel: Model<TaskDocument_>,
+    @InjectModel(Ticket.name)
+    private readonly ticketModel: Model<TicketDocument>,
+    @InjectModel(Invoice.name)
+    private readonly invoiceModel: Model<InvoiceDocument>,
+    @InjectModel(LeaveRequest.name)
+    private readonly leaveModel: Model<LeaveRequestDocument>,
+    @InjectModel(TimeEntry.name)
+    private readonly timeEntryModel: Model<TimeEntryDocument>,
     private readonly mailService: EmailService,
   ) {}
 
@@ -52,6 +128,10 @@ export class TenantService {
 
   async getDashboard(tenantId: string) {
     const tId = new Types.ObjectId(tenantId);
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
 
     const [
       teamByRole,
@@ -64,6 +144,31 @@ export class TenantService {
       activeEmployees,
       employeesByClient,
       hrRecentJoins,
+      // ── KYC / AML ───────────────────────────────────────────
+      kycTotal,
+      kycApproved,
+      kycHighRisk,
+      pendingKyc,
+      // ── GRC ───────────────────────────────────────────────
+      openRisks,
+      openIncidents,
+      overdueObligations,
+      liveDeals,
+      dealsWon,
+      // ── CRM ───────────────────────────────────────────────
+      activeMandates,
+      openTasks,
+      tasksDone,
+      tasksTotal,
+      overdueInvoices,
+      openInvoices,
+      paidInvoices,
+      openTickets,
+      // ── HR: leave ─────────────────────────────────────────
+      pendingLeave,
+      // ── Delivery pulse ──────────────────────────────────────
+      weeklyTimeEntries,
+      recentTimeEntries,
     ] = await Promise.all([
       // Existing team queries
       this.userModel.aggregate([
@@ -109,7 +214,279 @@ export class TenantService {
         .limit(5)
         .select('firstName lastName jobTitle department clientId startDate')
         .lean(),
+
+      // ── KYC / AML ──────────────────────────────────────────
+      this.clientProfileModel.countDocuments({ tenantId: tId }),
+      this.clientProfileModel.countDocuments({
+        tenantId: tId,
+        kycStatus: 'approved',
+      }),
+      this.clientProfileModel.countDocuments({
+        tenantId: tId,
+        riskLevel: 'high',
+      }),
+      this.clientProfileModel
+        .find({ tenantId: tId, kycStatus: { $ne: 'approved' } })
+        .populate('userId', 'firstName lastName businessName')
+        .populate('assignedTo', 'firstName lastName')
+        .sort({ updatedAt: -1 })
+        .limit(5)
+        .select('userId kycStatus riskLevel assignedTo updatedAt')
+        .lean(),
+
+      // ── GRC: risk register ────────────────────────────────
+      this.riskModel
+        .find({ tenantId: tId, status: { $ne: RiskStatus.CLOSED } })
+        .select('title likelihood impact controls owner status')
+        .lean(),
+      // ── GRC: incidents ─────────────────────────────────────
+      this.incidentModel
+        .find({ tenantId: tId, status: { $ne: IncidentStatus.CLOSED } })
+        .select('title severity status')
+        .lean(),
+      // ── GRC: compliance obligations ────────────────────────
+      this.obligationModel
+        .find({
+          tenantId: tId,
+          status: { $in: [ObligationStatus.DUE, ObligationStatus.OVERDUE] },
+        })
+        .select('title regulator status nextDueDate')
+        .lean(),
+      // ── GRC: deals ──────────────────────────────────────────
+      this.dealModel
+        .find({ tenantId: tId, status: DealStatus.ACTIVE })
+        .select('value status')
+        .lean(),
+      this.dealModel.countDocuments({
+        tenantId: tId,
+        status: DealStatus.COMPLETED,
+      }),
+
+      // ── CRM: mandates ───────────────────────────────────────
+      this.mandateModel
+        .find({ tenantId: tId, stage: { $ne: MandateStage.CLOSE } })
+        .select('name clientName rag progress targetDate')
+        .lean(),
+      // ── CRM: tasks ───────────────────────────────────────────
+      this.taskModel.countDocuments({
+        tenantId: tId,
+        status: { $ne: TaskStatus.DONE },
+      }),
+      this.taskModel.countDocuments({ tenantId: tId, status: TaskStatus.DONE }),
+      this.taskModel.countDocuments({ tenantId: tId }),
+      // ── CRM: invoices ────────────────────────────────────────
+      this.invoiceModel
+        .find({ tenantId: tId, stage: InvoiceStage.OVERDUE })
+        .select(
+          'ref clientName dueOn currency lines discount vatRate whtRate paidAmount',
+        )
+        .lean(),
+      this.invoiceModel
+        .find({
+          tenantId: tId,
+          stage: { $nin: [InvoiceStage.PAID, InvoiceStage.DRAFT] },
+        })
+        .select('lines discount vatRate whtRate paidAmount')
+        .lean(),
+      this.invoiceModel
+        .find({ tenantId: tId, stage: InvoiceStage.PAID })
+        .select('paidAmount')
+        .lean(),
+      // ── CRM: tickets ─────────────────────────────────────────
+      this.ticketModel.countDocuments({
+        tenantId: tId,
+        status: { $nin: [TicketStatus.RESOLVED, TicketStatus.CLOSED] },
+      }),
+
+      // ── HR: leave ────────────────────────────────────────────
+      this.leaveModel
+        .find({ tenantId: tId, status: LeaveStatus.PENDING })
+        .populate('employeeId', 'firstName lastName')
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .lean(),
+
+      // ── Delivery pulse: this week's approved time entries ────
+      this.timeEntryModel
+        .find({
+          tenantId: tId,
+          status: TimesheetStatus.APPROVED,
+          date: { $gte: startOfWeek },
+        })
+        .select('hours billable rate')
+        .lean(),
+      // ── Recent activity: most recently logged entries ────────
+      this.timeEntryModel
+        .find({ tenantId: tId })
+        .sort({ createdAt: -1 })
+        .limit(6)
+        .select('member mandateName taskTitle hours date narrative')
+        .lean(),
     ]);
+
+    // ── Real risk scoring — same formula RiskService itself uses,
+    // so "critical" here means the same thing it means on the real
+    // risk register, not a different, looser dashboard-only bar.
+    const residualScore = (r: {
+      likelihood: number;
+      impact: number;
+      controls: { effectiveness: ControlEffectiveness }[];
+    }) => {
+      const best = r.controls.reduce<ControlEffectiveness | null>((acc, c) => {
+        if (c.effectiveness === ControlEffectiveness.EFFECTIVE)
+          return ControlEffectiveness.EFFECTIVE;
+        if (
+          c.effectiveness === ControlEffectiveness.PARTIALLY_EFFECTIVE &&
+          acc !== ControlEffectiveness.EFFECTIVE
+        )
+          return ControlEffectiveness.PARTIALLY_EFFECTIVE;
+        return acc;
+      }, null);
+      let likelihood = r.likelihood;
+      if (best === ControlEffectiveness.EFFECTIVE)
+        likelihood = Math.max(1, likelihood - 2);
+      else if (best === ControlEffectiveness.PARTIALLY_EFFECTIVE)
+        likelihood = Math.max(1, likelihood - 1);
+      return likelihood * r.impact;
+    };
+    const invoicePayable = (inv: any) => {
+      const subtotal = (inv.lines ?? []).reduce(
+        (s: number, l: any) => s + l.qty * l.unit,
+        0,
+      );
+      const net = subtotal - (inv.discount ?? 0);
+      const vat = (net * (inv.vatRate ?? 0)) / 100;
+      const wht = (net * (inv.whtRate ?? 0)) / 100;
+      return net + vat - wht;
+    };
+
+    const criticalRisks = openRisks.filter((r) => residualScore(r) >= 17);
+    const kycScore = kycTotal ? Math.round((kycApproved / kycTotal) * 100) : 0;
+    const hrScore = totalEmployees
+      ? Math.round((activeEmployees / totalEmployees) * 100)
+      : 0;
+    const crmScore = activeMandates.length
+      ? Math.round(
+          (activeMandates.filter((m) => m.rag === 'Green').length /
+            activeMandates.length) *
+            100,
+        )
+      : 0;
+    const grcScore = Math.max(
+      0,
+      100 -
+        criticalRisks.length * 8 -
+        overdueObligations.length * 6 -
+        openIncidents.length * 4,
+    );
+    const overallScore = Math.round(
+      (kycScore + grcScore + crmScore + hrScore) / 4,
+    );
+    const dueObligations = overdueObligations.filter(
+      (o) => o.status === ObligationStatus.DUE,
+    );
+    const trueOverdueObligations = overdueObligations.filter(
+      (o) => o.status === ObligationStatus.OVERDUE,
+    );
+    const atRiskMandates = activeMandates.filter((m) => m.rag !== 'Green');
+    const receivables = openInvoices.reduce(
+      (s, i) => s + (invoicePayable(i) - (i.paidAmount ?? 0)),
+      0,
+    );
+    const collected = paidInvoices.reduce((s, i) => s + (i.paidAmount ?? 0), 0);
+    const dealValue = liveDeals.reduce((s, d) => s + (d.value ?? 0), 0);
+
+    // ── Delivery pulse — real, from this week's approved entries
+    // only, same rule the finance module itself uses: unapproved
+    // hours aren't real revenue yet.
+    const totalHours = weeklyTimeEntries.reduce((s, e: any) => s + e.hours, 0);
+    const billableHours = weeklyTimeEntries
+      .filter((e: any) => e.billable)
+      .reduce((s, e: any) => s + e.hours, 0);
+    const weeklyRevenue = weeklyTimeEntries
+      .filter((e: any) => e.billable)
+      .reduce((s, e: any) => s + e.hours * (e.rate ?? 0), 0);
+    const utilisation = totalHours
+      ? Math.round((billableHours / totalHours) * 100)
+      : 0;
+
+    // ── Real attention feed — same records the module pages
+    // themselves would flag, not a fabricated summary. ─────────
+    const attention: any[] = [];
+    criticalRisks.slice(0, 2).forEach((r: any) =>
+      attention.push({
+        id: `risk-${r._id}`,
+        module: 'GRC',
+        title: r.title,
+        detail: `Residual score ${residualScore(r)} · owner ${r.owner}`,
+        severity: 'critical',
+        to: '/grc/risk/register',
+      }),
+    );
+    trueOverdueObligations.slice(0, 2).forEach((o: any) =>
+      attention.push({
+        id: `obl-${o._id}`,
+        module: 'GRC',
+        title: o.title,
+        detail: `${o.regulator} · due ${new Date(o.nextDueDate).toLocaleDateString()}`,
+        severity: 'critical',
+        to: '/grc/compliance/obligations',
+      }),
+    );
+    overdueInvoices.slice(0, 2).forEach((i: any) =>
+      attention.push({
+        id: `inv-${i._id}`,
+        module: 'CRM',
+        title: `${i.ref} — ${i.clientName}`,
+        detail: `Overdue since ${new Date(i.dueOn).toLocaleDateString()} · ${i.currency} ${Math.round(invoicePayable(i) - (i.paidAmount ?? 0)).toLocaleString()}`,
+        severity: 'critical',
+        to: '/crm/finance/invoicing',
+      }),
+    );
+    atRiskMandates.slice(0, 2).forEach((m: any) =>
+      attention.push({
+        id: `mnd-${m._id}`,
+        module: 'CRM',
+        title: m.name,
+        detail: `${m.clientName} · ${m.progress}% complete · target ${new Date(m.targetDate).toLocaleDateString()}`,
+        severity: m.rag === 'Red' ? 'critical' : 'warning',
+        to: '/crm/mandates',
+      }),
+    );
+    pendingKyc.slice(0, 2).forEach((c: any) =>
+      attention.push({
+        id: `kyc-${c._id}`,
+        module: 'AML/KYC',
+        title:
+          c.userId?.businessName ||
+          `${c.userId?.firstName ?? ''} ${c.userId?.lastName ?? ''}`.trim(),
+        detail: `KYC ${c.kycStatus} · ${c.riskLevel} risk${c.assignedTo ? ` · officer ${c.assignedTo.firstName} ${c.assignedTo.lastName}` : ''}`,
+        severity: c.riskLevel === 'high' ? 'critical' : 'warning',
+        to: '/clients',
+      }),
+    );
+    pendingLeave.slice(0, 2).forEach((l: any) =>
+      attention.push({
+        id: `leave-${l._id}`,
+        module: 'HR',
+        title: `${l.employeeId?.firstName ?? ''} ${l.employeeId?.lastName ?? ''} — ${l.type} leave`,
+        detail: `${new Date(l.startDate).toLocaleDateString()} → ${new Date(l.endDate).toLocaleDateString()} · awaiting approval`,
+        severity: 'info',
+        to: '/my/leave',
+      }),
+    );
+    openIncidents.slice(0, 2).forEach((i: any) =>
+      attention.push({
+        id: `inc-${i._id}`,
+        module: 'GRC',
+        title: i.title,
+        detail: `${i.severity} severity · ${i.status}`,
+        severity: i.severity === 'Critical' ? 'critical' : 'warning',
+        to: '/grc/risk/incidents',
+      }),
+    );
+    const rank: Record<string, number> = { critical: 0, warning: 1, info: 2 };
+    attention.sort((a, b) => rank[a.severity] - rank[b.severity]);
 
     return {
       team: {
@@ -130,7 +507,76 @@ export class TenantService {
         activeEmployees,
         employeesByClient,
         recentJoins: hrRecentJoins,
+        pendingLeave: pendingLeave.length,
+        score: hrScore,
       },
+      kyc: {
+        total: kycTotal,
+        approved: kycApproved,
+        pending: kycTotal - kycApproved,
+        highRisk: kycHighRisk,
+        score: kycScore,
+      },
+      grc: {
+        openRisks: openRisks.length,
+        criticalRisks: criticalRisks.length,
+        openIncidents: openIncidents.length,
+        dueObligations: dueObligations.length,
+        overdueObligations: trueOverdueObligations.length,
+        liveDeals: liveDeals.length,
+        dealsWon,
+        dealValue,
+        score: grcScore,
+      },
+      crm: {
+        activeMandates: activeMandates.length,
+        atRiskMandates: atRiskMandates.length,
+        openTasks,
+        tasksDone,
+        tasksTotal,
+        openTickets,
+        overdueInvoices: overdueInvoices.length,
+        receivables,
+        score: crmScore,
+      },
+      attention: attention.slice(0, 10),
+      wins: [
+        {
+          label: 'Collected',
+          value: `$${Math.round(collected).toLocaleString()}`,
+          hint: 'Cash received on settled invoices',
+        },
+        {
+          label: 'Tasks delivered',
+          value: `${tasksDone}/${tasksTotal}`,
+          hint: 'Delivery items closed out',
+        },
+        {
+          label: 'Deals closed',
+          value: dealsWon,
+          hint: 'Transactions completed',
+        },
+        {
+          label: 'Pipeline value',
+          value: `$${Math.round(dealValue / 1000)}k`,
+          hint: 'Value of live deals in flight',
+        },
+      ],
+      overallScore,
+      deliveryPulse: {
+        totalHours,
+        billableHours,
+        revenue: weeklyRevenue,
+        utilisation,
+      },
+      recentActivity: recentTimeEntries.map((e: any) => ({
+        id: e._id,
+        projectName: e.mandateName,
+        description: e.taskTitle || e.narrative || 'Time logged',
+        teamMemberName: e.member,
+        hours: e.hours,
+        date: e.date,
+      })),
       generatedAt: new Date(),
     };
   }
