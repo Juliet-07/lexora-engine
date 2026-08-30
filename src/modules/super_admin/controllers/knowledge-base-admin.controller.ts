@@ -8,15 +8,12 @@ import {
   Param,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
-import { KnowledgeBaseService } from './knowledge-base.service';
-import {
-  UpsertKnowledgeEntryDto,
-  SetKnowledgeStatusDto,
-} from './knowledge-entry.dto';
+import { KnowledgeBaseService } from '../services';
+import { UpsertKnowledgeEntryDto, SetKnowledgeStatusDto } from '../dtos';
 import { UserTypes } from 'src/common/decorators';
 import { UserType } from 'src/common/interfaces/user-role.enum';
 
-@ApiTags('Super Admin — Knowledge Base')
+@ApiTags('SuperAdmin')
 @ApiBearerAuth()
 @UserTypes(UserType.SUPER_ADMIN)
 @Controller('super-admin/knowledge')

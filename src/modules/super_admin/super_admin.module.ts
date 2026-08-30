@@ -1,7 +1,15 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { SuperAdminController } from './controllers';
-import { SuperAdminService, SubscriptionExpiryService } from './services';
+import {
+  KnowledgeBaseAdminController,
+  KnowledgeBaseController,
+  SuperAdminController,
+} from './controllers';
+import {
+  SuperAdminService,
+  SubscriptionExpiryService,
+  KnowledgeBaseService,
+} from './services';
 import {
   PlatformModule,
   PlatformModuleSchema,
@@ -15,8 +23,14 @@ import {
   PlatformContractTemplateSchema,
   PlatformTemplateFolder,
   PlatformTemplateFolderSchema,
+  KnowledgeEntry,
+  KnowledgeEntrySchema,
 } from './schemas';
 import { User, UserSchema } from '../auth/schemas/user.schema';
+import {
+  PaymentTransaction,
+  PaymentTransactionSchema,
+} from '../payment/payment.schema';
 import { EmailModule } from 'src/common/utils/mailing/email.module';
 import { Employee, EmployeeSchema } from '../hr/schemas';
 import {
@@ -49,18 +63,23 @@ import {
         name: PlatformTemplateFolder.name,
         schema: PlatformTemplateFolderSchema,
       },
+      { name: PaymentTransaction.name, schema: PaymentTransactionSchema },
+      { name: KnowledgeEntry.name, schema: KnowledgeEntrySchema },
     ]),
   ],
   controllers: [
     SuperAdminController,
     PlatformContractTemplateController,
     PlatformTemplateFolderController,
+    KnowledgeBaseAdminController,
+    KnowledgeBaseController,
   ],
   providers: [
     SuperAdminService,
     SubscriptionExpiryService,
     PlatformContractTemplateService,
     PlatformTemplateFolderService,
+    KnowledgeBaseService,
   ],
   exports: [
     SuperAdminService,

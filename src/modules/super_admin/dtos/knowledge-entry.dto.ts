@@ -7,7 +7,7 @@ import {
   IsUrl,
   ValidateIf,
 } from 'class-validator';
-import { KnowledgeCategory, KnowledgeStatus } from './knowledge-entry.schema';
+import { KnowledgeCategory, KnowledgeStatus } from '../schemas';
 
 export class UpsertKnowledgeEntryDto {
   @ApiProperty() @IsString() @MaxLength(200) title: string;

@@ -75,7 +75,7 @@ const templateFileFilter = (_req: any, file: Express.Multer.File, cb: any) => {
   }
 };
 
-@ApiTags('Super Admin — Platform Contract Templates')
+@ApiTags('SuperAdmin')
 @ApiBearerAuth()
 @UserTypes(UserType.SUPER_ADMIN)
 @Controller('super-admin/contract-templates')
@@ -222,7 +222,7 @@ export class PlatformContractTemplateController {
   }
 }
 
-@ApiTags('Super Admin — Contract Template Folders')
+@ApiTags('SuperAdmin')
 @ApiBearerAuth()
 @UserTypes(UserType.SUPER_ADMIN)
 @Controller('super-admin/contract-template-folders')

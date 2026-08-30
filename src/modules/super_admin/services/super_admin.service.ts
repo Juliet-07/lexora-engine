@@ -43,8 +43,11 @@ import {
 import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
 import { SubscriptionExpiryService } from './subscription-expiry.service';
-import { PaymentService } from '../../payment/services/payment.service';
 import {
+  PaymentTransaction,
+  PaymentTransactionDocument,
+  PaymentTransactionStatus,
+  PaymentMethod,
   Currency,
   DocumentType,
   PaymentTransactionType,
@@ -73,7 +76,8 @@ export class SuperAdminService {
     private readonly employeeModel: Model<EmployeeDocument>,
     private readonly mailService: EmailService,
     private readonly subscriptionExpiryService: SubscriptionExpiryService,
-    private readonly paymentService: PaymentService,
+    @InjectModel(PaymentTransaction.name)
+    private readonly transactionModel: Model<PaymentTransactionDocument>,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -819,22 +823,35 @@ export class SuperAdminService {
     // Real payment, recorded alongside the plan change — omitted
     // entirely (no transaction) when nothing was actually paid, e.g.
     // Free, or Premium before its separately-quoted invoice is
-    // settled.
+    // settled. Written directly here (not via PaymentService) to
+    // keep this module free of cross-module service dependencies —
+    // the receipt-number generation is simple enough to duplicate
+    // safely, matching the same pattern used elsewhere in this app
+    // for exactly this reason.
     if (dto.paymentAmount && dto.paymentAmount > 0) {
-      await this.paymentService.recordManualPayment({
-        tenantId,
-        plan: dto.plan,
-        amount: dto.paymentAmount,
-        currency: dto.paymentCurrency ?? Currency.USD,
+      const receiptCount = await this.transactionModel.countDocuments({
         documentType: DocumentType.RECEIPT,
-        paymentReference: dto.paymentReference,
-        notes:
-          dto.paymentNotes ??
-          `Recorded by super admin on plan change to ${dto.plan}`,
-        recordedBy: assignedBy,
+      });
+      const receiptNumber = `LEX-REC-${String(receiptCount + 1).padStart(4, '0')}`;
+
+      await this.transactionModel.create({
+        tenantId: new Types.ObjectId(tenantId),
         type: existing
           ? PaymentTransactionType.SUBSCRIPTION_UPGRADE
           : PaymentTransactionType.SUBSCRIPTION_NEW,
+        status: PaymentTransactionStatus.PAID,
+        amount: dto.paymentAmount,
+        currency: dto.paymentCurrency ?? Currency.USD,
+        plan: dto.plan,
+        paymentMethod: PaymentMethod.MANUAL,
+        documentType: DocumentType.RECEIPT,
+        receiptNumber,
+        paidAt: new Date(),
+        paymentReference: dto.paymentReference ?? null,
+        notes:
+          dto.paymentNotes ??
+          `Recorded by super admin on plan change to ${dto.plan}`,
+        recordedBy: new Types.ObjectId(assignedBy),
       });
     }
 
@@ -918,7 +935,7 @@ export class SuperAdminService {
   // ═══════════════════════════════════════════════════════════
 
   async getRiskRules(): Promise<RiskRulesDocument> {
-    let rules = await this.riskRulesModel.findOne().lean();
+    const rules = await this.riskRulesModel.findOne().lean();
     if (!rules) {
       // Return sensible defaults if none set yet
       return {

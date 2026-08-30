@@ -5,8 +5,8 @@ import {
   KnowledgeEntry,
   KnowledgeEntryDocument,
   KnowledgeStatus,
-} from './knowledge-entry.schema';
-import { UpsertKnowledgeEntryDto } from './knowledge-entry.dto';
+} from '../schemas';
+import { UpsertKnowledgeEntryDto } from '../dtos';
 
 @Injectable()
 export class KnowledgeBaseService {

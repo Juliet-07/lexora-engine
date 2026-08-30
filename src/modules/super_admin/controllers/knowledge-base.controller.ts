@@ -1,6 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
-import { KnowledgeBaseService } from './knowledge-base.service';
+import { KnowledgeBaseService } from '../services';
 import { UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
 import {
