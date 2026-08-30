@@ -42,6 +42,15 @@ export class PlatformContractTemplate {
   @Prop({ default: '' }) jurisdiction: string;
   @Prop({ default: '' }) description: string;
 
+  // Which platform module (and area within it) this template is
+  // for — e.g. module "hr", area "contracts". Stored as free text,
+  // not an enum: the taxonomy is owned and defined on the frontend
+  // (see TEMPLATE_MODULES in contract-template.ts) and may grow
+  // over time without a backend migration each time it does. Empty
+  // string means unscoped — a template created before this existed.
+  @Prop({ default: '', index: true }) moduleKey: string;
+  @Prop({ default: '', index: true }) areaKey: string;
+
   // Null means uncategorized — templates existed before folders did,
   // so this can't be required without breaking every template
   // created before this change.

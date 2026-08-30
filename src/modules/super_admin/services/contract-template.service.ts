@@ -23,7 +23,7 @@ import {
   UpdatePlatformContractTemplateDto,
   UpdatePlatformTemplateFolderDto,
   UploadPlatformContractTemplateDto,
-} from '../dto/contract-template.dto';
+} from '../dtos';
 
 @Injectable()
 export class PlatformTemplateFolderService {
@@ -137,10 +137,12 @@ export class PlatformContractTemplateService {
     return `${process.env.APP_URL}/${relativePath}`;
   }
 
-  async getAll(folderId?: string) {
+  async getAll(folderId?: string, moduleKey?: string, areaKey?: string) {
     const query: any = {};
     if (folderId === 'uncategorized') query.folderId = null;
     else if (folderId) query.folderId = folderId;
+    if (moduleKey) query.moduleKey = moduleKey;
+    if (areaKey) query.areaKey = areaKey;
     return this.model.find(query).sort({ updatedAt: -1 }).lean();
   }
 
@@ -157,6 +159,8 @@ export class PlatformContractTemplateService {
       jurisdiction: dto.jurisdiction ?? '',
       description: dto.description ?? '',
       folderId: dto.folderId ?? null,
+      moduleKey: dto.moduleKey ?? '',
+      areaKey: dto.areaKey ?? '',
       sourceType: TemplateSourceType.AUTHORED,
       content: dto.content,
       version: dto.version ?? '1.0',
@@ -166,34 +170,52 @@ export class PlatformContractTemplateService {
     return created.toObject();
   }
 
-  // Real file on disk (Multer has already saved it by the time this
-  // runs) — a genuinely different kind of template from an authored
-  // one, not authored content pretending to have a file attached.
-  async upload(
-    file: Express.Multer.File,
+  // Real file(s) on disk (Multer has already saved them by the time
+  // this runs) — each becomes its own, genuinely separate template
+  // record, all sharing the metadata given once in the dialog
+  // (category, jurisdiction, folder, module/area). With a single
+  // file, the given title is used as-is; with several, there's no
+  // way to give each a different title in one form submission, so
+  // each file's own real name (extension stripped) becomes that
+  // template's title instead — never a fabricated or duplicated one.
+  async uploadMany(
+    files: Express.Multer.File[],
     dto: UploadPlatformContractTemplateDto,
     createdBy: string,
   ) {
-    if (!file) throw new BadRequestException('No file uploaded.');
-    const content = await this.extractDocxHtml(file.path);
+    if (!files?.length) throw new BadRequestException('No file uploaded.');
 
-    const created = await this.model.create({
-      title: dto.title,
-      category: dto.category,
-      jurisdiction: dto.jurisdiction ?? '',
-      description: dto.description ?? '',
-      folderId: dto.folderId ?? null,
-      sourceType: TemplateSourceType.UPLOADED,
-      content,
-      fileUrl: this.toFileUrl(file.path),
-      fileName: file.originalname,
-      fileMimeType: file.mimetype,
-      filePath: file.path,
-      version: dto.version ?? '1.0',
-      status: PlatformTemplateStatus.DRAFT,
-      createdBy,
-    });
-    return created.toObject();
+    const created = await Promise.all(
+      files.map(async (file) => {
+        const content = await this.extractDocxHtml(file.path);
+        const title =
+          files.length === 1 && dto.title
+            ? dto.title
+            : file.originalname.replace(/\.[^/.]+$/, '');
+
+        const doc = await this.model.create({
+          title,
+          category: dto.category,
+          jurisdiction: dto.jurisdiction ?? '',
+          description: dto.description ?? '',
+          folderId: dto.folderId ?? null,
+          moduleKey: dto.moduleKey ?? '',
+          areaKey: dto.areaKey ?? '',
+          sourceType: TemplateSourceType.UPLOADED,
+          content,
+          fileUrl: this.toFileUrl(file.path),
+          fileName: file.originalname,
+          fileMimeType: file.mimetype,
+          filePath: file.path,
+          version: dto.version ?? '1.0',
+          status: PlatformTemplateStatus.DRAFT,
+          createdBy,
+        });
+        return doc.toObject();
+      }),
+    );
+
+    return created;
   }
 
   // Replaces an uploaded template's real file — same real
@@ -237,6 +259,8 @@ export class PlatformContractTemplateService {
     if (dto.folderId !== undefined) {
       t.folderId = dto.folderId ? (dto.folderId as any) : null;
     }
+    if (dto.moduleKey !== undefined) t.moduleKey = dto.moduleKey;
+    if (dto.areaKey !== undefined) t.areaKey = dto.areaKey;
     await t.save();
     return t.toObject();
   }

@@ -2,6 +2,7 @@ import {
   Injectable,
   ConflictException,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -29,9 +30,8 @@ import {
   UpdateSubscriptionPlanDto,
   AssignTenantSubscriptionDto,
   UpdateTenantSubscriptionStatusDto,
-  AddAddonModulesDto,
   CreateRiskRulesDto,
-} from '../dto/superadmin.dto';
+} from '../dtos';
 import {
   UserType,
   TenantRole,
@@ -43,6 +43,12 @@ import {
 import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
 import { SubscriptionExpiryService } from './subscription-expiry.service';
+import { PaymentService } from '../../payment/services/payment.service';
+import {
+  Currency,
+  DocumentType,
+  PaymentTransactionType,
+} from '../../payment/payment.schema';
 import {
   Employee,
   EmployeeDocument,
@@ -67,6 +73,7 @@ export class SuperAdminService {
     private readonly employeeModel: Model<EmployeeDocument>,
     private readonly mailService: EmailService,
     private readonly subscriptionExpiryService: SubscriptionExpiryService,
+    private readonly paymentService: PaymentService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -538,42 +545,25 @@ export class SuperAdminService {
 
     const module = await this.moduleModel.create(dto);
 
-    if (dto.includedInPlans && dto.includedInPlans.length > 0) {
-      await this.planModel.updateMany(
-        { plan: { $in: dto.includedInPlans } },
-        { $addToSet: { includedModules: module.key } },
-      );
-    }
-
-    await this.subscriptionModel.updateMany(
-      {
-        plan: SubscriptionPlan.FREE,
-        status: { $in: [SubscriptionStatus.TRIAL, SubscriptionStatus.ACTIVE] },
-      },
-      {
-        $addToSet: {
-          baseModules: module.key,
-          activeModules: module.key,
-        },
-      },
+    // Every plan now includes every real module — no selective
+    // inclusion left to configure, so a newly created module is
+    // simply added everywhere.
+    await this.planModel.updateMany(
+      {},
+      { $addToSet: { includedModules: module.key } },
     );
 
-    if (dto.includedInPlans && dto.includedInPlans.length > 0) {
-      await this.subscriptionModel.updateMany(
-        {
-          plan: { $in: dto.includedInPlans },
-          status: {
-            $in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL],
-          },
-        },
-        {
-          $addToSet: {
-            baseModules: module.key,
-            activeModules: module.key,
-          },
-        },
-      );
-    }
+    // Every active/trial subscription gains the new module as part
+    // of its plan grant. It also lands in activeModules by default
+    // — the per-tenant toggle starts "on" and the super admin can
+    // switch it off for a specific tenant afterward if needed.
+    await this.subscriptionModel.updateMany(
+      {
+        status: { $in: [SubscriptionStatus.TRIAL, SubscriptionStatus.ACTIVE] },
+      },
+      { $addToSet: { baseModules: module.key, activeModules: module.key } },
+    );
+
     return module;
   }
 
@@ -598,46 +588,17 @@ export class SuperAdminService {
     const mod = await this.moduleModel.findOneAndUpdate({ key }, dto, {
       new: true,
     });
-
-    // ── Sync plan configs if includedInPlans changed ─────────────────────────
-    if (dto.includedInPlans) {
-      const prevPlans: string[] = before.includedInPlans ?? [];
-      const nextPlans: string[] = dto.includedInPlans ?? [];
-
-      // Plans newly added — push module key into those plan configs
-      const addedToPlans = nextPlans.filter((p) => !prevPlans.includes(p));
-      if (addedToPlans.length > 0) {
-        await Promise.all([
-          this.planModel.updateMany(
-            { plan: { $in: addedToPlans } },
-            { $addToSet: { includedModules: key } },
-          ),
-          this.subscriptionModel.updateMany(
-            {
-              plan: { $in: addedToPlans },
-              status: {
-                $in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL],
-              },
-            },
-            { $addToSet: { baseModules: key, activeModules: key } },
-          ),
-        ]);
-      }
-
-      // Plans removed — pull module key from those plan configs
-      const removedFromPlans = prevPlans.filter((p) => !nextPlans.includes(p));
-      if (removedFromPlans.length > 0) {
-        await Promise.all([
-          this.planModel.updateMany(
-            { plan: { $in: removedFromPlans } },
-            { $pull: { includedModules: key } },
-          ),
-        ]);
-      }
-    }
     return mod;
   }
 
+  // Genuinely global — retires or restores a module for the whole
+  // platform (e.g. sunsetting it, or it isn't ready to launch yet).
+  // This is deliberately NOT the per-tenant access control; that's
+  // TenantSubscription.activeModules, set independently per tenant
+  // via setTenantModuleAccess below. Disabling a module here removes
+  // it from every tenant regardless of their own per-tenant toggle —
+  // a real platform-wide operational switch, not a customer-facing
+  // access decision.
   async toggleModule(
     key: string,
     isActive: boolean,
@@ -650,58 +611,24 @@ export class SuperAdminService {
     if (!mod) throw new NotFoundException(`Module "${key}" not found`);
 
     if (!isActive) {
-      // Deactivating — strip from ALL subscriptions
       await this.subscriptionModel.updateMany(
         {},
-        {
-          $pull: {
-            baseModules: key,
-            addonModules: key,
-            activeModules: key,
-          },
-        },
+        { $pull: { baseModules: key, activeModules: key } },
       );
-
       await this.planModel.updateMany({}, { $pull: { includedModules: key } });
     } else {
-      // Re-activating — restore to free plan subscriptions automatically
+      await this.planModel.updateMany(
+        {},
+        { $addToSet: { includedModules: key } },
+      );
       await this.subscriptionModel.updateMany(
         {
-          plan: SubscriptionPlan.FREE,
           status: {
             $in: [SubscriptionStatus.TRIAL, SubscriptionStatus.ACTIVE],
           },
         },
-        {
-          $addToSet: {
-            baseModules: key,
-            activeModules: key,
-          },
-        },
+        { $addToSet: { baseModules: key, activeModules: key } },
       );
-
-      // Restore to paid plans that include it
-      if (mod.includedInPlans?.length > 0) {
-        await this.planModel.updateMany(
-          { plan: { $in: mod.includedInPlans } },
-          { $addToSet: { includedModules: key } },
-        );
-
-        await this.subscriptionModel.updateMany(
-          {
-            plan: { $in: mod.includedInPlans },
-            status: {
-              $in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL],
-            },
-          },
-          {
-            $addToSet: {
-              baseModules: key,
-              activeModules: key,
-            },
-          },
-        );
-      }
     }
 
     return mod;
@@ -716,15 +643,33 @@ export class SuperAdminService {
       this.planModel.updateMany({}, { $pull: { includedModules: key } }),
       this.subscriptionModel.updateMany(
         {},
-        {
-          $pull: {
-            baseModules: key,
-            addonModules: key,
-            activeModules: key,
-          },
-        },
+        { $pull: { baseModules: key, activeModules: key } },
       ),
     ]);
+  }
+
+  // ── Per-tenant module access — the real, day-to-day control.
+  // Every module is available on every plan, but a specific tenant
+  // may not need one; this toggles it for that tenant alone, never
+  // touching the plan, the module definition, or any other tenant.
+  async setTenantModuleAccess(tenantId: string, key: string, enabled: boolean) {
+    if (!Object.values(PlatformModuleKey).includes(key as PlatformModuleKey)) {
+      throw new BadRequestException(`"${key}" is not a real platform module`);
+    }
+    const sub = await this.subscriptionModel.findOne({
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!sub) throw new NotFoundException('Tenant has no subscription yet');
+
+    if (enabled) {
+      if (!sub.activeModules.includes(key as PlatformModuleKey)) {
+        sub.activeModules.push(key as PlatformModuleKey);
+      }
+    } else {
+      sub.activeModules = sub.activeModules.filter((m) => m !== key);
+    }
+    await sub.save();
+    return sub.toObject();
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -796,9 +741,9 @@ export class SuperAdminService {
               );
             }
 
-            const newActiveModules: string[] = [
-              ...new Set([...newBaseModules, ...(sub.addonModules || [])]),
-            ];
+            const newActiveModules: string[] = added.length
+              ? [...new Set([...(sub.activeModules || []), ...added])]
+              : (sub.activeModules || []).filter((m) => !removed.includes(m));
 
             await this.subscriptionModel.findByIdAndUpdate(sub._id, {
               baseModules: newBaseModules as PlatformModuleKey[],
@@ -812,86 +757,6 @@ export class SuperAdminService {
     return updated;
   }
 
-  async repairSubscriptionModules(): Promise<{
-    plansFixed: number;
-    subscriptionsFixed: number;
-    summary: Record<string, string[]>;
-  }> {
-    // ── Step 1: Build plan → modules map from PlatformModule collection ───────
-    const allModules = await this.moduleModel.find({ isActive: true }).lean();
-
-    // Map: planKey → [moduleKey, moduleKey, ...]
-    const planModuleMap: Record<string, string[]> = {};
-
-    for (const mod of allModules) {
-      const plans: string[] = mod.includedInPlans ?? [];
-      for (const plan of plans) {
-        if (!planModuleMap[plan]) planModuleMap[plan] = [];
-        if (!planModuleMap[plan].includes(mod.key)) {
-          planModuleMap[plan].push(mod.key);
-        }
-      }
-    }
-
-    console.log('Plan → Modules map built:', planModuleMap);
-
-    // ── Step 2: Update each SubscriptionPlanConfig with correct includedModules
-    let plansFixed = 0;
-    const allPlans = await this.planModel.find({}).lean();
-
-    for (const plan of allPlans) {
-      const correctModules = planModuleMap[plan.plan] ?? [];
-      await this.planModel.findByIdAndUpdate(plan._id, {
-        includedModules: correctModules,
-      });
-      plansFixed++;
-      console.log(
-        `Plan "${plan.plan}" → modules: [${correctModules.join(', ')}]`,
-      );
-    }
-
-    // ── Step 3: Update each TenantSubscription with correct modules ───────────
-    let subscriptionsFixed = 0;
-    const allSubs = await this.subscriptionModel.find({}).lean();
-
-    for (const sub of allSubs) {
-      let baseModules: string[] = [];
-
-      if (sub.plan === 'free') {
-        // FREE plan gets ALL active modules
-        baseModules = allModules.map((m) => m.key);
-      } else {
-        // Paid plan gets modules from the plan config
-        baseModules = planModuleMap[sub.plan] ?? [];
-      }
-
-      // activeModules = baseModules + any addon modules already on this subscription
-      const activeModules = [
-        ...new Set([...baseModules, ...(sub.addonModules ?? [])]),
-      ];
-
-      await this.subscriptionModel.findByIdAndUpdate(sub._id, {
-        baseModules: baseModules as any,
-        activeModules: activeModules as any,
-      });
-
-      subscriptionsFixed++;
-      console.log(
-        `Subscription for tenant ${sub.tenantId} (${sub.plan}) → ` +
-          `baseModules: [${baseModules.join(', ')}]`,
-      );
-    }
-
-    console.log(
-      `\nRepair complete: ${plansFixed} plans, ${subscriptionsFixed} subscriptions fixed.`,
-    );
-
-    return {
-      plansFixed,
-      subscriptionsFixed,
-      summary: planModuleMap,
-    };
-  }
   // ═══════════════════════════════════════════════════════════
   // TENANT SUBSCRIPTION MANAGEMENT
   // ═══════════════════════════════════════════════════════════
@@ -907,24 +772,21 @@ export class SuperAdminService {
     });
     if (!tenant) throw new NotFoundException('Tenant not found');
 
-    let baseModules: string[] = [];
+    // Every real, active module — every plan grants all of them now,
+    // there's no more per-plan selective inclusion.
+    const allModules = (
+      await this.moduleModel.find({ isActive: true }).select('key').lean()
+    ).map((m) => m.key);
 
-    if (dto.plan === SubscriptionPlan.FREE) {
-      const allModules = await this.moduleModel
-        .find({ isActive: true })
-        .select('key')
-        .lean();
-      baseModules = allModules.map((m) => m.key);
-    } else {
-      const planConfig = await this.planModel.findOne({ plan: dto.plan });
-      if (!planConfig) {
-        throw new NotFoundException(`Plan "${dto.plan}" not configured`);
-      }
-      baseModules = planConfig.includedModules || [];
-    }
-
-    const addonModules = dto.addonModules || [];
-    const activeModules = [...new Set([...baseModules, ...addonModules])];
+    const existing = await this.subscriptionModel.findOne({
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    // A tenant's own per-tenant module toggle is independent of
+    // plan — changing plan must not silently re-enable something
+    // the super admin had deliberately switched off for them.
+    const activeModules = existing?.activeModules?.length
+      ? existing.activeModules
+      : allModules;
 
     const now = new Date();
     const periodEnd = new Date(
@@ -942,53 +804,53 @@ export class SuperAdminService {
       {
         plan: dto.plan,
         status: isFree ? SubscriptionStatus.TRIAL : SubscriptionStatus.ACTIVE,
-        baseModules,
-        addonModules,
+        baseModules: allModules,
         activeModules,
         currentPeriodStart: now,
         currentPeriodEnd: isFree ? trialEndsAt : periodEnd,
         trialEndsAt,
         assignedBy: new Types.ObjectId(assignedBy),
         maxUsersOverride: dto.maxUsersOverride || null,
-        maxClientsOverride: dto.maxClientsOverride || null,
         cancelledAt: null,
       },
       { new: true, upsert: true },
     );
 
+    // Real payment, recorded alongside the plan change — omitted
+    // entirely (no transaction) when nothing was actually paid, e.g.
+    // Free, or Premium before its separately-quoted invoice is
+    // settled.
+    if (dto.paymentAmount && dto.paymentAmount > 0) {
+      await this.paymentService.recordManualPayment({
+        tenantId,
+        plan: dto.plan,
+        amount: dto.paymentAmount,
+        currency: dto.paymentCurrency ?? Currency.USD,
+        documentType: DocumentType.RECEIPT,
+        paymentReference: dto.paymentReference,
+        notes:
+          dto.paymentNotes ??
+          `Recorded by super admin on plan change to ${dto.plan}`,
+        recordedBy: assignedBy,
+        type: existing
+          ? PaymentTransactionType.SUBSCRIPTION_UPGRADE
+          : PaymentTransactionType.SUBSCRIPTION_NEW,
+      });
+    }
+
+    // A tenant whose employees/clients were locked out by an earlier
+    // suspension/expiry cascade regains access the moment the super
+    // admin puts them on a real, active plan again. Reactivation only
+    // ever touches users this same cascade mechanism deactivated —
+    // see cascadeReactivateTenantUsers — so someone suspended for an
+    // unrelated reason stays untouched.
+    if (!isFree) {
+      await this.subscriptionExpiryService.cascadeReactivateTenantUsers(
+        tenantId,
+      );
+    }
+
     return subscription;
-  }
-
-  async addAddonModules(
-    tenantId: string,
-    dto: AddAddonModulesDto,
-  ): Promise<TenantSubscriptionDocument> {
-    const sub = await this.subscriptionModel.findOne({
-      tenantId: new Types.ObjectId(tenantId),
-    });
-    if (!sub) throw new NotFoundException('Tenant subscription not found');
-
-    const newAddons = dto.modules.filter((m) => !sub.addonModules.includes(m));
-    const addonModules = [...new Set([...sub.addonModules, ...newAddons])];
-    const activeModules = [...new Set([...sub.baseModules, ...addonModules])];
-
-    sub.addonModules = addonModules;
-    sub.activeModules = activeModules;
-    return sub.save();
-  }
-
-  async removeAddonModules(
-    tenantId: string,
-    dto: AddAddonModulesDto,
-  ): Promise<TenantSubscriptionDocument> {
-    const sub = await this.subscriptionModel.findOne({
-      tenantId: new Types.ObjectId(tenantId),
-    });
-    if (!sub) throw new NotFoundException('Tenant subscription not found');
-
-    sub.addonModules = sub.addonModules.filter((m) => !dto.modules.includes(m));
-    sub.activeModules = [...new Set([...sub.baseModules, ...sub.addonModules])];
-    return sub.save();
   }
 
   async updateTenantSubscriptionStatus(
@@ -1103,24 +965,13 @@ export class SuperAdminService {
     plan: SubscriptionPlan,
     assignedBy: string,
   ) {
-    // const planConfig = await this.planModel.findOne({ plan }).lean();
-    let baseModules: string[] = [];
-
-    if (plan === SubscriptionPlan.FREE) {
-      const allModules = await this.moduleModel
-        .find({ isActive: true })
-        .select('key')
-        .lean();
-      baseModules = allModules.map((m) => m.key);
-    } else {
-      const planConfig = await this.planModel.findOne({ plan }).lean();
-      if (!planConfig) {
-        throw new NotFoundException(
-          `Plan "${plan}" is not configured. Please set it up in the subscritpion plans`,
-        );
-      }
-      baseModules = planConfig.includedModules || [];
-    }
+    // Every plan grants every real module now — no more branching
+    // on which plan was chosen.
+    const allModules = await this.moduleModel
+      .find({ isActive: true })
+      .select('key')
+      .lean();
+    const baseModules = allModules.map((m) => m.key);
 
     const trialEndsAt = new Date();
     trialEndsAt.setDate(trialEndsAt.getDate() + 7); // 7-day trial
@@ -1136,7 +987,6 @@ export class SuperAdminService {
       plan,
       status: isPaidPlan ? SubscriptionStatus.ACTIVE : SubscriptionStatus.TRIAL,
       baseModules,
-      addonModules: [],
       activeModules: baseModules,
       trialEndsAt: isPaidPlan ? null : trialEndsAt,
       currentPeriodStart: new Date(),

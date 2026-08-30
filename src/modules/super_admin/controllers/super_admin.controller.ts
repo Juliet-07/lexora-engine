@@ -7,7 +7,6 @@ import {
   Body,
   Param,
   Query,
-  UseGuards,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -16,9 +15,7 @@ import {
   ApiBearerAuth,
   ApiOperation,
   ApiQuery,
-  ApiParam,
 } from '@nestjs/swagger';
-
 import { SuperAdminService } from '../services/super_admin.service';
 import {
   CreateTenantDto,
@@ -32,12 +29,9 @@ import {
   UpdateSubscriptionPlanDto,
   AssignTenantSubscriptionDto,
   UpdateTenantSubscriptionStatusDto,
-  AddAddonModulesDto,
+  SetTenantModuleAccessDto,
   CreateRiskRulesDto,
-  UpdateRiskRulesDto,
-} from '../dto/superadmin.dto';
-import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../../common/guards/roles.guard';
+} from '../dtos/superadmin.dto';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import {
   UserType,
@@ -172,22 +166,17 @@ export class SuperAdminController {
     return this.service.updateTenantSubscriptionStatus(tenantId, dto);
   }
 
-  @Post('tenants/:id/subscription/addons')
-  @ApiOperation({ summary: 'Add module add-ons to a tenant subscription' })
-  addAddonModules(
+  @Patch('tenants/:id/subscription/modules/:key')
+  @ApiOperation({
+    summary:
+      'Turn a module on/off for this tenant only — independent of their plan, since every plan now includes every module',
+  })
+  setTenantModuleAccess(
     @Param('id') tenantId: string,
-    @Body() dto: AddAddonModulesDto,
+    @Param('key') key: string,
+    @Body() dto: SetTenantModuleAccessDto,
   ) {
-    return this.service.addAddonModules(tenantId, dto);
-  }
-
-  @Delete('tenants/:id/subscription/addons')
-  @ApiOperation({ summary: 'Remove module add-ons from a tenant subscription' })
-  removeAddonModules(
-    @Param('id') tenantId: string,
-    @Body() dto: AddAddonModulesDto,
-  ) {
-    return this.service.removeAddonModules(tenantId, dto);
+    return this.service.setTenantModuleAccess(tenantId, key, dto.enabled);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -309,9 +298,4 @@ export class SuperAdminController {
   // updateRiskRules(@Body() dto: UpdateRiskRulesDto) {
   //   return this.service.createOrUpdateRiskRules(dto);
   // }
-
-  @Post('repair-subscriptions')
-  repairSubscriptions() {
-    return this.service.repairSubscriptionModules();
-  }
 }

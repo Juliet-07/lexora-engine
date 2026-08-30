@@ -18,18 +18,6 @@ export class PlatformModule {
   @Prop({ default: null })
   iconUrl: string;
 
-  // Which plans include this module by default
-  @Prop({ type: [String], default: [] })
-  includedInPlans: string[];
-
-  // Can tenants add this as an add-on regardless of plan?
-  @Prop({ default: true })
-  isAvailableAsAddon: boolean;
-
-  // Base monthly price if purchased as add-on (USD)
-  @Prop({ default: 0 })
-  addonPriceMonthly: number;
-
   @Prop({ default: true })
   isActive: boolean;
 

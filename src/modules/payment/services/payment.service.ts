@@ -209,6 +209,7 @@ export class PaymentService {
     paymentReference?: string;
     notes?: string;
     recordedBy: string;
+    type?: PaymentTransactionType;
   }): Promise<PaymentTransactionDocument> {
     const tenant = await this.userModel.findById(dto.tenantId).lean();
     if (!tenant) throw new NotFoundException('Tenant not found');
@@ -220,7 +221,7 @@ export class PaymentService {
 
     const transaction = await this.transactionModel.create({
       tenantId: new Types.ObjectId(dto.tenantId),
-      type: PaymentTransactionType.SUBSCRIPTION_NEW,
+      type: dto.type ?? PaymentTransactionType.SUBSCRIPTION_NEW,
       status:
         dto.documentType === DocumentType.RECEIPT
           ? PaymentTransactionStatus.PAID

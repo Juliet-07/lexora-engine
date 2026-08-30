@@ -64,8 +64,6 @@ export class TenantClientsService {
       await this.engagementLetterService.checkTenantSetup(tenantId);
 
     // ── 2. Standard checks ─────────────────────────────────────
-    await this.enforceClientLimit(tenantId);
-
     const emailTaken = await this.userModel.findOne({
       email: dto.email.toLowerCase(),
     });
@@ -1070,32 +1068,6 @@ export class TenantClientsService {
   // ═══════════════════════════════════════════════════════════
   // PRIVATE HELPERS
   // ═══════════════════════════════════════════════════════════
-  private async enforceClientLimit(tenantId: string) {
-    const subscription = await this.subscriptionModel
-      .findOne({ tenantId: new Types.ObjectId(tenantId) })
-      .lean();
-    if (!subscription) return;
-
-    const planLimits: Record<string, number> = {
-      free: 10,
-      starter: 50,
-      professional: 500,
-      enterprise: 999999,
-    };
-    const maxClients =
-      subscription.maxClientsOverride || planLimits[subscription.plan] || 10;
-    const currentCount = await this.userModel.countDocuments({
-      userType: UserType.CLIENT,
-      tenantId: new Types.ObjectId(tenantId),
-      status: { $ne: AccountStatus.INACTIVE },
-    });
-    if (currentCount >= maxClients) {
-      throw new ForbiddenException(
-        `Client limit reached (${maxClients}). Upgrade your plan to add more clients.`,
-      );
-    }
-  }
-
   private calculateCompletion(dto: UpdateClientProfileDto): number {
     const fields = [
       dto.firstName,

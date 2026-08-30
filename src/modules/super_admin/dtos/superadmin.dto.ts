@@ -21,6 +21,7 @@ import {
   SubscriptionStatus,
   PlatformModuleKey,
 } from '../../../common/interfaces/user-role.enum';
+import { Currency } from '../../payment/payment.schema';
 
 // ─────────────────────────────────────────────────────────────
 // TENANT DTOs
@@ -201,29 +202,6 @@ export class CreateModuleDto {
   @IsOptional()
   @IsString()
   description?: string;
-
-  @ApiPropertyOptional({
-    isArray: true,
-    enum: SubscriptionPlan,
-    example: ['professional', 'enterprise'],
-  })
-  @IsOptional()
-  @IsArray()
-  includedInPlans?: string[];
-
-  @ApiPropertyOptional({ default: true })
-  @IsOptional()
-  @IsBoolean()
-  isAvailableAsAddon?: boolean;
-
-  @ApiPropertyOptional({
-    example: 49,
-    description: 'Monthly add-on price in USD',
-  })
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  addonPriceMonthly?: number;
 }
 
 export class UpdateModuleDto extends PartialType(CreateModuleDto) {}
@@ -300,15 +278,6 @@ export class AssignTenantSubscriptionDto {
   plan: SubscriptionPlan;
 
   @ApiPropertyOptional({
-    isArray: true,
-    enum: PlatformModuleKey,
-    description: 'Additional add-on modules',
-  })
-  @IsOptional()
-  @IsArray()
-  addonModules?: PlatformModuleKey[];
-
-  @ApiPropertyOptional({
     example: '2025-12-31',
     description: 'Subscription end date',
   })
@@ -323,10 +292,34 @@ export class AssignTenantSubscriptionDto {
   @IsNumber()
   maxUsersOverride?: number;
 
-  @ApiPropertyOptional({ description: 'Override max clients limit' })
+  // ── Real payment, recorded alongside the plan change itself.
+  // Omit amount (or leave it 0) for a plan change with nothing owed
+  // yet — e.g. Premium, where a quote is sent separately — no
+  // transaction is recorded in that case.
+  @ApiPropertyOptional({
+    description: 'Amount actually paid for this plan change, if any',
+  })
   @IsOptional()
   @IsNumber()
-  maxClientsOverride?: number;
+  @Min(0)
+  paymentAmount?: number;
+
+  @ApiPropertyOptional({ enum: Currency })
+  @IsOptional()
+  @IsEnum(Currency)
+  paymentCurrency?: Currency;
+
+  @ApiPropertyOptional({
+    description: 'e.g. bank transfer reference, receipt number the tenant gave',
+  })
+  @IsOptional()
+  @IsString()
+  paymentReference?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  paymentNotes?: string;
 }
 
 export class UpdateTenantSubscriptionStatusDto {
@@ -335,10 +328,10 @@ export class UpdateTenantSubscriptionStatusDto {
   status: SubscriptionStatus;
 }
 
-export class AddAddonModulesDto {
-  @ApiProperty({ isArray: true, enum: PlatformModuleKey })
-  @IsArray()
-  modules: PlatformModuleKey[];
+export class SetTenantModuleAccessDto {
+  @ApiProperty()
+  @IsBoolean()
+  enabled: boolean;
 }
 export class CreateRiskRulesDto {
   @ApiProperty({

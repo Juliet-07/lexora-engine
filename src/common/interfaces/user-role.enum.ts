@@ -63,9 +63,10 @@ export enum AccountStatus {
 // ── Subscription plans ────────────────────────────────────────
 export enum SubscriptionPlan {
   FREE = 'free',
-  STARTER = 'starter',
-  PROFESSIONAL = 'professional',
+  LITE = 'lite',
+  GROW = 'grow',
   ENTERPRISE = 'enterprise',
+  PREMIUM = 'premium',
 }
 
 export enum SubscriptionStatus {
@@ -83,6 +84,7 @@ export enum PlatformModuleKey {
   CRM = 'crm',
   HR_PM = 'hr_pm',
   DEALS = 'deals',
+  FINANCE = 'finance',
 }
 
 // ── Staff roles — module-scoped access, assignable to EMPLOYEE-typed
@@ -95,6 +97,7 @@ export enum StaffRole {
   AML_COMPLIANCE_OFFICER = 'aml_compliance_officer',
   HR_MANAGER = 'hr_manager',
   CRM_MANAGER = 'crm_manager',
+  FINANCE_MANAGER = 'finance_manager',
 }
 
 // Which platform module(s) each staff role unlocks. A root Tenant
@@ -107,6 +110,7 @@ export const STAFF_ROLE_MODULE_ACCESS: Record<StaffRole, PlatformModuleKey[]> =
     [StaffRole.AML_COMPLIANCE_OFFICER]: [PlatformModuleKey.KYC],
     [StaffRole.HR_MANAGER]: [PlatformModuleKey.HR_PM],
     [StaffRole.CRM_MANAGER]: [PlatformModuleKey.CRM],
+    [StaffRole.FINANCE_MANAGER]: [PlatformModuleKey.FINANCE],
   };
 
 // ── All roles in a single array (for validation) ─────────────

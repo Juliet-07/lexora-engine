@@ -38,9 +38,6 @@ export class SubscriptionPlanConfig {
   @Prop({ default: 5 })
   maxUsers: number;
 
-  @Prop({ default: 100 })
-  maxClients: number;
-
   @Prop({ default: 10 })
   maxStorageGb: number;
 
@@ -81,15 +78,18 @@ export class TenantSubscription {
   @Prop({ enum: SubscriptionStatus, default: SubscriptionStatus.TRIAL })
   status: SubscriptionStatus;
 
-  // Base modules from plan
+  // Every module the tenant's plan grants — since every plan now
+  // includes every real platform module, this is always the full
+  // set, kept as its own field for a clear audit trail of "what the
+  // plan itself grants" versus what's actually switched on below.
   @Prop({ type: [String], enum: PlatformModuleKey, default: [] })
   baseModules: PlatformModuleKey[];
 
-  // Add-on modules purchased on top of plan
-  @Prop({ type: [String], enum: PlatformModuleKey, default: [] })
-  addonModules: PlatformModuleKey[];
-
-  // All accessible modules = baseModules + addonModules
+  // The real, independently-settable per-tenant toggle. Defaults to
+  // baseModules (everything on), but the super admin can switch
+  // specific modules off for one tenant without touching any other
+  // tenant or the plan itself — this is what every module-gated
+  // route actually checks, not baseModules.
   @Prop({ type: [String], enum: PlatformModuleKey, default: [] })
   activeModules: PlatformModuleKey[];
 
@@ -105,12 +105,9 @@ export class TenantSubscription {
   @Prop({ default: null })
   cancelledAt: Date;
 
-  // Overrides (SuperAdmin can override limits per tenant)
+  // Override (SuperAdmin can override the plan's user limit per tenant)
   @Prop({ default: null })
   maxUsersOverride: number;
-
-  @Prop({ default: null })
-  maxClientsOverride: number;
 
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   assignedBy: Types.ObjectId;

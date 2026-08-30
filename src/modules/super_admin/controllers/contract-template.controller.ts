@@ -9,9 +9,10 @@ import {
   Query,
   UseInterceptors,
   UploadedFile,
+  UploadedFiles,
   BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
@@ -36,7 +37,7 @@ import {
   SetTemplateFolderDto,
   CreatePlatformTemplateFolderDto,
   UpdatePlatformTemplateFolderDto,
-} from '../dto/contract-template.dto';
+} from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
 
@@ -88,9 +89,15 @@ export class PlatformContractTemplateController {
     description:
       "Filter by folder, or 'uncategorized' for templates with no folder",
   })
+  @ApiQuery({ name: 'moduleKey', required: false })
+  @ApiQuery({ name: 'areaKey', required: false })
   @ApiOperation({ summary: 'All platform contract templates' })
-  getAll(@Query('folderId') folderId?: string) {
-    return this.service.getAll(folderId);
+  getAll(
+    @Query('folderId') folderId?: string,
+    @Query('moduleKey') moduleKey?: string,
+    @Query('areaKey') areaKey?: string,
+  ) {
+    return this.service.getAll(folderId, moduleKey, areaKey);
   }
 
   @Get(':id')
@@ -112,37 +119,47 @@ export class PlatformContractTemplateController {
 
   @Post('upload')
   @UseInterceptors(
-    FileInterceptor('file', {
+    FilesInterceptor('files', 10, {
       storage: templateStorage,
       fileFilter: templateFileFilter,
-      limits: { fileSize: 20 * 1024 * 1024 }, // 20MB max
+      limits: { fileSize: 20 * 1024 * 1024 }, // 20MB max per file
     }),
   )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['file', 'title', 'category'],
+      required: ['files', 'category'],
       properties: {
-        file: { type: 'string', format: 'binary' },
-        title: { type: 'string' },
+        files: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+        },
+        title: {
+          type: 'string',
+          description:
+            "Used only when a single file is uploaded — with multiple files, each real filename becomes that template's title instead.",
+        },
         category: { type: 'string' },
         jurisdiction: { type: 'string' },
         description: { type: 'string' },
         version: { type: 'string' },
+        folderId: { type: 'string' },
+        moduleKey: { type: 'string' },
+        areaKey: { type: 'string' },
       },
     },
   })
   @ApiOperation({
     summary:
-      'Upload an existing PDF or Word document as a template, starting as Draft',
+      'Upload one or more PDF/Word documents as templates, starting as Draft. The shared metadata (category, jurisdiction, folder, module/area) applies to every file; each becomes its own template.',
   })
   upload(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFiles() files: Express.Multer.File[],
     @Body() dto: UploadPlatformContractTemplateDto,
     @CurrentUser('sub') adminId: string,
   ) {
-    return this.service.upload(file, dto, adminId);
+    return this.service.uploadMany(files, dto, adminId);
   }
 
   @Post(':id/replace-file')

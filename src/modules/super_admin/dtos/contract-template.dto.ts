@@ -12,6 +12,10 @@ export class CreatePlatformContractTemplateDto {
   @ApiProperty() @IsString() content: string;
   @ApiPropertyOptional() @IsOptional() @IsString() version?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() folderId?: string;
+  // Free text — the frontend owns this taxonomy (see
+  // TEMPLATE_MODULES), the backend just stores and returns it.
+  @ApiPropertyOptional() @IsOptional() @IsString() moduleKey?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() areaKey?: string;
 }
 
 export class UpdatePlatformContractTemplateDto extends CreatePlatformContractTemplateDto {}
@@ -25,7 +29,13 @@ export class SetTemplateStatusDto {
 // Metadata accompanying an uploaded file — multipart form fields
 // alongside the real file itself.
 export class UploadPlatformContractTemplateDto {
-  @ApiProperty() @IsString() title: string;
+  @ApiPropertyOptional({
+    description:
+      'Used only for a single-file upload; ignored (each real filename is used instead) when uploading multiple files.',
+  })
+  @IsOptional()
+  @IsString()
+  title?: string;
   @ApiProperty({ enum: PlatformTemplateCategory })
   @IsEnum(PlatformTemplateCategory)
   category: PlatformTemplateCategory;
@@ -33,6 +43,8 @@ export class UploadPlatformContractTemplateDto {
   @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() version?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() folderId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() moduleKey?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() areaKey?: string;
 }
 
 export class SetTemplateFolderDto {

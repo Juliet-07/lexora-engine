@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { SuperAdminController } from './controller/super_admin.controller';
-import { SuperAdminService } from './services/super_admin.service';
+import { SuperAdminController } from './controllers';
+import { SuperAdminService, SubscriptionExpiryService } from './services';
 import {
   PlatformModule,
   PlatformModuleSchema,
@@ -18,12 +18,11 @@ import {
 } from './schemas';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { EmailModule } from 'src/common/utils/mailing/email.module';
-import { SubscriptionExpiryService } from './services/subscription-expiry.service';
 import { Employee, EmployeeSchema } from '../hr/schemas';
 import {
   PlatformContractTemplateController,
   PlatformTemplateFolderController,
-} from './controller/contract-template.controller';
+} from './controllers/contract-template.controller';
 import {
   PlatformContractTemplateService,
   PlatformTemplateFolderService,
