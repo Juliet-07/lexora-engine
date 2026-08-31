@@ -32,7 +32,12 @@ import { Deal, DealSchema } from '../grc/deals/schemas/deal.schema';
 import { Mandate, MandateSchema } from '../crm/projects/schemas/mandate.schema';
 import { Task, TaskSchema } from '../crm/projects/schemas/task.schema';
 import { Ticket, TicketSchema } from '../crm/projects/schemas/ticket.schema';
-import { Invoice, InvoiceSchema } from '../crm/finance/schemas/invoice.schema';
+import {
+  Invoice,
+  InvoiceSchema,
+  Payment,
+  PaymentSchema,
+} from '../crm/finance/schemas/invoice.schema';
 import {
   LeaveRequest,
   LeaveRequestSchema,
@@ -66,6 +71,7 @@ import { ClientCommercialRecord, ClientCommercialSchema } from './schemas';
       { name: Task.name, schema: TaskSchema },
       { name: Ticket.name, schema: TicketSchema },
       { name: Invoice.name, schema: InvoiceSchema },
+      { name: Payment.name, schema: PaymentSchema },
       { name: LeaveRequest.name, schema: LeaveRequestSchema },
       { name: TimeEntry.name, schema: TimeEntrySchema },
     ]),
