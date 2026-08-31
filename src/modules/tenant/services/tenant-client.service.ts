@@ -14,12 +14,17 @@ import {
   ClientProfileDocument,
 } from '../schemas/client-profile.schema';
 import {
+  ClientCommercialRecord,
+  ClientCommercialDocument,
+} from '../schemas/client-commercial.schema';
+import {
   QuickAddClientDto,
   UpdateClientProfileDto,
   ClientFilterDto,
   AssignClientDto,
   UpdateClientStatusDto,
   RequestClientInfoDto,
+  UpdateClientCommercialDto,
 } from '../dto/client.dto';
 import {
   UserType,
@@ -29,7 +34,21 @@ import {
 import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
 import { VerificationService } from './verification.service';
-import { EngagementLetterService } from './engagement-letter.service';
+import {
+  Mandate,
+  MandateDocument_,
+} from '../../crm/projects/schemas/mandate.schema';
+import {
+  Ticket,
+  TicketDocument,
+  TicketStatus,
+} from '../../crm/projects/schemas/ticket.schema';
+import {
+  Invoice,
+  InvoiceDocument,
+  Payment,
+  PaymentDocument,
+} from '../../crm/finance/schemas/invoice.schema';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -40,13 +59,22 @@ export class TenantClientsService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(ClientProfileRecord.name)
     private readonly profileModel: Model<ClientProfileDocument>,
+    @InjectModel(ClientCommercialRecord.name)
+    private readonly commercialModel: Model<ClientCommercialDocument>,
     @InjectModel('OnboardingSubmission')
     private readonly onboardingModel: Model<any>,
     @InjectModel('TenantSubscription')
     private readonly subscriptionModel: Model<any>,
+    @InjectModel(Mandate.name)
+    private readonly mandateModel: Model<MandateDocument_>,
+    @InjectModel(Ticket.name)
+    private readonly ticketModel: Model<TicketDocument>,
+    @InjectModel(Invoice.name)
+    private readonly invoiceModel: Model<InvoiceDocument>,
+    @InjectModel(Payment.name)
+    private readonly paymentModel: Model<PaymentDocument>,
     private readonly mailService: EmailService,
     private readonly verificationService: VerificationService,
-    private readonly engagementLetterService: EngagementLetterService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -57,13 +85,6 @@ export class TenantClientsService {
     tenantId: string,
     addedBy: string,
   ) {
-    // ── 1. Check engagement document setup FIRST ───────────────
-    // This throws ForbiddenException if tenant hasn't set up their
-    // document and hasn't explicitly bypassed the requirement.
-    const { requiresSigning, letter } =
-      await this.engagementLetterService.checkTenantSetup(tenantId);
-
-    // ── 2. Standard checks ─────────────────────────────────────
     const emailTaken = await this.userModel.findOne({
       email: dto.email.toLowerCase(),
     });
@@ -74,24 +95,17 @@ export class TenantClientsService {
     const firstName = nameParts[0];
     const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '-';
 
-    // ── 3. Create client with placeholder password ─────────────
-    // Real password is only set after engagement letter is signed.
-    // If bypass is on, we set a real password immediately below.
-    const placeholderPassword = await bcrypt.hash(
-      `placeholder-${Date.now()}`,
-      12,
-    );
+    const tempPassword = this.generateTempPassword();
+    const hashedPassword = await bcrypt.hash(tempPassword, 12);
 
     const client = await this.userModel.create({
       userType: UserType.CLIENT,
       firstName,
       lastName,
       email: dto.email.toLowerCase(),
-      password: placeholderPassword,
+      password: hashedPassword,
       phone: dto.phoneNumber,
       roles: [ClientRole.CLIENT_PRIMARY],
-      // Status stays PENDING until engagement letter is signed
-      // (or PENDING immediately if bypass is on — same status, different path)
       status: AccountStatus.PENDING,
       tenantId: new Types.ObjectId(tenantId),
       createdBy: new Types.ObjectId(addedBy),
@@ -107,8 +121,6 @@ export class TenantClientsService {
       assignedTo: new Types.ObjectId(addedBy),
       classifications: dto.clientType,
       kycStatus: 'not_started',
-      engagementLetterSigned: false,
-      engagementLetterSignedAt: null,
     });
 
     const tenant = await this.userModel
@@ -117,34 +129,6 @@ export class TenantClientsService {
       .lean();
     const businessName =
       (tenant as any)?.tenantProfile?.businessName || 'Your Provider';
-
-    // ── 4. Route based on setup ────────────────────────────────
-    if (requiresSigning && letter) {
-      // Send engagement letter to prospect — NO credentials yet
-      await this.engagementLetterService.sendEngagementLetterToClient(
-        client._id.toString(),
-        tenantId,
-        letter,
-      );
-
-      const obj = client.toObject();
-      delete obj.password;
-      return {
-        success: true,
-        message:
-          'Prospect added. Engagement document sent to their email for signing. ' +
-          'They will receive login credentials once they sign.',
-        data: obj,
-      };
-    }
-
-    // Bypass is on — send credentials immediately (old flow)
-    const tempPassword = this.generateTempPassword();
-    const hashedPassword = await bcrypt.hash(tempPassword, 12);
-
-    await this.userModel.findByIdAndUpdate(client._id, {
-      password: hashedPassword,
-    });
 
     await this.mailService.sendClientWelcome({
       to: client.email,
@@ -1063,6 +1047,185 @@ export class TenantClientsService {
     });
 
     return { filePath, fileName };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // CLIENT HEALTH — real relationship data + live-computed
+  // operational signals, combined into one real health score.
+  // ═══════════════════════════════════════════════════════════
+
+  async upsertClientCommercial(
+    clientId: string,
+    tenantId: string,
+    dto: UpdateClientCommercialDto,
+    updatedBy: string,
+  ) {
+    const client = await this.userModel.findOne({
+      _id: clientId,
+      userType: UserType.CLIENT,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!client) throw new NotFoundException('Client not found');
+
+    const record = await this.commercialModel.findOneAndUpdate(
+      { clientId: new Types.ObjectId(clientId) },
+      {
+        $set: {
+          ...dto,
+          tenantId: new Types.ObjectId(tenantId),
+          clientId: new Types.ObjectId(clientId),
+          updatedBy: new Types.ObjectId(updatedBy),
+        },
+      },
+      { new: true, upsert: true },
+    );
+    return record.toObject();
+  }
+
+  // Real health scoring — same formula the frontend prototype used,
+  // now applied to real inputs: a real saved commercial record
+  // (relationship manager's own entries) combined with real,
+  // live-computed operational signals. Nothing here is fabricated —
+  // a field with no real data yet (e.g. satisfaction never
+  // recorded) comes back null, not a fake default.
+  async getClientHealth(clientId: string, tenantId: string) {
+    const tId = new Types.ObjectId(tenantId);
+    const cId = new Types.ObjectId(clientId);
+
+    const [profile, commercial, openTickets, invoices, lastActivity] =
+      await Promise.all([
+        this.profileModel
+          .findOne({ userId: cId, tenantId: tId })
+          .populate('assignedTo', 'firstName lastName')
+          .select('riskLevel assignedTo')
+          .lean(),
+        this.commercialModel.findOne({ clientId: cId }).lean(),
+        this.ticketModel.countDocuments({
+          tenantId: tId,
+          clientUserId: cId,
+          status: { $nin: [TicketStatus.RESOLVED, TicketStatus.CLOSED] },
+        }),
+        this.invoiceModel
+          .find({ tenantId: tId, clientUserId: cId })
+          .select('_id createdAt')
+          .lean(),
+        Promise.all([
+          this.ticketModel
+            .findOne({ tenantId: tId, clientUserId: cId })
+            .sort({ updatedAt: -1 })
+            .select('updatedAt')
+            .lean(),
+          this.invoiceModel
+            .findOne({ tenantId: tId, clientUserId: cId })
+            .sort({ updatedAt: -1 })
+            .select('updatedAt')
+            .lean(),
+          this.mandateModel
+            .findOne({ tenantId: tId, clientUserId: cId })
+            .sort({ updatedAt: -1 })
+            .select('updatedAt')
+            .lean(),
+        ]),
+      ]);
+
+    // Real average days-to-pay: match each real payment back to the
+    // real invoice it settled, using the invoice's own creation date
+    // as the issue date — no invented "issued at" field needed.
+    const invoiceIds = invoices.map((i) => i._id);
+    const payments = invoiceIds.length
+      ? await this.paymentModel
+          .find({ tenantId: tId, invoiceId: { $in: invoiceIds } })
+          .select('invoiceId at')
+          .lean()
+      : [];
+    const invoiceById = new Map(invoices.map((i) => [i._id.toString(), i]));
+    const daysToPayList = payments.map((p) => {
+      const inv = invoiceById.get(p.invoiceId.toString());
+      const days =
+        (new Date(p.at).getTime() -
+          new Date((inv as any).createdAt).getTime()) /
+        86400000;
+      return Math.max(0, Math.round(days));
+    });
+    const invoiceDaysAvg = daysToPayList.length
+      ? Math.round(
+          daysToPayList.reduce((s, d) => s + d, 0) / daysToPayList.length,
+        )
+      : null;
+
+    const lastInteraction = lastActivity
+      .filter(Boolean)
+      .map((d: any) => new Date(d.updatedAt).getTime())
+      .reduce((max, t) => (t > max ? t : max), 0);
+
+    const relationshipManager = profile?.assignedTo
+      ? `${(profile.assignedTo as any).firstName} ${(profile.assignedTo as any).lastName}`
+      : null;
+
+    // Commercial risk defaults to the real KYC risk level only when
+    // no separate commercial assessment has ever been recorded —
+    // after that, the relationship manager's own judgment is real
+    // and shouldn't be silently overwritten by the compliance value.
+    const riskRating =
+      commercial?.riskRating ??
+      (profile?.riskLevel
+        ? profile.riskLevel.charAt(0).toUpperCase() +
+          profile.riskLevel.slice(1).toLowerCase()
+        : null);
+
+    const rec = {
+      serviceLines: commercial?.serviceLines ?? [],
+      riskRating,
+      feeTier: commercial?.feeTier ?? null,
+      slaProfileId: commercial?.slaProfileId ?? '',
+      revenueYtd: commercial?.revenueYtd ?? 0,
+      costYtd: commercial?.costYtd ?? 0,
+      currency: commercial?.currency ?? 'USD',
+      satisfaction: commercial?.satisfaction ?? null,
+      notes: commercial?.notes ?? '',
+      relationshipManager,
+      openTickets,
+      invoiceDaysAvg,
+      lastInteraction: lastInteraction
+        ? new Date(lastInteraction).toISOString().slice(0, 10)
+        : null,
+      hasRecord: !!commercial,
+    };
+
+    // Same scoring formula the prototype used — now over real
+    // inputs, with a real, honest fallback for anything never yet
+    // recorded (unset satisfaction contributes 0, not a guessed
+    // "average" score).
+    const activity = rec.lastInteraction ? 25 : 0;
+    const payment =
+      rec.invoiceDaysAvg == null
+        ? 0
+        : Math.max(
+            0,
+            Math.min(25, 25 - Math.round((rec.invoiceDaysAvg - 30) / 2)),
+          );
+    const tickets = Math.max(0, 20 - rec.openTickets * 4);
+    const csat =
+      rec.satisfaction == null ? 0 : Math.round((rec.satisfaction / 5) * 20);
+    const risk =
+      rec.riskRating === 'Low'
+        ? 10
+        : rec.riskRating === 'Medium'
+          ? 6
+          : rec.riskRating === 'High'
+            ? 2
+            : 0;
+    const score = activity + payment + tickets + csat + risk;
+    const band = score >= 75 ? 'Healthy' : score >= 50 ? 'Watch' : 'At risk';
+    const factors = [
+      { l: 'Recent activity', v: activity, max: 25 },
+      { l: 'Payment behaviour', v: payment, max: 25 },
+      { l: 'Ticket load', v: tickets, max: 20 },
+      { l: 'Satisfaction', v: csat, max: 20 },
+      { l: 'Risk rating', v: risk, max: 10 },
+    ];
+
+    return { ...rec, score, band, factors };
   }
 
   // ═══════════════════════════════════════════════════════════

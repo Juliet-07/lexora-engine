@@ -17,22 +17,6 @@ import {
   infoRequestTemplate,
 } from './templates/client-info-request.template';
 import {
-  SignedCertificateEmailData,
-  signedCertificateTemplate,
-} from './templates/signed-certificate.template';
-import {
-  EngagementLetterInviteData,
-  engagementLetterInviteTemplate,
-} from './templates/engagement-letter-invite.template';
-import {
-  EngagementLetterSignedNotificationData,
-  engagementLetterSignedNotificationTemplate,
-} from './templates/engagement-letter-signed-notice';
-import {
-  ClientCredentialsAfterSigningData,
-  clientCredentialsAfterSigningTemplate,
-} from './templates/credentials-post-sign.template';
-import {
   ClientApprovalData,
   clientApprovalTemplate,
 } from './templates/client-approval.template';
@@ -48,10 +32,6 @@ import {
   SubscriptionExpiredData,
   subscriptionExpiredTemplate,
 } from './templates/subscription-expired.template';
-import {
-  EngagementLetterReminderData,
-  engagementLetterReminderTemplate,
-} from './templates/engagement-letter-reminder.template';
 import {
   OnboardingSubmittedNotificationData,
   onboardingSubmittedNotificationTemplate,
@@ -289,59 +269,6 @@ export class EmailService {
     });
   }
 
-  async sendEngagementLetterInvite(
-    data: EngagementLetterInviteData,
-  ): Promise<void> {
-    const { subject, html } = engagementLetterInviteTemplate(data);
-    await this.transporter.sendMail({
-      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
-      to: data.to,
-      subject,
-      html,
-    });
-  }
-
-  // ─── New: Notify tenant when client has signed the engagement letter ─────────
-
-  async sendEngagementLetterSignedNotification(
-    data: EngagementLetterSignedNotificationData,
-  ): Promise<void> {
-    const { subject, html } = engagementLetterSignedNotificationTemplate(data);
-    await this.transporter.sendMail({
-      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
-      to: data.to,
-      subject,
-      html,
-    });
-  }
-
-  async sendEngagementLetterReminder(
-    data: EngagementLetterReminderData,
-  ): Promise<void> {
-    const { subject, html } = engagementLetterReminderTemplate(data);
-    await this.transporter.sendMail({
-      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
-      to: data.to,
-      subject,
-      html,
-    });
-  }
-  // ─── New: Send credentials to client after they sign the engagement letter ───
-
-  async sendClientCredentialsAfterSigning(
-    data: ClientCredentialsAfterSigningData,
-  ): Promise<void> {
-    const { subject, html } = clientCredentialsAfterSigningTemplate(data);
-    await this.transporter.sendMail({
-      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
-      to: data.to,
-      subject,
-      html,
-    });
-  }
-
-  // ─── New: Client approval notification ──────────────────────────────────────
-
   async sendClientApproval(data: ClientApprovalData): Promise<void> {
     const { subject, html } = clientApprovalTemplate(data);
     await this.transporter.sendMail({
@@ -384,26 +311,6 @@ export class EmailService {
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,
       subject,
-      html,
-    });
-  }
-
-  async sendSignedCertificate(data: SignedCertificateEmailData): Promise<void> {
-    const { subject, html } = signedCertificateTemplate(data);
-
-    // Send to client
-    await this.transporter.sendMail({
-      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
-      to: data.toClient,
-      subject,
-      html,
-    });
-
-    // Send same certificate notification to tenant
-    await this.transporter.sendMail({
-      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
-      to: data.toTenant,
-      subject: `[Copy] ${subject}`,
       html,
     });
   }

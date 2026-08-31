@@ -29,12 +29,6 @@ export class ClientProfileRecord {
   @Prop({ type: Object, default: null })
   verificationResults: Record<string, any> | null;
 
-  @Prop({ default: false })
-  engagementLetterSigned: boolean;
-
-  @Prop({ default: null })
-  engagementLetterSignedAt: Date | null;
-
   // ── Address ──────────────────────────────────────────────
   @Prop({ type: Object, default: {} })
   address: {

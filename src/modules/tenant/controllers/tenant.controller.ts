@@ -30,6 +30,7 @@ import {
   AssignClientDto,
   UpdateClientStatusDto,
   RequestClientInfoDto,
+  UpdateClientCommercialDto,
 } from '../dto/client.dto';
 import { TenantClientsService } from '../services/tenant-client.service';
 import { Response } from 'express';
@@ -156,6 +157,33 @@ export class TenantController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.tenantClientService.getClientById(id, t || u);
+  }
+
+  @Get('my-clients/:id/health')
+  @ApiOperation({
+    summary:
+      'Real client health — saved commercial/relationship data combined with live-computed operational signals (open tickets, payment behaviour, last activity)',
+  })
+  getClientHealth(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.tenantClientService.getClientHealth(id, t || u);
+  }
+
+  @Patch('my-clients/:id/commercial')
+  @ApiOperation({
+    summary:
+      'Update the real, staff-entered relationship fields (service lines, fee tier, revenue, satisfaction, notes)',
+  })
+  updateClientCommercial(
+    @Param('id') id: string,
+    @Body() dto: UpdateClientCommercialDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.tenantClientService.upsertClientCommercial(id, t || u, dto, u);
   }
 
   // ── Pending Approvals (Onboarding & CDD queue) ────────────

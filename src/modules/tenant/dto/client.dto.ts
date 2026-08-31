@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString,
   IsOptional,
@@ -11,9 +11,12 @@ import {
 } from 'class-validator';
 import {
   ClientClassification,
-  ClientRole,
   AccountStatus,
 } from '../../../common/interfaces/user-role.enum';
+import {
+  CommercialRiskRating,
+  FeeTier,
+} from '../schemas/client-commercial.schema';
 
 // ─────────────────────────────────────────────────────────────
 // QUICK ADD — exactly what the UI shows
@@ -251,4 +254,59 @@ export class RequestClientInfoDto {
   @IsOptional()
   @IsArray()
   requiredDocuments?: string[];
+}
+
+// ─────────────────────────────────────────────────────────────
+// CLIENT COMMERCIAL / HEALTH — real, staff-entered relationship
+// data. Every field optional since a record starts empty and is
+// filled in over time, not required all at once.
+// ─────────────────────────────────────────────────────────────
+export class UpdateClientCommercialDto {
+  @ApiPropertyOptional({ isArray: true, example: ['Compliance', 'Advisory'] })
+  @IsOptional()
+  @IsArray()
+  serviceLines?: string[];
+
+  @ApiPropertyOptional({ enum: CommercialRiskRating })
+  @IsOptional()
+  @IsEnum(CommercialRiskRating)
+  riskRating?: CommercialRiskRating;
+
+  @ApiPropertyOptional({ enum: FeeTier })
+  @IsOptional()
+  @IsEnum(FeeTier)
+  feeTier?: FeeTier;
+
+  @ApiPropertyOptional({ example: 'standard-45-day' })
+  @IsOptional()
+  @IsString()
+  slaProfileId?: string;
+
+  @ApiPropertyOptional({ example: 125000 })
+  @IsOptional()
+  @IsNumber()
+  revenueYtd?: number;
+
+  @ApiPropertyOptional({ example: 40000 })
+  @IsOptional()
+  @IsNumber()
+  costYtd?: number;
+
+  @ApiPropertyOptional({ example: 'USD' })
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @ApiPropertyOptional({
+    example: 4,
+    description: "Relationship manager's own 0–5 CSAT assessment",
+  })
+  @IsOptional()
+  @IsNumber()
+  satisfaction?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }
