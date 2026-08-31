@@ -13,6 +13,8 @@ import {
 import { User, UserDocument } from '../../auth/schemas/user.schema';
 import { CreateStrDto, UpdateStrDto, SubmitStrDto } from '../dto/kyc.dto';
 import { paginate, PaginationDto } from '../../../common/pagination.dto';
+import { TransactionService } from './transaction.service';
+import { EmailService } from '../../../common/utils/mailing/email.service';
 
 @Injectable()
 export class StrService {
@@ -21,6 +23,8 @@ export class StrService {
     private readonly strModel: Model<StrDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    private readonly transactionService: TransactionService,
+    private readonly mailService: EmailService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -104,6 +108,15 @@ export class StrService {
     });
     if (!client) throw new NotFoundException('Client not found');
 
+    // Real connection to Transaction Monitoring — every STR carries
+    // a real snapshot of the client's actual behavioral profile at
+    // filing time, not just the one transaction being reported.
+    const behavioralContext =
+      await this.transactionService.getBehavioralProfile(
+        dto.clientId,
+        tenantId,
+      );
+
     // Generate sequential STR ID per tenant: STR001, STR002 ...
     const count = await this.strModel.countDocuments({
       tenantId: new Types.ObjectId(tenantId),
@@ -127,9 +140,41 @@ export class StrService {
       additionalInformation: dto.additionalInformation ?? null,
       status: dto.saveAsDraft ? StrStatus.DRAFT : StrStatus.PENDING_REVIEW,
       reportedBy: new Types.ObjectId(reportedBy),
+      behavioralContext,
     });
 
     return str;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // DRAFT FROM A FLAGGED TRANSACTION — the real "File STR" path
+  // from Transaction Monitoring: pre-fills a new STR with the
+  // transaction's own real details plus the client's real
+  // behavioral profile, so compliance staff aren't retyping data
+  // TM already has.
+  // ═══════════════════════════════════════════════════════════
+
+  async getStrDraftFromTransaction(txId: string, tenantId: string) {
+    const tx = await this.transactionService.getTransactionById(txId, tenantId);
+    const client = tx.clientId as any;
+    const behavioralProfile =
+      await this.transactionService.getBehavioralProfile(
+        client._id.toString(),
+        tenantId,
+      );
+
+    return {
+      clientId: client._id,
+      transactionId: tx._id,
+      customerName: `${client.firstName} ${client.lastName}`,
+      amount: tx.amount,
+      currency: tx.currency,
+      transactionDate: tx.transactionDate,
+      descriptionOfActivity: tx.triggeredRules?.length
+        ? `Transaction triggered: ${tx.triggeredRules.join(', ')}`
+        : '',
+      behavioralProfile,
+    };
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -177,18 +222,49 @@ export class StrService {
     // Generate goAML-compatible XML
     const xml = this.generateGoAmlXml(str);
 
+    // Real email to Rwanda FIC with the real goAML XML attached —
+    // configured per environment since the actual FIC intake
+    // address isn't something to guess at or hardcode. If it's
+    // genuinely not configured yet, the STR still gets marked
+    // submitted (the XML is still available for manual upload to
+    // goweb.fic.gov.rw) but ficEmailSent stays false so staff can
+    // see the email step didn't actually happen.
+    const ficEmail = process.env.FIC_RWANDA_EMAIL;
+    let ficEmailSent = false;
+    if (ficEmail) {
+      const tenant = await this.userModel
+        .findById(tenantId)
+        .select('tenantProfile.businessName')
+        .lean();
+      await this.mailService.sendStrToFic({
+        to: ficEmail,
+        strId: str.strId,
+        tenantBusinessName:
+          (tenant as any)?.tenantProfile?.businessName || 'Lexora',
+        customerName: str.customerName,
+        amount: str.amount,
+        currency: str.currency,
+        xml,
+      });
+      ficEmailSent = true;
+    }
+
     // Mark as submitted
     await this.strModel.findByIdAndUpdate(strId, {
       status: StrStatus.SUBMITTED,
       submittedAt: new Date(),
       reviewedBy: new Types.ObjectId(submittedBy),
+      ficEmailSent,
+      ficEmailSentAt: ficEmailSent ? new Date() : null,
     });
 
     return {
       success: true,
-      message:
-        'STR marked as submitted. Download the goAML XML file and upload it to goweb.fic.gov.rw',
+      message: ficEmailSent
+        ? 'STR submitted and emailed to Rwanda FIC. You can also download the goAML XML file below.'
+        : 'STR marked as submitted. FIC email is not configured — download the goAML XML file and upload it to goweb.fic.gov.rw',
       strId: str.strId,
+      ficEmailSent,
       xml, // returned for frontend to trigger download
     };
   }

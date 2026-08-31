@@ -390,6 +390,19 @@ export class KycController {
   // STR / SAR
   // ═══════════════════════════════════════════════════════════
 
+  @Get('transactions/:txId/str-draft')
+  @ApiOperation({
+    summary:
+      "Pre-fill a new STR from a flagged transaction — real transaction details plus the client's real behavioral profile",
+  })
+  getStrDraftFromTransaction(
+    @Param('txId') txId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.str.getStrDraftFromTransaction(txId, t || u);
+  }
+
   @Get('str/stats')
   @ApiOperation({
     summary: 'STR stats — draft, pending, submitted, acknowledged, total',

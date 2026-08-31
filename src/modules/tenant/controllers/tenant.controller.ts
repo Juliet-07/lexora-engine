@@ -133,19 +133,15 @@ export class TenantController {
     @CurrentUser('tenantId') t: string,
     @Res() res: Response,
   ) {
-    const { filePath, fileName } =
-      await this.tenantClientService.generateClientReport(id, t || u);
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-
-    const stream = require('fs').createReadStream(filePath);
-    stream.pipe(res);
-
-    // Clean up file after streaming
-    stream.on('end', () => {
-      require('fs').unlink(filePath, () => {});
+    const buffer = await this.tenantClientService.generateClientReport(
+      id,
+      t || u,
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="KYC Client Report.pdf"`,
     });
+    res.send(buffer);
   }
 
   // ── Get one ───────────────────────────────────────────────

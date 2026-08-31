@@ -49,9 +49,10 @@ import {
   Payment,
   PaymentDocument,
 } from '../../crm/finance/schemas/invoice.schema';
-import * as PDFDocument from 'pdfkit';
-import * as fs from 'fs';
-import * as path from 'path';
+import {
+  buildReportPdf,
+  ReportSection,
+} from '../../../common/utils/pdf/report-builder.util';
 
 @Injectable()
 export class TenantClientsService {
@@ -513,6 +514,15 @@ export class TenantClientsService {
       },
     );
 
+    // Real deletion, not just a status flag — clientId is a unique
+    // index on OnboardingSubmission, so the old (now rejected)
+    // record physically blocks a new one from ever being created.
+    // Without deleting it, a reactivated client hits "this form has
+    // already been submitted" the moment they try to start over.
+    await this.onboardingModel.deleteOne({
+      clientId: new Types.ObjectId(clientId),
+    });
+
     const tenant = await this.userModel
       .findById(tenantId)
       .select('tenantProfile.businessName firstName')
@@ -529,7 +539,11 @@ export class TenantClientsService {
       loginUrl: `${process.env.CLIENT_APP_URL}`,
     });
 
-    return { success: true, message: 'Client rejected and notified via email' };
+    return {
+      success: true,
+      message:
+        'Client rejected and notified via email. Their onboarding form has been cleared so they can start over once reactivated.',
+    };
   }
 
   async reactivateClient(
@@ -790,10 +804,21 @@ export class TenantClientsService {
   // ═══════════════════════════════════════════════════════════
   // REPORT
   // ═══════════════════════════════════════════════════════════
+
+  // Real KYC report, built with the same shared report-builder used
+  // across CRM and GRC (dark navy header, indigo summary strip,
+  // striped tables, page numbers) instead of the old, one-off
+  // purple/gold PDFKit layout — same house style as every other
+  // generated report on the platform now. Titled and organised by
+  // the client's real type (individual/corporate/partnership/
+  // trust); the submitted form fields themselves are rendered
+  // dynamically from whatever the client's onboarding form actually
+  // collected, since that shape isn't fixed and shouldn't be
+  // guessed at.
   async generateClientReport(
     clientId: string,
     tenantId: string,
-  ): Promise<{ filePath: string; fileName: string }> {
+  ): Promise<Buffer> {
     const client = await this.userModel
       .findOne({
         _id: clientId,
@@ -823,230 +848,181 @@ export class TenantClientsService {
     const businessName =
       (tenant as any)?.tenantProfile?.businessName || 'Lexora';
     const clientFullName = `${(client as any).firstName} ${(client as any).lastName}`;
+    const clientType =
+      (profile as any)?.classifications || (onboarding as any)?.clientType;
+    const typeLabel = clientType
+      ? clientType.charAt(0).toUpperCase() + clientType.slice(1)
+      : 'Client';
 
-    // ── Generate PDF ──────────────────────────────────────────
-    const reportDir = path.join(process.cwd(), 'uploads', 'reports');
-    if (!fs.existsSync(reportDir)) {
-      fs.mkdirSync(reportDir, { recursive: true });
-    }
+    const humanize = (key: string) =>
+      key
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/^./, (c) => c.toUpperCase())
+        .trim();
 
-    const fileName = `kyc-report-${clientId}-${Date.now()}.pdf`;
-    const filePath = path.join(reportDir, fileName);
+    const kv = (pairs: [string, string][]): string[][] =>
+      pairs.filter(([, v]) => v).map(([l, v]) => [l, v]);
 
-    await new Promise<void>((resolve, reject) => {
-      const doc = new PDFDocument({
-        size: 'A4',
-        margins: { top: 60, bottom: 60, left: 72, right: 72 },
-      });
-      const stream = fs.createWriteStream(filePath);
-      doc.pipe(stream);
+    const sections: ReportSection[] = [];
 
-      const pageWidth = doc.page.width;
-      const PURPLE = '#4B0082';
-      const GOLD = '#C9A84C';
-      const DARK = '#1A1A2E';
-      const GREY = '#6B7280';
-
-      // ── Header ──────────────────────────────────────────────
-      doc.rect(0, 0, pageWidth, 80).fill(PURPLE);
-      doc
-        .fillColor('#FFFFFF')
-        .fontSize(22)
-        .font('Helvetica-Bold')
-        .text('LEXORA', 72, 24);
-      doc
-        .fillColor('rgba(255,255,255,0.7)')
-        .fontSize(10)
-        .font('Helvetica')
-        .text('KYC Client Report', 72, 50);
-      doc
-        .fillColor('#FFFFFF')
-        .fontSize(11)
-        .font('Helvetica-Bold')
-        .text(businessName, 0, 32, { align: 'right', width: pageWidth - 72 });
-
-      // Gold bar
-      doc.rect(0, 80, pageWidth, 4).fill(GOLD);
-
-      doc.moveDown(3);
-
-      // ── Report title ─────────────────────────────────────────
-      doc
-        .fillColor(DARK)
-        .fontSize(18)
-        .font('Helvetica-Bold')
-        .text('KYC Client Report', { align: 'center' });
-      doc.moveDown(0.3);
-      doc
-        .fillColor(GREY)
-        .fontSize(11)
-        .font('Helvetica')
-        .text(`Generated: ${new Date().toLocaleString('en-GB')}`, {
-          align: 'center',
-        });
-
-      doc.moveDown(1.5);
-      doc
-        .moveTo(72, doc.y)
-        .lineTo(pageWidth - 72, doc.y)
-        .strokeColor(GOLD)
-        .lineWidth(1.5)
-        .stroke();
-      doc.moveDown(1.2);
-
-      // Helper: section heading
-      const section = (title: string) => {
-        doc.moveDown(0.5);
-        doc.rect(72, doc.y, pageWidth - 144, 24).fill('#F0EBF8');
-        doc
-          .fillColor(PURPLE)
-          .fontSize(10)
-          .font('Helvetica-Bold')
-          .text(title.toUpperCase(), 80, doc.y - 18, {
-            width: pageWidth - 160,
-          });
-        doc.moveDown(1.2);
-      };
-
-      // Helper: row
-      const row = (label: string, value: string) => {
-        const y = doc.y;
-        doc
-          .fillColor(GREY)
-          .fontSize(9)
-          .font('Helvetica-Bold')
-          .text(label.toUpperCase(), 72, y, { width: 160 });
-        doc
-          .fillColor(DARK)
-          .fontSize(11)
-          .font('Helvetica')
-          .text(value || '—', 240, y, { width: pageWidth - 312 });
-        doc.moveDown(0.9);
-      };
-
-      // ── Client Identity ───────────────────────────────────────
-      section('Client Identity');
-      row('Full Name', clientFullName);
-      row('Email', (client as any).email);
-      row('Phone', (client as any).phone || '—');
-      row('Client Type', (profile as any)?.classifications || '—');
-      row('Status', (client as any).status);
-      row(
-        'Account Created',
-        new Date((client as any).createdAt).toLocaleDateString('en-GB'),
-      );
-
-      // ── KYC Status ────────────────────────────────────────────
-      section('KYC Status');
-      row('KYC Status', (profile as any)?.kycStatus || '—');
-      row('Risk Level', (profile as any)?.riskLevel || 'Unrated');
-      row(
-        'Politically Exposed',
-        (profile as any)?.isPoliticallyExposed ? 'Yes' : 'No',
-      );
-      row(
-        'KYC Completed',
-        (profile as any)?.kycCompletedAt
-          ? new Date((profile as any).kycCompletedAt).toLocaleDateString(
-              'en-GB',
-            )
-          : '—',
-      );
-      row(
-        'Verification Completed',
-        (profile as any)?.verificationCompletedAt
-          ? new Date(
-              (profile as any).verificationCompletedAt,
-            ).toLocaleDateString('en-GB')
-          : '—',
-      );
-
-      // ── Form Data ─────────────────────────────────────────────
-      if (onboarding?.formData) {
-        section('Submitted Form Data');
-        const formData = onboarding.formData as Record<string, any>;
-        const skip = ['_declaration'];
-
-        for (const [key, val] of Object.entries(formData)) {
-          if (skip.includes(key)) continue;
-          if (typeof val === 'object' && val !== null) {
-            // Nested object (e.g. address, individual profile)
-            const label = key.replace(/([A-Z])/g, ' $1').trim();
-            doc
-              .fillColor(PURPLE)
-              .fontSize(10)
-              .font('Helvetica-Bold')
-              .text(label.toUpperCase(), 72, doc.y, { width: pageWidth - 144 });
-            doc.moveDown(0.5);
-            for (const [k, v] of Object.entries(val)) {
-              if (v) row(k.replace(/([A-Z])/g, ' $1').trim(), String(v));
-            }
-          } else if (val) {
-            row(key.replace(/([A-Z])/g, ' $1').trim(), String(val));
-          }
-        }
-      }
-
-      // ── Documents ─────────────────────────────────────────────
-      if (onboarding?.documents?.length > 0) {
-        section('Uploaded Documents');
-        onboarding.documents.forEach((doc_: any, i: number) => {
-          row(`Document ${i + 1}`, doc_.name || doc_.type || 'Document');
-        });
-      }
-
-      // ── Verification Results ──────────────────────────────────
-      if ((profile as any)?.verificationResults) {
-        section('Verification Results');
-        const results = (profile as any).verificationResults as Record<
-          string,
-          any
-        >;
-        for (const [check, result] of Object.entries(results)) {
-          if (typeof result === 'object' && result !== null) {
-            row(
-              check.replace(/([A-Z])/g, ' $1').trim(),
-              `${(result as any).status || '—'}${(result as any).detail ? ` — ${(result as any).detail}` : ''}`,
-            );
-          }
-        }
-      }
-
-      // ── Declaration ───────────────────────────────────────────
-      const declaration = onboarding?.formData?._declaration;
-      if (declaration) {
-        section('Declaration');
-        row('Signature', declaration.signature || '—');
-        row('Signatory Title', declaration.signatoryTitle || '—');
-        row(
-          'Signed At',
-          declaration.signedAt
-            ? new Date(declaration.signedAt).toLocaleString('en-GB')
-            : '—',
-        );
-        row('IP Address', declaration.ipAddress || '—');
-      }
-
-      // ── Footer ────────────────────────────────────────────────
-      const footerY = doc.page.height - 60;
-      doc.rect(0, footerY - 10, pageWidth, 70).fill(PURPLE);
-      doc
-        .fillColor('rgba(255,255,255,0.6)')
-        .fontSize(9)
-        .font('Helvetica')
-        .text(
-          `Generated by Lexora · ${new Date().toLocaleDateString('en-GB')} · ${businessName} · CONFIDENTIAL`,
-          0,
-          footerY + 4,
-          { align: 'center', width: pageWidth },
-        );
-
-      doc.end();
-      stream.on('finish', resolve);
-      stream.on('error', reject);
+    // ── Client Identity ────────────────────────────────────────
+    sections.push({
+      heading: 'Client Identity',
+      columns: ['Field', 'Value'],
+      rows: kv([
+        ['Full Name', clientFullName],
+        ['Email', (client as any).email],
+        ['Phone', (client as any).phone || '—'],
+        ['Client Type', typeLabel],
+        ['Status', (client as any).status],
+        [
+          'Account Created',
+          new Date((client as any).createdAt).toLocaleDateString('en-GB'),
+        ],
+      ]),
     });
 
-    return { filePath, fileName };
+    // ── KYC Status ──────────────────────────────────────────────
+    sections.push({
+      heading: 'KYC Status',
+      columns: ['Field', 'Value'],
+      rows: kv([
+        ['KYC Status', (profile as any)?.kycStatus || '—'],
+        ['Risk Level', (profile as any)?.riskLevel || 'Unrated'],
+        [
+          'Politically Exposed',
+          (profile as any)?.isPoliticallyExposed ? 'Yes' : 'No',
+        ],
+        [
+          'KYC Completed',
+          (profile as any)?.kycCompletedAt
+            ? new Date((profile as any).kycCompletedAt).toLocaleDateString(
+                'en-GB',
+              )
+            : '—',
+        ],
+        [
+          'Verification Completed',
+          (profile as any)?.verificationCompletedAt
+            ? new Date(
+                (profile as any).verificationCompletedAt,
+              ).toLocaleDateString('en-GB')
+            : '—',
+        ],
+      ]),
+    });
+
+    // ── Submitted form data — real fields, whatever the client's
+    // real onboarding form actually collected for their real type.
+    if (onboarding?.formData) {
+      const formData = onboarding.formData as Record<string, any>;
+      const skip = ['_declaration'];
+
+      for (const [key, val] of Object.entries(formData)) {
+        if (skip.includes(key)) continue;
+        if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+          const rows = kv(
+            Object.entries(val).map(([k, v]) => [
+              humanize(k),
+              v == null ? '' : String(v),
+            ]),
+          );
+          if (rows.length) {
+            sections.push({
+              heading: `${typeLabel} Profile — ${humanize(key)}`,
+              columns: ['Field', 'Value'],
+              rows,
+            });
+          }
+        }
+      }
+      const flat = kv(
+        Object.entries(formData)
+          .filter(
+            ([k, v]) =>
+              !skip.includes(k) &&
+              (typeof v !== 'object' || v === null) &&
+              v != null &&
+              v !== '',
+          )
+          .map(([k, v]) => [humanize(k), String(v)]),
+      );
+      if (flat.length) {
+        sections.push({
+          heading: `${typeLabel} Profile — Details`,
+          columns: ['Field', 'Value'],
+          rows: flat,
+        });
+      }
+    }
+
+    // ── Uploaded documents ───────────────────────────────────────
+    if (onboarding?.documents?.length) {
+      sections.push({
+        heading: 'Uploaded Documents',
+        columns: ['#', 'Document'],
+        rows: onboarding.documents.map((d: any, i: number) => [
+          String(i + 1),
+          d.name || d.category || 'Document',
+        ]),
+      });
+    }
+
+    // ── Verification results ─────────────────────────────────────
+    if ((profile as any)?.verificationResults) {
+      const results = (profile as any).verificationResults as Record<
+        string,
+        any
+      >;
+      const rows = Object.entries(results)
+        .filter(([, r]) => r && typeof r === 'object')
+        .map(([check, r]: [string, any]) => [
+          humanize(check),
+          `${r.status || '—'}${r.detail ? ` — ${r.detail}` : ''}`,
+        ]);
+      if (rows.length) {
+        sections.push({
+          heading: 'Verification Results',
+          columns: ['Check', 'Result'],
+          rows,
+        });
+      }
+    }
+
+    // ── Declaration ───────────────────────────────────────────────
+    const declaration = (onboarding?.formData as any)?._declaration;
+    if (declaration) {
+      sections.push({
+        heading: 'Declaration',
+        columns: ['Field', 'Value'],
+        rows: kv([
+          ['Signature', declaration.signature || '—'],
+          ['Signatory Title', declaration.signatoryTitle || '—'],
+          [
+            'Signed At',
+            declaration.signedAt
+              ? new Date(declaration.signedAt).toLocaleString('en-GB')
+              : '—',
+          ],
+          ['IP Address', declaration.ipAddress || '—'],
+        ]),
+      });
+    }
+
+    return buildReportPdf({
+      title: `${typeLabel} Client Report`,
+      subtitle: `${businessName} · KYC / AML`,
+      summary: [
+        { label: 'Client', value: clientFullName },
+        { label: 'Type', value: typeLabel },
+        { label: 'KYC Status', value: (profile as any)?.kycStatus || '—' },
+        {
+          label: 'Risk Level',
+          value: (profile as any)?.riskLevel || 'Unrated',
+        },
+      ],
+      sections,
+    });
   }
 
   // ═══════════════════════════════════════════════════════════

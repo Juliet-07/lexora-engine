@@ -4,10 +4,10 @@ import { Document, Types } from 'mongoose';
 export type StrDocument = SuspiciousTransactionReport & Document;
 
 export enum StrStatus {
-  DRAFT           = 'draft',
-  PENDING_REVIEW  = 'pending_review',
-  SUBMITTED       = 'submitted',
-  ACKNOWLEDGED    = 'acknowledged',
+  DRAFT = 'draft',
+  PENDING_REVIEW = 'pending_review',
+  SUBMITTED = 'submitted',
+  ACKNOWLEDGED = 'acknowledged',
 }
 
 @Schema({ timestamps: true, collection: 'str_reports' })
@@ -71,7 +71,27 @@ export class SuspiciousTransactionReport {
   // goAML XML reference number after submission
   @Prop({ default: null })
   goAmlReference: string | null;
+
+  // Real snapshot of the client's Transaction Monitoring behavioral
+  // profile (getBehavioralProfile) at the moment this STR was
+  // created — this is the real connection between STR and TM the
+  // report should carry as evidence. Captured once, not live, since
+  // an STR is a formal point-in-time regulatory record: it should
+  // reflect what the pattern looked like when filed, not silently
+  // drift as new transactions happen afterward.
+  @Prop({ type: Object, default: null })
+  behavioralContext: Record<string, any> | null;
+
+  // True whether or not it was actually sent (matches the record to
+  // the real send attempt) — see StrService.submitStr.
+  @Prop({ default: false })
+  ficEmailSent: boolean;
+
+  @Prop({ default: null })
+  ficEmailSentAt: Date | null;
 }
 
-export const StrSchema = SchemaFactory.createForClass(SuspiciousTransactionReport);
+export const StrSchema = SchemaFactory.createForClass(
+  SuspiciousTransactionReport,
+);
 StrSchema.index({ tenantId: 1, strId: 1 }, { unique: true });

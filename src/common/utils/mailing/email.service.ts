@@ -13,6 +13,10 @@ import {
   clientRejectionTemplate,
 } from './templates/client-rejection.template';
 import {
+  StrToFicEmailData,
+  strToFicTemplate,
+} from './templates/str-fic-submission.template';
+import {
   InfoRequestEmailData,
   infoRequestTemplate,
 } from './templates/client-info-request.template';
@@ -256,6 +260,25 @@ export class EmailService {
       to: data.to,
       subject,
       html,
+    });
+  }
+
+  // Real STR submission to Rwanda FIC — the goAML XML is sent as a
+  // genuine attachment, not just described in the email body.
+  async sendStrToFic(data: StrToFicEmailData): Promise<void> {
+    const { subject, html } = strToFicTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+      attachments: [
+        {
+          filename: `${data.strId}.xml`,
+          content: data.xml,
+          contentType: 'application/xml',
+        },
+      ],
     });
   }
 
