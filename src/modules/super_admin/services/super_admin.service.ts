@@ -363,13 +363,18 @@ export class SuperAdminService {
         { $group: { _id: '$tenantId', count: { $sum: 1 } } },
       ]),
 
-      // Count team members per tenant
-      // Team members: userType TENANT + tenantId pointing to the owner
-      this.userModel.aggregate([
+      // Count team members per tenant — real Employee HR records,
+      // not User accounts. The owner gets a real Employee record at
+      // tenant creation too (see createOwnerEmployeeRecord), so this
+      // is the only count that actually includes them alongside
+      // every staff member added afterward. Only active records
+      // count toward the live seat total; an offboarded employee
+      // frees up their seat.
+      this.employeeModel.aggregate([
         {
           $match: {
-            userType: UserType.TENANT,
             tenantId: { $in: tenantIds },
+            employmentStatus: EmploymentStatus.ACTIVE,
           },
         },
         { $group: { _id: '$tenantId', count: { $sum: 1 } } },

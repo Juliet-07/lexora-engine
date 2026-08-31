@@ -46,6 +46,12 @@ import {
   CertificatePdfService,
 } from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
+import {
+  TenantSubscription,
+  TenantSubscriptionSchema,
+  SubscriptionPlanConfig,
+  SubscriptionPlanConfigSchema,
+} from '../super_admin/schemas/subscription.schema';
 import { EmailService } from '../../common/utils/mailing/email.service';
 import {
   HrTenantController,
@@ -143,6 +149,14 @@ import {
     MongooseModule.forFeature([
       { name: Employee.name, schema: EmployeeSchema },
       { name: User.name, schema: UserSchema },
+      {
+        name: TenantSubscription.name,
+        schema: TenantSubscriptionSchema,
+      },
+      {
+        name: SubscriptionPlanConfig.name,
+        schema: SubscriptionPlanConfigSchema,
+      },
       { name: LeaveRequest.name, schema: LeaveRequestSchema },
       { name: LeavePolicy.name, schema: LeavePolicySchema },
       { name: EmployeeAttendance.name, schema: EmployeeAttendanceSchema },

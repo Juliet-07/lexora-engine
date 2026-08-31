@@ -38,6 +38,12 @@ import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
 import { OffboardingService } from './offboarding.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  TenantSubscription,
+  TenantSubscriptionDocument,
+  SubscriptionPlanConfig,
+  SubscriptionPlanDocument,
+} from '../../super_admin/schemas/subscription.schema';
 // import { ProbationService } from './probation.service';
 
 export interface DirectoryEmployee {
@@ -58,6 +64,10 @@ export class EmployeeService {
     private readonly teamModel: Model<HrTeamDocument>,
     @InjectModel(HrLocation.name)
     private readonly locationModel: Model<HrLocationDocument>,
+    @InjectModel(TenantSubscription.name)
+    private readonly subscriptionModel: Model<TenantSubscriptionDocument>,
+    @InjectModel(SubscriptionPlanConfig.name)
+    private readonly planModel: Model<SubscriptionPlanDocument>,
     private readonly offboardingService: OffboardingService,
     private readonly mailService: EmailService,
     private readonly eventEmitter: EventEmitter2,
@@ -323,12 +333,47 @@ export class EmployeeService {
     });
   }
 
+  // Real enforcement — the tenant's subscription plan (or a
+  // per-tenant override the super admin set) caps how many team
+  // members a tenant can have. Counts real Employee HR records, not
+  // User login accounts: the tenant owner gets a real Employee
+  // record at tenant creation (see createOwnerEmployeeRecord on the
+  // super-admin side) even though their login account itself is
+  // UserType.TENANT, not UserType.EMPLOYEE — counting User accounts
+  // would silently miss the owner's own seat.
+  private async enforceUserLimit(tenantId: string): Promise<void> {
+    const subscription = await this.subscriptionModel
+      .findOne({ tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+
+    let maxUsers = subscription?.maxUsersOverride ?? null;
+    if (maxUsers == null && subscription?.plan) {
+      const planConfig = await this.planModel
+        .findOne({ plan: subscription.plan })
+        .lean();
+      maxUsers = planConfig?.maxUsers ?? 5;
+    }
+    if (maxUsers == null) maxUsers = 5;
+
+    const currentCount = await this.employeeModel.countDocuments({
+      tenantId: new Types.ObjectId(tenantId),
+      employmentStatus: EmploymentStatus.ACTIVE,
+    });
+    if (currentCount >= maxUsers) {
+      throw new BadRequestException(
+        `User limit reached (${maxUsers}) for your current plan. Upgrade your plan to add more team members.`,
+      );
+    }
+  }
+
   async createEmployee(
     dto: CreateEmployeeDto,
     tenantId: string,
     createdBy: string,
   ): Promise<EmployeeDocument> {
     const tId = new Types.ObjectId(tenantId);
+
+    await this.enforceUserLimit(tenantId);
 
     // ── Validate team exists ─────────────────────────────────
     if (dto.teamId) {
