@@ -593,13 +593,14 @@ export class TenantContractTemplateController {
   @Get('available')
   @ApiOperation({
     summary:
-      "The real picker — every published platform template, grouped by the super admin's real folders",
+      "The real picker — every published platform template plus the tenant's own, optionally narrowed to a real moduleKey (e.g. 'kyc_aml' for client onboarding)",
   })
   getAvailable(
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @Query('moduleKey') moduleKey?: string,
   ) {
-    return this.service.getAvailableTemplates(t || u);
+    return this.service.getAvailableTemplates(t || u, moduleKey);
   }
 
   @Get('folders')

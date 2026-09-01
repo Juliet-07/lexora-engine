@@ -30,6 +30,14 @@ interface TicketClientRepliedEvent {
   ref: string;
   subject: string;
 }
+interface TicketCreatedEvent {
+  tenantId: string;
+  clientUserId: string;
+  clientName: string;
+  ticketId: string;
+  ref: string;
+  subject: string;
+}
 interface ComplianceAlertEvent {
   tenantId: string;
   clientUserId: string | null;
@@ -203,6 +211,19 @@ export class TenantNotificationService {
       recipient,
       TenantNotificationType.TICKET,
       `${e.clientName} replied — Ticket ${e.ref}`,
+      e.subject,
+      '/crm/service-desk',
+    );
+  }
+
+  @OnEvent('tenant.ticket.created')
+  async onTicketCreated(e: TicketCreatedEvent) {
+    const recipient = await this.resolveRecipient(e.tenantId, e.clientUserId);
+    await this.create(
+      e.tenantId,
+      recipient,
+      TenantNotificationType.TICKET,
+      `New ticket from ${e.clientName} — ${e.ref}`,
       e.subject,
       '/crm/service-desk',
     );

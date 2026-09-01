@@ -171,6 +171,14 @@ export class ClientTicketsService {
       clientName,
       dto,
     );
+    this.eventEmitter.emit('tenant.ticket.created', {
+      tenantId,
+      clientUserId,
+      clientName,
+      ticketId: String((ticket as any)._id),
+      ref: (ticket as any).ref,
+      subject: (ticket as any).subject,
+    });
     return this.stripInternalNotes(ticket);
   }
 

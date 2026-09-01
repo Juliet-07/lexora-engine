@@ -1406,9 +1406,16 @@ export class TenantContractTemplateService {
   // creation was retired) are deliberately left out of this list —
   // they still exist and remain readable via getAll/getById for any
   // contract already generated from one, but a tenant can no longer
-  // start a new contract from one going forward.
-  async getAvailableTemplates(_tenantId: string) {
-    const platform = await this.platformTemplateService.getAll();
+  // start a new contract from one going forward. moduleKey narrows
+  // to templates tagged for a specific real use — e.g. 'kyc_aml'
+  // for the client-onboarding contract flow — leaving it unset
+  // returns every published platform template, matching this
+  // method's original, general-purpose behaviour.
+  async getAvailableTemplates(_tenantId: string, moduleKey?: string) {
+    const platform = await this.platformTemplateService.getAll(
+      undefined,
+      moduleKey,
+    );
     return (platform as any[])
       .filter((t) => t.status === 'Published')
       .map((t) => ({ ...t, source: 'platform' as const }));
