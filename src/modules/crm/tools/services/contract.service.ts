@@ -910,22 +910,28 @@ export class ContractService {
       tenantUserId: null,
     } as any);
 
-    // Two real, distinct delivery paths. A registered, already
-    // ACTIVE client signs through their own authenticated portal —
-    // no token needed, so none is issued for this path, and the
-    // email links to the client app rather than a public link. An
-    // external party (no clientId), or a client linked to this
-    // contract but still genuinely PENDING (never activated — the
-    // real KYC-onboarding case, where they have no usable
-    // credentials yet), gets the real, token-gated public signing
-    // link instead — the same one an external counterparty uses.
+    // Three real, distinct delivery paths:
+    //  1. A registered, already ACTIVE client signs through their
+    //     own authenticated client-app portal — no token needed.
+    //  2. A client linked to this contract but still genuinely
+    //     PENDING (never activated — the real KYC-onboarding case,
+    //     where they have no usable credentials yet) gets a real,
+    //     token-gated public link, but hosted on the CLIENT app —
+    //     that's their own eventual home, not the internal tenant
+    //     app, even before they can log in.
+    //  3. An external party with no client relationship at all (no
+    //     clientId) has no connection to the client app whatsoever,
+    //     so they keep the real, token-gated public link on the
+    //     TENANT app instead.
     let isActiveRegisteredClient = false;
+    let isPendingClient = false;
     if (contract.clientId) {
       const linkedClient = await this.userModel
         .findById(contract.clientId)
         .select('status')
         .lean();
       isActiveRegisteredClient = linkedClient?.status === 'active';
+      isPendingClient = !isActiveRegisteredClient && !!linkedClient;
     }
     let signingUrl: string;
     if (isActiveRegisteredClient) {
@@ -936,6 +942,18 @@ export class ContractService {
         );
       }
       signingUrl = `${clientBaseUrl}/contracts`;
+    } else if (isPendingClient) {
+      const clientBaseUrl = process.env.CLIENT_APP_URL;
+      if (!clientBaseUrl) {
+        throw new Error(
+          'CLIENT_APP_URL is not configured — cannot build a valid signing link',
+        );
+      }
+      const token = await this.issueSigningToken(
+        contract,
+        dto.expiresInHours ?? DEFAULT_SIGNING_EXPIRY_HOURS,
+      );
+      signingUrl = `${clientBaseUrl}/sign-contract/${token}`;
     } else {
       const tenantBaseUrl = process.env.TENANT_APP_URL;
       if (!tenantBaseUrl) {
