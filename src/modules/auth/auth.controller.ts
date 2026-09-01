@@ -1,13 +1,4 @@
-import {
-  Controller,
-  Post,
-  Get,
-  Body,
-  Req,
-  UseGuards,
-  Patch,
-  Param,
-} from '@nestjs/common';
+import { Controller, Post, Get, Body, Req, Patch } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -20,13 +11,10 @@ import {
   LoginDto,
   ChangePasswordDto,
   UpdateProfileDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
 } from './dto/auth.dto';
-import {
-  Public,
-  Roles,
-  UserTypes,
-  CurrentUser,
-} from '../../common/decorators/index';
+import { Public, CurrentUser } from '../../common/decorators/index';
 import { Request } from 'express';
 
 @ApiTags('Auth')
@@ -52,6 +40,26 @@ export class AuthController {
   })
   async login(@Body() dto: LoginDto, @Req() req: Request) {
     return this.authService.login(dto);
+  }
+
+  @Post('forgot-password')
+  @Public()
+  @ApiOperation({
+    summary: 'Request a password reset email',
+    description:
+      'Always returns a generic success message regardless of whether the email is registered.',
+  })
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto);
+  }
+
+  @Post('reset-password')
+  @Public()
+  @ApiOperation({
+    summary: 'Reset password using a token from the reset email',
+  })
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto);
   }
 
   @Get('me')

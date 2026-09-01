@@ -17,6 +17,10 @@ import {
   strToFicTemplate,
 } from './templates/str-fic-submission.template';
 import {
+  PasswordResetEmailData,
+  passwordResetTemplate,
+} from './templates/password-reset.template';
+import {
   InfoRequestEmailData,
   infoRequestTemplate,
 } from './templates/client-info-request.template';
@@ -279,6 +283,16 @@ export class EmailService {
           contentType: 'application/xml',
         },
       ],
+    });
+  }
+
+  async sendPasswordReset(data: PasswordResetEmailData): Promise<void> {
+    const { subject, html } = passwordResetTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
     });
   }
 

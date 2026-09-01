@@ -22,6 +22,10 @@ import {
   StrStatus,
 } from '../schemas/str.schema';
 import { AccountStatus } from '../../../common/interfaces/user-role.enum';
+import {
+  buildReportPdf,
+  ReportSection,
+} from '../../../common/utils/pdf/report-builder.util';
 
 @Injectable()
 export class ReportsService {
@@ -794,6 +798,224 @@ export class ReportsService {
           });
 
         return this.toCsv(rows);
+      }
+
+      default:
+        throw new Error(`Unknown report type: ${reportType}`);
+    }
+  }
+
+  // Real PDF export, same shared house style already used across
+  // CRM and GRC (buildReportPdf) — reuses the same real data each
+  // report tab already fetches, just laid out with summary cards
+  // and proper tables instead of a flat CSV.
+  async exportPdf(tenantId: string, reportType: string): Promise<Buffer> {
+    const MONTHS = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+
+    switch (reportType) {
+      case 'operational': {
+        const data = await this.getOperationalReport(tenantId);
+        return buildReportPdf({
+          title: 'Operational Compliance Report',
+          subtitle: 'KYC / AML · Last 30 days',
+          summary: [
+            {
+              label: 'Alerts Generated',
+              value: data.summary.alertsGenerated.value,
+            },
+            {
+              label: 'Alerts Resolved',
+              value: data.summary.alertsResolved.value,
+            },
+            { label: 'STRs Filed', value: data.summary.strsFiled.value },
+            {
+              label: 'Avg Resolution',
+              value:
+                data.summary.avgResolutionDays.value != null
+                  ? `${data.summary.avgResolutionDays.value} days`
+                  : '—',
+            },
+          ],
+          sections: [
+            {
+              heading: 'Daily Alert Trend',
+              columns: ['Date', 'Alerts Generated'],
+              rows: data.dailyAlertTrend.map((d) => [d.date, d.count]),
+            },
+          ],
+        });
+      }
+
+      case 'risk': {
+        const data = await this.getRiskAnalytics(tenantId);
+        const sections: ReportSection[] = [
+          {
+            heading: 'Risk Level Distribution',
+            columns: ['Risk Level', 'Clients'],
+            rows: data.riskDistribution.map((r: any) => [
+              r._id ?? 'unrated',
+              r.count,
+            ]),
+          },
+          {
+            heading: 'KYC Status Breakdown',
+            columns: ['Status', 'Clients'],
+            rows: data.kycStatusBreakdown.map((r: any) => [
+              r._id ?? '—',
+              r.count,
+            ]),
+          },
+          {
+            heading: 'High-Risk Clients',
+            columns: ['Client', 'Email', 'Risk Level', 'KYC Status'],
+            rows: data.highRiskClients.map((c: any) => [
+              c.fullName,
+              c.email,
+              c.riskLevel,
+              c.kycStatus ?? '—',
+            ]),
+          },
+        ];
+        return buildReportPdf({
+          title: 'Risk Analytics Report',
+          subtitle: 'KYC / AML',
+          summary: [
+            { label: 'Total Clients', value: data.summary.totalClients },
+            { label: 'Critical', value: data.summary.critical },
+            { label: 'High', value: data.summary.high },
+            { label: 'Medium', value: data.summary.medium },
+            { label: 'Low', value: data.summary.low },
+          ],
+          sections,
+        });
+      }
+
+      case 'regulatory': {
+        const data = await this.getRegulatoryDashboard(tenantId);
+        const sections: ReportSection[] = [
+          {
+            heading: 'Recent STRs',
+            columns: [
+              'STR ID',
+              'Customer',
+              'Amount',
+              'Currency',
+              'Status',
+              'Date',
+            ],
+            rows: data.recentStrs.map((s: any) => {
+              const client = typeof s.clientId === 'object' ? s.clientId : null;
+              return [
+                s.strId,
+                client
+                  ? `${client.firstName} ${client.lastName}`
+                  : s.customerName,
+                s.amount,
+                s.currency,
+                s.status,
+                new Date(s.createdAt).toLocaleDateString(),
+              ];
+            }),
+          },
+          {
+            heading: 'Overdue Periodic Reviews',
+            columns: ['Client', 'Email', 'Risk Level', 'KYC Completed'],
+            rows: data.overdueReviews.map((r: any) => [
+              r.fullName,
+              r.email,
+              r.riskLevel ?? '—',
+              new Date(r.kycCompletedAt).toLocaleDateString(),
+            ]),
+          },
+        ];
+        return buildReportPdf({
+          title: 'Regulatory Compliance Dashboard',
+          subtitle: 'KYC / AML',
+          summary: [
+            { label: 'Total STRs', value: data.strSummary.total },
+            { label: 'Submitted', value: data.strSummary.submitted },
+            { label: 'Open Alerts', value: data.complianceHealth.openAlerts },
+            {
+              label: 'Overdue Reviews',
+              value: data.complianceHealth.overdueReviews,
+            },
+            {
+              label: 'Sanction Hits',
+              value: data.complianceHealth.sanctionHits,
+            },
+            { label: 'PEP Hits', value: data.complianceHealth.pepHits },
+          ],
+          sections,
+        });
+      }
+
+      case 'trends': {
+        const data = await this.getTrendAnalysis(tenantId);
+        const merge: Record<string, any> = {};
+        data.clientGrowth.forEach((d: any) => {
+          const k = `${d._id.year}-${String(d._id.month).padStart(2, '0')}`;
+          merge[k] = {
+            ...merge[k],
+            newClients: d.count,
+            month: `${MONTHS[d._id.month - 1]} ${d._id.year}`,
+          };
+        });
+        data.alertTrend.forEach((d: any) => {
+          const k = `${d._id.year}-${String(d._id.month).padStart(2, '0')}`;
+          merge[k] = { ...merge[k], alerts: d.total };
+        });
+        data.txVolumeTrend.forEach((d: any) => {
+          const k = `${d._id.year}-${String(d._id.month).padStart(2, '0')}`;
+          merge[k] = { ...merge[k], transactions: d.count };
+        });
+        data.strTrend.forEach((d: any) => {
+          const k = `${d._id.year}-${String(d._id.month).padStart(2, '0')}`;
+          merge[k] = { ...merge[k], strs: d.submitted };
+        });
+
+        const rows = Object.keys(merge)
+          .sort()
+          .map((k) => {
+            const m = merge[k];
+            return [
+              m.month ?? k,
+              m.newClients ?? 0,
+              m.alerts ?? 0,
+              m.transactions ?? 0,
+              m.strs ?? 0,
+            ];
+          });
+
+        return buildReportPdf({
+          title: 'Trend Analysis Report',
+          subtitle: 'KYC / AML · Last 6 months',
+          sections: [
+            {
+              heading: 'Monthly Trends',
+              columns: [
+                'Month',
+                'New Clients',
+                'Alerts',
+                'Transactions',
+                'STRs Filed',
+              ],
+              rows,
+            },
+          ],
+        });
       }
 
       default:

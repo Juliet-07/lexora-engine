@@ -686,4 +686,31 @@ export class KycController {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(csv);
   }
+
+  @Get('reports/export-pdf/:type')
+  @Roles(
+    TenantRole.TENANT_OWNER,
+    TenantRole.TENANT_ADMIN,
+    TenantRole.TENANT_COMPLIANCE,
+  )
+  @ApiOperation({
+    summary: 'Export report as PDF',
+    description:
+      'type = operational | risk | regulatory | trends. ' +
+      'Same house style used across CRM and GRC reports.',
+  })
+  async exportReportPdf(
+    @Param('type') type: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.reports.exportPdf(t || u, type);
+    const filename = `lexora-${type}-report-${new Date().toISOString().split('T')[0]}.pdf`;
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.send(buffer);
+  }
 }

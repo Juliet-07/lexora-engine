@@ -143,10 +143,15 @@ export function buildReportPdf(def: ReportDefinition): Promise<Buffer> {
     });
 
     // Page numbers — needs a second pass since pdfkit doesn't expose
-    // total page count until buffered pages are finalized.
+    // total page count until buffered pages are finalized. Writing
+    // this close to the bottom margin falls inside PDFKit's own
+    // bottom-margin zone, which silently triggers an extra blank
+    // page per real page unless the margin is zeroed for the stamp.
     const range = doc.bufferedPageRange();
     for (let i = range.start; i < range.start + range.count; i++) {
       doc.switchToPage(i);
+      const bottomMargin = doc.page.margins.bottom;
+      doc.page.margins.bottom = 0;
       doc
         .fontSize(8)
         .fillColor(MUTED_TEXT)
@@ -154,8 +159,9 @@ export function buildReportPdf(def: ReportDefinition): Promise<Buffer> {
           `Page ${i + 1} of ${range.count}`,
           PAGE_MARGIN,
           doc.page.height - 30,
-          { width: contentWidth, align: 'right' },
+          { width: contentWidth, align: 'right', lineBreak: false },
         );
+      doc.page.margins.bottom = bottomMargin;
     }
 
     doc.end();

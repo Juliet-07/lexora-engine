@@ -45,6 +45,27 @@ export class ChangePasswordDto {
   confirmPassword: string;
 }
 
+export class ForgotPasswordDto {
+  @ApiProperty()
+  @IsEmail()
+  email: string;
+}
+
+export class ResetPasswordDto {
+  @ApiProperty({ description: 'Raw token from the reset email link' })
+  @IsString()
+  token: string;
+
+  @ApiProperty({ minLength: 8 })
+  @IsString()
+  @MinLength(8)
+  newPassword: string;
+
+  @ApiProperty({ description: 'Must match newPassword exactly' })
+  @IsString()
+  confirmPassword: string;
+}
+
 export class UpdateProfileDto {
   @ApiPropertyOptional({ example: 'John' })
   @IsOptional()

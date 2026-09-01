@@ -914,13 +914,40 @@ export class TenantClientsService {
 
     // ── Submitted form data — real fields, whatever the client's
     // real onboarding form actually collected for their real type.
+    // The real KYC form is a single flat schema shared across every
+    // client type, so most fields are empty for any given client —
+    // those are dropped. Real arrays of objects (beneficial owners,
+    // directors, related entities) get their own proper table
+    // instead of being silently lost or rendered as "[object
+    // Object]" the way a naive String() conversion would.
     if (onboarding?.formData) {
       const formData = onboarding.formData as Record<string, any>;
       const skip = ['_declaration'];
 
       for (const [key, val] of Object.entries(formData)) {
         if (skip.includes(key)) continue;
-        if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+
+        if (
+          Array.isArray(val) &&
+          val.length > 0 &&
+          typeof val[0] === 'object' &&
+          val[0] !== null
+        ) {
+          const cols = Object.keys(val[0]);
+          sections.push({
+            heading: `${typeLabel} Profile — ${humanize(key)}`,
+            columns: cols.map(humanize),
+            rows: val.map((item: Record<string, any>) =>
+              cols.map((c) =>
+                item[c] == null || item[c] === '' ? '—' : String(item[c]),
+              ),
+            ),
+          });
+        } else if (
+          typeof val === 'object' &&
+          val !== null &&
+          !Array.isArray(val)
+        ) {
           const rows = kv(
             Object.entries(val).map(([k, v]) => [
               humanize(k),
@@ -936,16 +963,29 @@ export class TenantClientsService {
           }
         }
       }
+
       const flat = kv(
         Object.entries(formData)
-          .filter(
-            ([k, v]) =>
-              !skip.includes(k) &&
-              (typeof v !== 'object' || v === null) &&
-              v != null &&
-              v !== '',
-          )
-          .map(([k, v]) => [humanize(k), String(v)]),
+          .filter(([k, v]) => {
+            if (skip.includes(k)) return false;
+            // Object arrays are already rendered as their own table
+            // above; a primitive array (e.g. source of funds) still
+            // belongs in this flat table, joined into one line.
+            if (Array.isArray(v))
+              return v.length > 0 && typeof v[0] !== 'object';
+            if (typeof v === 'object' && v !== null) return false;
+            return v != null && v !== '';
+          })
+          .map(([k, v]) => [
+            humanize(k),
+            Array.isArray(v)
+              ? v.join(', ')
+              : typeof v === 'boolean'
+                ? v
+                  ? 'Yes'
+                  : 'No'
+                : String(v),
+          ]),
       );
       if (flat.length) {
         sections.push({
@@ -987,26 +1027,6 @@ export class TenantClientsService {
           rows,
         });
       }
-    }
-
-    // ── Declaration ───────────────────────────────────────────────
-    const declaration = (onboarding?.formData as any)?._declaration;
-    if (declaration) {
-      sections.push({
-        heading: 'Declaration',
-        columns: ['Field', 'Value'],
-        rows: kv([
-          ['Signature', declaration.signature || '—'],
-          ['Signatory Title', declaration.signatoryTitle || '—'],
-          [
-            'Signed At',
-            declaration.signedAt
-              ? new Date(declaration.signedAt).toLocaleString('en-GB')
-              : '—',
-          ],
-          ['IP Address', declaration.ipAddress || '—'],
-        ]),
-      });
     }
 
     return buildReportPdf({

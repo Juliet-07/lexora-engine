@@ -12,6 +12,7 @@ import {
   ClientProfileSchema,
 } from '../tenant/schemas/client-profile.schema';
 import { Employee, EmployeeSchema } from '../hr/schemas';
+import { EmailModule } from 'src/common/utils/mailing/email.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { Employee, EmployeeSchema } from '../hr/schemas';
       { name: ClientProfileRecord.name, schema: ClientProfileSchema },
       { name: Employee.name, schema: EmployeeSchema },
     ]),
+    EmailModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],

@@ -11,12 +11,15 @@ import { Model, Types } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
 import { User, UserDocument, Session, SessionDocument } from './schemas';
 import {
   RegisterDto,
   LoginDto,
   ChangePasswordDto,
   UpdateProfileDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
 } from './dto/auth.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
 import {
@@ -31,6 +34,7 @@ import {
   ClientProfileRecord,
 } from '../tenant/schemas/client-profile.schema';
 import { Employee, EmployeeDocument, EmploymentStatus } from '../hr/schemas';
+import { EmailService } from '../../common/utils/mailing/email.service';
 
 @Injectable()
 export class AuthService {
@@ -43,6 +47,7 @@ export class AuthService {
     private readonly employeeModel: Model<EmployeeDocument>,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private readonly mailService: EmailService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -283,6 +288,91 @@ export class AuthService {
 
     await this.sessionModel.updateMany(
       { userId: new Types.ObjectId(userId) },
+      { isActive: false },
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // FORGOT / RESET PASSWORD
+  // ─────────────────────────────────────────────────────────────
+
+  async forgotPassword(
+    dto: ForgotPasswordDto,
+  ): Promise<{ success: true; message: string }> {
+    // Real security practice: the response is identical whether or
+    // not the email is registered, so this endpoint can't be used
+    // to check who has an account.
+    const genericResponse = {
+      success: true as const,
+      message: 'If that email is registered, a reset link has been sent.',
+    };
+
+    const user = await this.userModel.findOne({
+      email: dto.email.toLowerCase(),
+    });
+    if (!user) return genericResponse;
+
+    // Real random token — only its hash is ever stored, so a
+    // database leak alone can't be used to reset anyone's password.
+    // The raw token only ever exists in the email itself.
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const hashedToken = crypto
+      .createHash('sha256')
+      .update(rawToken)
+      .digest('hex');
+
+    await this.userModel.findByIdAndUpdate(user._id, {
+      passwordResetToken: hashedToken,
+      passwordResetExpires: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
+    });
+
+    const baseUrl =
+      user.userType === UserType.CLIENT
+        ? process.env.CLIENT_APP_URL
+        : process.env.TENANT_APP_URL;
+
+    await this.mailService.sendPasswordReset({
+      to: user.email,
+      firstName: user.firstName,
+      resetUrl: `${baseUrl}/reset-password?token=${rawToken}`,
+    });
+
+    return genericResponse;
+  }
+
+  async resetPassword(dto: ResetPasswordDto): Promise<void> {
+    if (dto.newPassword !== dto.confirmPassword) {
+      throw new BadRequestException(
+        'New password and confirm password do not match',
+      );
+    }
+
+    const hashedToken = crypto
+      .createHash('sha256')
+      .update(dto.token)
+      .digest('hex');
+
+    const user = await this.userModel.findOne({
+      passwordResetToken: hashedToken,
+      passwordResetExpires: { $gt: new Date() },
+    });
+    if (!user) {
+      throw new BadRequestException(
+        'This reset link is invalid or has expired',
+      );
+    }
+
+    const hashed = await bcrypt.hash(dto.newPassword, 12);
+
+    await this.userModel.findByIdAndUpdate(user._id, {
+      password: hashed,
+      passwordResetToken: null,
+      passwordResetExpires: null,
+      mustChangePassword: false,
+    });
+
+    await this.sessionModel.updateMany(
+      { userId: user._id },
       { isActive: false },
     );
   }
