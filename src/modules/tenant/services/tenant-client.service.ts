@@ -8,6 +8,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, type QueryFilter } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
+import { OnEvent } from '@nestjs/event-emitter';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
 import {
   ClientProfileRecord,
@@ -81,6 +82,21 @@ export class TenantClientsService {
   // ═══════════════════════════════════════════════════════════
   // QUICK ADD
   // ═══════════════════════════════════════════════════════════
+  // Real client creation — deliberately does NOT send credentials
+  // immediately. Per the real contract-first onboarding flow: the
+  // frontend wizard creates the client here (status stays PENDING,
+  // password is a real, unusable placeholder), then generates and
+  // sends a real contract from a KYC-tagged template via the
+  // existing crm/tools contract endpoints
+  // (GET .../available?moduleKey=kyc_aml, POST
+  // .../generate-from-template, POST .../:id/send-for-signature),
+  // linking it to this client's real _id. Credentials and the
+  // onboarding link are sent automatically once that contract is
+  // fully countersigned — see
+  // ClientActivationService.onContractCountersigned, triggered by
+  // the same 'client.document.countersigned' event
+  // ContractService.countersign already emits for any client-linked
+  // contract.
   async quickAddClient(
     dto: QuickAddClientDto,
     tenantId: string,
@@ -96,15 +112,20 @@ export class TenantClientsService {
     const firstName = nameParts[0];
     const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '-';
 
-    const tempPassword = this.generateTempPassword();
-    const hashedPassword = await bcrypt.hash(tempPassword, 12);
+    // Real, genuinely unusable placeholder — nobody can log in with
+    // this. A real password is only ever set once, by
+    // ClientActivationService after the real contract is countersigned.
+    const placeholderPassword = await bcrypt.hash(
+      `placeholder-${Date.now()}-${Math.random()}`,
+      12,
+    );
 
     const client = await this.userModel.create({
       userType: UserType.CLIENT,
       firstName,
       lastName,
       email: dto.email.toLowerCase(),
-      password: hashedPassword,
+      password: placeholderPassword,
       phone: dto.phoneNumber,
       roles: [ClientRole.CLIENT_PRIMARY],
       status: AccountStatus.PENDING,
@@ -124,30 +145,59 @@ export class TenantClientsService {
       kycStatus: 'not_started',
     });
 
+    const obj = client.toObject();
+    delete obj.password;
+    return {
+      success: true,
+      message:
+        'Client created. Select and send a contract for signature to continue.',
+      data: obj,
+    };
+  }
+
+  // ── Real activation on contract countersign ──────────────────
+  // Reacts to the same 'client.document.countersigned' event
+  // ContractService.countersign already emits for any client-linked
+  // contract (crm/tools) — no change needed there. Only activates a
+  // client still genuinely PENDING: a later, unrelated contract
+  // countersigned for an already-active client must never re-trigger
+  // credential issuance, and PENDING only ever describes a client
+  // who has not yet been activated once.
+  @OnEvent('client.document.countersigned')
+  async onContractCountersigned(e: {
+    tenantId: string;
+    clientUserId: string;
+    contractId: string;
+    title: string;
+  }) {
+    const client = await this.userModel.findById(e.clientUserId);
+    if (!client || client.userType !== UserType.CLIENT) return;
+    if (client.status !== AccountStatus.PENDING) return;
+
+    const tempPassword = this.generateTempPassword();
+    const hashedPassword = await bcrypt.hash(tempPassword, 12);
+
+    await this.userModel.findByIdAndUpdate(client._id, {
+      password: hashedPassword,
+      status: AccountStatus.ACTIVE,
+      mustChangePassword: true,
+    });
+
     const tenant = await this.userModel
-      .findById(tenantId)
-      .select('tenantProfile.businessName firstName')
+      .findById(e.tenantId)
+      .select('tenantProfile.businessName')
       .lean();
     const businessName =
       (tenant as any)?.tenantProfile?.businessName || 'Your Provider';
 
     await this.mailService.sendClientWelcome({
       to: client.email,
-      firstName,
+      firstName: client.firstName,
       tenantBusinessName: businessName,
       tempPassword,
       loginUrl: `${process.env.CLIENT_APP_URL || 'http://localhost:3000'}/login`,
-      clientType: client.clientProfile.classifications,
+      clientType: client.clientProfile?.classifications,
     });
-
-    const obj = client.toObject();
-    delete obj.password;
-    return {
-      success: true,
-      message:
-        'Client added successfully. Login credentials sent to their email.',
-      data: obj,
-    };
   }
 
   // ═══════════════════════════════════════════════════════════
