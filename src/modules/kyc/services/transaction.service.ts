@@ -34,6 +34,7 @@ import {
 } from '../dto/kyc.dto';
 import { paginate, PaginationDto } from '../../../common/pagination.dto';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 @Injectable()
 export class TransactionService {
@@ -50,6 +51,7 @@ export class TransactionService {
     private readonly profileModel: Model<ClientProfileDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -233,7 +235,7 @@ export class TransactionService {
                   ? AlertSeverity.CRITICAL
                   : AlertSeverity.LOW;
 
-          await this.alertModel.create({
+          const alert = await this.alertModel.create({
             tenantId: tId,
             clientId: tx.clientId,
             type: AlertType.TRANSACTION_FLAG,
@@ -249,6 +251,13 @@ export class TransactionService {
               rule: rule.name,
               condition: `${rule.field} ${rule.condition} ${rule.value}`,
             },
+          });
+          this.eventEmitter.emit('tenant.compliance.alert_created', {
+            tenantId: tenantId,
+            clientUserId: tx.clientId ? String(tx.clientId) : null,
+            alertId: String(alert._id),
+            title: alert.title,
+            severity,
           });
         }
       }

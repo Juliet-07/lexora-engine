@@ -1314,6 +1314,15 @@ export class ContractService {
         err,
       );
     }
+
+    this.eventEmitter.emit('tenant.document.signed_by_counterparty', {
+      tenantId: String(contract.tenantId),
+      clientUserId: contract.clientId ? String(contract.clientId) : null,
+      contractId: String(contract._id),
+      title: contract.title,
+      signerName: dto.signerName,
+    });
+
     return contract;
   }
 

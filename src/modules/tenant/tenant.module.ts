@@ -5,6 +5,7 @@ import {
   TenantClientsService,
   VerificationService,
   TenantService,
+  TenantNotificationService,
 } from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import {
@@ -19,7 +20,6 @@ import {
   ClientProfileSchema,
 } from './schemas/client-profile.schema';
 import { OnboardingSchema } from '../clients/schemas';
-import {} from './services/verification.service';
 import { PlatformModule, PlatformModuleSchema } from '../super_admin/schemas';
 import { Employee, EmployeeSchema } from '../hr/schemas';
 import { Risk, RiskSchema } from '../grc/risk/schemas/risk.schema';
@@ -46,7 +46,13 @@ import {
   TimeEntry,
   TimeEntrySchema,
 } from '../crm/projects/schemas/time-entry.schema';
-import { ClientCommercialRecord, ClientCommercialSchema } from './schemas';
+import {
+  ClientCommercialRecord,
+  ClientCommercialSchema,
+  TenantNotification,
+  TenantNotificationSchema,
+} from './schemas';
+import { TenantNotificationController } from './controllers';
 
 @Module({
   imports: [
@@ -74,10 +80,16 @@ import { ClientCommercialRecord, ClientCommercialSchema } from './schemas';
       { name: Payment.name, schema: PaymentSchema },
       { name: LeaveRequest.name, schema: LeaveRequestSchema },
       { name: TimeEntry.name, schema: TimeEntrySchema },
+      { name: TenantNotification.name, schema: TenantNotificationSchema },
     ]),
   ],
-  controllers: [TenantController],
-  providers: [TenantService, TenantClientsService, VerificationService],
+  controllers: [TenantController, TenantNotificationController],
+  providers: [
+    TenantService,
+    TenantClientsService,
+    VerificationService,
+    TenantNotificationService,
+  ],
   exports: [TenantService, TenantClientsService],
 })
 export class TenantModule {}

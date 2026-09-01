@@ -645,6 +645,15 @@ export class InvoiceService {
       amount,
       currency: i.currency,
     });
+    this.eventEmitter.emit('tenant.invoice.paid', {
+      tenantId,
+      clientUserId: String(i.clientUserId),
+      clientName: i.clientName,
+      invoiceId: String(i._id),
+      ref: i.ref,
+      amount,
+      currency: i.currency,
+    });
 
     return this.normalize(i.toObject());
   }

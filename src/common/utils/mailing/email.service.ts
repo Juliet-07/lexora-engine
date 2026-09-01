@@ -21,6 +21,10 @@ import {
   passwordResetTemplate,
 } from './templates/password-reset.template';
 import {
+  TenantNotificationEmailData,
+  tenantNotificationTemplate,
+} from './templates/tenant-notification.template';
+import {
   InfoRequestEmailData,
   infoRequestTemplate,
 } from './templates/client-info-request.template';
@@ -288,6 +292,18 @@ export class EmailService {
 
   async sendPasswordReset(data: PasswordResetEmailData): Promise<void> {
     const { subject, html } = passwordResetTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendTenantNotification(
+    data: TenantNotificationEmailData,
+  ): Promise<void> {
+    const { subject, html } = tenantNotificationTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

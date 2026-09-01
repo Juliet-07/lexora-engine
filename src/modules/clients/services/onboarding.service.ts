@@ -22,6 +22,7 @@ import {
   ClientProfileRecord,
 } from 'src/modules/tenant/schemas/client-profile.schema';
 import { EmailService } from 'src/common/utils/mailing/email.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 @Injectable()
 export class OnboardingService {
@@ -33,6 +34,7 @@ export class OnboardingService {
     @InjectModel(ClientProfileRecord.name)
     private readonly profileModel: Model<ClientProfileDocument>,
     private readonly mailService: EmailService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // ── GET — load draft or create empty ─────────────────────
@@ -236,6 +238,15 @@ export class OnboardingService {
           err.message,
         );
       }
+
+      // Real email above already covers this event — the listener
+      // for this specific event only needs to create the in-app
+      // record, not send a second email.
+      this.eventEmitter.emit('tenant.onboarding.submitted', {
+        tenantId: String((client as any).tenantId),
+        clientUserId: clientId,
+        clientName: `${(client as any).firstName} ${(client as any).lastName}`,
+      });
     }
 
     return submitted;

@@ -204,6 +204,13 @@ export class ComplianceAlertsService {
     });
 
     await this.notifyClientOfAlert(alert);
+    this.eventEmitter.emit('tenant.compliance.alert_created', {
+      tenantId,
+      clientUserId: dto.clientId ?? null,
+      alertId: String(alert._id),
+      title: alert.title,
+      severity: alert.severity,
+    });
 
     return alert;
   }

@@ -13,6 +13,7 @@ import {
   MessageDirection,
 } from '../schemas';
 import { MandateWorkspaceService } from './mandate-workspace.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   AddTicketNoteDto,
   CreateMessageDto,
@@ -143,7 +144,10 @@ export class ClientProjectsService {
 
 @Injectable()
 export class ClientTicketsService {
-  constructor(private readonly ticketService: TicketService) {}
+  constructor(
+    private readonly ticketService: TicketService,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
 
   // Internal notes are staff-only by definition — stripped here,
   // server-side, on every single path that returns a ticket to a
@@ -204,6 +208,14 @@ export class ClientTicketsService {
     await this.getOwnedTicket(tenantId, clientUserId, ticketId);
     const dto: AddTicketNoteDto = { author: clientName, body, internal: false };
     const ticket = await this.ticketService.addNote(tenantId, ticketId, dto);
+    this.eventEmitter.emit('tenant.ticket.client_replied', {
+      tenantId,
+      clientUserId,
+      clientName,
+      ticketId,
+      ref: (ticket as any).ref,
+      subject: (ticket as any).subject,
+    });
     return this.stripInternalNotes(ticket);
   }
 
