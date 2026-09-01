@@ -910,15 +910,25 @@ export class ContractService {
       tenantUserId: null,
     } as any);
 
-    // Two real, distinct delivery paths. A registered client signs
-    // through their own authenticated portal — no token needed, so
-    // none is issued for this path, and the email links to the
-    // client app rather than a public link. An external party (no
-    // clientId) genuinely has no platform account to log into, so
-    // they keep the real, token-gated public signing link.
-    const isRegisteredClient = !!contract.clientId;
+    // Two real, distinct delivery paths. A registered, already
+    // ACTIVE client signs through their own authenticated portal —
+    // no token needed, so none is issued for this path, and the
+    // email links to the client app rather than a public link. An
+    // external party (no clientId), or a client linked to this
+    // contract but still genuinely PENDING (never activated — the
+    // real KYC-onboarding case, where they have no usable
+    // credentials yet), gets the real, token-gated public signing
+    // link instead — the same one an external counterparty uses.
+    let isActiveRegisteredClient = false;
+    if (contract.clientId) {
+      const linkedClient = await this.userModel
+        .findById(contract.clientId)
+        .select('status')
+        .lean();
+      isActiveRegisteredClient = linkedClient?.status === 'active';
+    }
     let signingUrl: string;
-    if (isRegisteredClient) {
+    if (isActiveRegisteredClient) {
       const clientBaseUrl = process.env.CLIENT_APP_URL;
       if (!clientBaseUrl) {
         throw new Error(
@@ -942,10 +952,12 @@ export class ContractService {
 
     await contract.save();
 
-    // Only a registered client has a clientUserId to notify — an
-    // external counterparty has no platform account and gets the
-    // email itself as their only signal, same as before.
-    if (isRegisteredClient) {
+    // Only an already-active registered client can actually log in
+    // to see an in-app notification right now — a pending client (no
+    // usable credentials yet) or an external counterparty (no
+    // platform account at all) has nothing to check, so the real
+    // email is their only real signal.
+    if (isActiveRegisteredClient) {
       this.eventEmitter.emit('client.document.sent_for_signature', {
         tenantId,
         clientUserId: String(contract.clientId),
