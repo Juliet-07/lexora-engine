@@ -15,6 +15,7 @@ import {
   TenantSubscriptionSchema,
 } from '../super_admin/schemas/subscription.schema';
 import { EmailModule } from 'src/common/utils/mailing/email.module';
+import { ToolsModule } from '../crm/tools/tools.module';
 import {
   ClientProfileRecord,
   ClientProfileSchema,
@@ -57,6 +58,7 @@ import { TenantNotificationController } from './controllers';
 @Module({
   imports: [
     EmailModule,
+    ToolsModule,
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       {

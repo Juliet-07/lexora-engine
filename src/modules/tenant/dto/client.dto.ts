@@ -8,6 +8,7 @@ import {
   IsNumber,
   IsDateString,
   IsBoolean,
+  IsMongoId,
 } from 'class-validator';
 import {
   ClientClassification,
@@ -43,6 +44,45 @@ export class QuickAddClientDto {
   })
   @IsEnum(ClientClassification)
   clientType: ClientClassification;
+}
+
+// ─────────────────────────────────────────────────────────────
+// CREATE CLIENT + CONTRACT — atomic. Real client creation and real
+// contract generation happen together in one call, so a client can
+// never end up existing with no contract ever attempted for them
+// (the real bug this fixes: the wizard's old two-step flow let a
+// tenant create a real client, then abandon the flow before
+// generating or sending a contract, leaving a permanently
+// unreachable "ghost" client with no email ever sent).
+// ─────────────────────────────────────────────────────────────
+export class CreateClientWithContractDto {
+  @ApiProperty({ example: 'Jane Smith' })
+  @IsString()
+  fullName: string;
+
+  @ApiProperty({ example: 'jane.smith@example.com' })
+  @IsEmail()
+  email: string;
+
+  @ApiPropertyOptional({ example: '+1234567890' })
+  @IsOptional()
+  @IsString()
+  phoneNumber?: string;
+
+  @ApiProperty({
+    enum: ClientClassification,
+    example: ClientClassification.INDIVIDUAL,
+  })
+  @IsEnum(ClientClassification)
+  clientType: ClientClassification;
+
+  // ── Contract template selection ──
+  @ApiProperty() @IsMongoId() templateId: string;
+  @ApiProperty({ enum: ['platform', 'tenant'] })
+  @IsEnum(['platform', 'tenant'])
+  templateSource: 'platform' | 'tenant';
+  @ApiProperty() @IsString() contractTitle: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() contractType?: string;
 }
 
 // ─────────────────────────────────────────────────────────────

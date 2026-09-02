@@ -248,7 +248,7 @@ export class ClientDashboardService {
               message:
                 'Please complete your KYC/AML onboarding form to activate your account.',
               action: 'Start Onboarding',
-              link: '/client/onboarding',
+              link: '/onboarding',
             },
           },
       projects,

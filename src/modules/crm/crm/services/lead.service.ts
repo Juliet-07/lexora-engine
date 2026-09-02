@@ -139,11 +139,13 @@ export class LeadService {
   }
 
   // Converts a lead into a real, logged-in client account by calling
-  // the SAME quickAddClient flow a tenant uses to manually add a
-  // client — client limits, engagement-letter routing, and welcome
-  // emails all apply exactly as they would otherwise. On success, a
-  // ClientPipelineRecord is created (stage: active) and this lead is
-  // stamped as converted with a link to the new account.
+  // the SAME atomic createClientWithContract flow a tenant uses to
+  // manually add a client — the real contract generated here is
+  // what eventually activates this client's real credentials once
+  // countersigned, exactly as it would for any other new client. On
+  // success, a ClientPipelineRecord is created (stage: active) and
+  // this lead is stamped as converted with a link to the new
+  // account.
   async convert(
     tenantId: string,
     id: string,
@@ -177,12 +179,16 @@ export class LeadService {
     const phoneNumber =
       dto.phoneNumber?.trim() || lead.contactPhone || undefined;
 
-    const result = await this.tenantClientsService.quickAddClient(
+    const result = await this.tenantClientsService.createClientWithContract(
       {
         fullName,
         email,
         phoneNumber,
         clientType: dto.clientType,
+        templateId: dto.templateId,
+        templateSource: dto.templateSource,
+        contractTitle: dto.contractTitle,
+        contractType: dto.contractType,
       },
       tenantId,
       actingUserId,

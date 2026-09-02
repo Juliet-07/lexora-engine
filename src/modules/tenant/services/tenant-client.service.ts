@@ -19,7 +19,7 @@ import {
   ClientCommercialDocument,
 } from '../schemas/client-commercial.schema';
 import {
-  QuickAddClientDto,
+  CreateClientWithContractDto,
   UpdateClientProfileDto,
   ClientFilterDto,
   AssignClientDto,
@@ -54,6 +54,7 @@ import {
   buildReportPdf,
   ReportSection,
 } from '../../../common/utils/pdf/report-builder.util';
+import { ContractService } from '../../crm/tools/services/contract.service';
 
 @Injectable()
 export class TenantClientsService {
@@ -77,28 +78,26 @@ export class TenantClientsService {
     private readonly paymentModel: Model<PaymentDocument>,
     private readonly mailService: EmailService,
     private readonly verificationService: VerificationService,
+    private readonly contractService: ContractService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
   // QUICK ADD
   // ═══════════════════════════════════════════════════════════
-  // Real client creation — deliberately does NOT send credentials
-  // immediately. Per the real contract-first onboarding flow: the
-  // frontend wizard creates the client here (status stays PENDING,
-  // password is a real, unusable placeholder), then generates and
-  // sends a real contract from a KYC-tagged template via the
-  // existing crm/tools contract endpoints
-  // (GET .../available?moduleKey=kyc_aml, POST
-  // .../generate-from-template, POST .../:id/send-for-signature),
-  // linking it to this client's real _id. Credentials and the
-  // onboarding link are sent automatically once that contract is
-  // fully countersigned — see
-  // ClientActivationService.onContractCountersigned, triggered by
-  // the same 'client.document.countersigned' event
-  // ContractService.countersign already emits for any client-linked
-  // contract.
-  async quickAddClient(
-    dto: QuickAddClientDto,
+  // Real, atomic client + contract creation. Fixes a real bug in the
+  // old two-step design: creating the client immediately, then
+  // generating/sending the contract as separate later steps, let a
+  // tenant abandon the wizard in between (closed the dialog,
+  // navigated away, browser refresh) and leave behind a real,
+  // permanently PENDING client with no contract ever generated or
+  // sent — the client's email never arrived because nothing had
+  // actually been sent to it. Now the client only ever exists
+  // together with a real, already-generated contract: if contract
+  // generation fails for any reason, the just-created client is
+  // rolled back (deleted) rather than left as an orphaned ghost
+  // record blocking that email address from ever being re-added.
+  async createClientWithContract(
+    dto: CreateClientWithContractDto,
     tenantId: string,
     addedBy: string,
   ) {
@@ -114,7 +113,8 @@ export class TenantClientsService {
 
     // Real, genuinely unusable placeholder — nobody can log in with
     // this. A real password is only ever set once, by
-    // ClientActivationService after the real contract is countersigned.
+    // onContractCountersigned below, after the real contract is
+    // countersigned.
     const placeholderPassword = await bcrypt.hash(
       `placeholder-${Date.now()}-${Math.random()}`,
       12,
@@ -137,22 +137,45 @@ export class TenantClientsService {
       },
     });
 
-    await this.profileModel.create({
-      userId: client._id,
-      tenantId: new Types.ObjectId(tenantId),
-      assignedTo: new Types.ObjectId(addedBy),
-      classifications: dto.clientType,
-      kycStatus: 'not_started',
-    });
+    try {
+      await this.profileModel.create({
+        userId: client._id,
+        tenantId: new Types.ObjectId(tenantId),
+        assignedTo: new Types.ObjectId(addedBy),
+        classifications: dto.clientType,
+        kycStatus: 'not_started',
+      });
 
-    const obj = client.toObject();
-    delete obj.password;
-    return {
-      success: true,
-      message:
-        'Client created. Select and send a contract for signature to continue.',
-      data: obj,
-    };
+      const expiresOn = new Date();
+      expiresOn.setFullYear(expiresOn.getFullYear() + 1);
+
+      const contract = await this.contractService.generateFromTemplate(
+        tenantId,
+        {
+          templateId: dto.templateId,
+          templateSource: dto.templateSource,
+          title: dto.contractTitle,
+          type: (dto.contractType as any) ?? 'MSA',
+          clientId: String(client._id),
+          expiresOn: expiresOn.toISOString(),
+        },
+      );
+
+      const obj = client.toObject();
+      delete obj.password;
+      return {
+        success: true,
+        message: 'Client created and contract generated.',
+        data: obj,
+        contract,
+      };
+    } catch (err) {
+      // Real rollback — a client is never left behind without the
+      // contract that was supposed to come with it.
+      await this.userModel.deleteOne({ _id: client._id });
+      await this.profileModel.deleteOne({ userId: client._id });
+      throw err;
+    }
   }
 
   // ── Real activation on contract countersign ──────────────────

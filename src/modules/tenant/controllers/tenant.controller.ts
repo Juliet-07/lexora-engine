@@ -25,7 +25,7 @@ import {
 } from '../../../common/interfaces/user-role.enum';
 import { PaginationDto } from '../../../common/pagination.dto';
 import {
-  QuickAddClientDto,
+  CreateClientWithContractDto,
   ClientFilterDto,
   AssignClientDto,
   UpdateClientStatusDto,
@@ -91,16 +91,16 @@ export class TenantController {
   // ── Quick-add ─────────────────────────────────────────────
   @Post('create-client')
   @ApiOperation({
-    summary: 'Add a new client',
+    summary: 'Add a new client and generate their onboarding contract',
     description:
-      'Creates client with fullName, email, phoneNumber, clientType. Emails credentials.',
+      'Atomic — creates the client and generates their real contract from the given template together. Rolled back entirely if contract generation fails, so a client is never left behind with no contract ever attempted.',
   })
   quickAdd(
-    @Body() dto: QuickAddClientDto,
+    @Body() dto: CreateClientWithContractDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.tenantClientService.quickAddClient(dto, t || u, u);
+    return this.tenantClientService.createClientWithContract(dto, t || u, u);
   }
 
   // ── List all ──────────────────────────────────────────────

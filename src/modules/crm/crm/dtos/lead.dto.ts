@@ -64,4 +64,14 @@ export class ConvertLeadDto {
   @ApiProperty({ enum: ClientClassification })
   @IsEnum(ClientClassification)
   clientType: ClientClassification;
+
+  // ── Real contract template selection — required, since a client
+  // only ever gets activated once a real contract generated for
+  // them is countersigned; converting a lead is no exception. ──
+  @ApiProperty() @IsMongoId() templateId: string;
+  @ApiProperty({ enum: ['platform', 'tenant'] })
+  @IsEnum(['platform', 'tenant'])
+  templateSource: 'platform' | 'tenant';
+  @ApiProperty() @IsString() contractTitle: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() contractType?: string;
 }
