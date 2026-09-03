@@ -1292,6 +1292,18 @@ export class ContractService {
       tenantUserId: null,
     } as any);
     await contract.save();
+
+    if (contract.clientId) {
+      this.eventEmitter.emit('tenant.contract.client_commented', {
+        tenantId: String(contract.tenantId),
+        clientUserId: String(contract.clientId),
+        contractId: String(contract._id),
+        title: contract.title,
+        message,
+        origin: contract.origin,
+      });
+    }
+
     return contract;
   }
 
@@ -1366,6 +1378,7 @@ export class ContractService {
       contractId: String(contract._id),
       title: contract.title,
       signerName: dto.signerName,
+      origin: contract.origin,
     });
 
     return contract;

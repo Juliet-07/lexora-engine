@@ -51,6 +51,15 @@ interface DocumentSignedEvent {
   contractId: string;
   title: string;
   signerName: string;
+  origin?: 'crm' | 'kyc_onboarding';
+}
+interface ContractCommentedEvent {
+  tenantId: string;
+  clientUserId: string;
+  contractId: string;
+  title: string;
+  message: string;
+  origin?: 'crm' | 'kyc_onboarding';
 }
 interface OnboardingSubmittedEvent {
   tenantId: string;
@@ -251,7 +260,20 @@ export class TenantNotificationService {
       TenantNotificationType.DOCUMENT,
       `${e.signerName} signed — ${e.title}`,
       `Ready for your countersignature to finalise the document.`,
-      '/crm/contracts',
+      e.origin === 'kyc_onboarding' ? '/clients/onboarding' : '/crm/contracts',
+    );
+  }
+
+  @OnEvent('tenant.contract.client_commented')
+  async onContractClientCommented(e: ContractCommentedEvent) {
+    const recipient = await this.resolveRecipient(e.tenantId, e.clientUserId);
+    await this.create(
+      e.tenantId,
+      recipient,
+      TenantNotificationType.DOCUMENT,
+      `New comment on ${e.title}`,
+      e.message,
+      e.origin === 'kyc_onboarding' ? '/clients/onboarding' : '/crm/contracts',
     );
   }
 
