@@ -298,6 +298,20 @@ export class ContractService {
       .lean();
   }
 
+  // Real, filtered list for the KYC onboarding module's own
+  // Contracting tab — every contract actually issued as part of
+  // onboarding a client, by the real origin marker set at
+  // generation time. Never the tenant's whole CRM contract book.
+  async getOnboardingContracts(tenantId: string) {
+    return this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        origin: 'kyc_onboarding',
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
   async getById(tenantId: string, id: string) {
     const c = await this.model
       .findOne({ _id: id, tenantId: new Types.ObjectId(tenantId) })
@@ -852,6 +866,7 @@ export class ContractService {
       renderedBody,
       requiresSignature: true,
       signatureStatus: SignatureStatus.NOT_SENT,
+      origin: dto.origin ?? 'crm',
     });
     return created;
   }

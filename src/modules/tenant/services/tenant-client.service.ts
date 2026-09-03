@@ -158,6 +158,7 @@ export class TenantClientsService {
           type: (dto.contractType as any) ?? 'MSA',
           clientId: String(client._id),
           expiresOn: expiresOn.toISOString(),
+          origin: 'kyc_onboarding',
         },
       );
 
@@ -176,6 +177,15 @@ export class TenantClientsService {
       await this.profileModel.deleteOne({ userId: client._id });
       throw err;
     }
+  }
+
+  // Real, filtered list for the onboarding module's own Contracting
+  // tab. Thin delegation — the actual query lives on ContractService,
+  // which already owns the ToolContract model; this just keeps the
+  // route under the same /tenant/* namespace the rest of the
+  // onboarding module already uses.
+  async getOnboardingContracts(tenantId: string) {
+    return this.contractService.getOnboardingContracts(tenantId);
   }
 
   // ── Real activation on contract countersign ──────────────────

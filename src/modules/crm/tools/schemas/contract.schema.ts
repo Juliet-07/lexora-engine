@@ -267,6 +267,16 @@ export class ToolContract {
   @Prop({ type: Types.ObjectId, ref: 'User', default: null, index: true })
   clientId: Types.ObjectId | null;
 
+  // Real, explicit marker — set once, at generation time, by
+  // whichever flow created this contract. Lets the KYC onboarding
+  // module show only its own contracts (a dedicated Contracting tab)
+  // without inferring "is this an onboarding contract" from other
+  // fields like clientId or template moduleKey, either of which can
+  // also be true for an ordinary CRM contract sent to an existing
+  // client.
+  @Prop({ enum: ['crm', 'kyc_onboarding'], default: 'crm', index: true })
+  origin: 'crm' | 'kyc_onboarding';
+
   @Prop({ type: Types.ObjectId, ref: 'Mandate', default: null })
   mandateId: Types.ObjectId | null;
   @Prop({ default: '' }) mandateName: string;

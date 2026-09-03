@@ -196,6 +196,12 @@ export class GenerateFromTemplateDto {
   @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() mandateName?: string;
+  // Set only by the KYC onboarding flow — every other caller leaves
+  // this unset and gets the real default ('crm').
+  @ApiPropertyOptional({ enum: ['crm', 'kyc_onboarding'] })
+  @IsOptional()
+  @IsEnum(['crm', 'kyc_onboarding'])
+  origin?: 'crm' | 'kyc_onboarding';
 }
 
 export class SendForSignatureDto {

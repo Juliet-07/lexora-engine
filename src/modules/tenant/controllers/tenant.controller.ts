@@ -210,6 +210,18 @@ export class TenantController {
     return this.tenantClientService.getOnboardingInProgress(t || u, pagination);
   }
 
+  @Get('onboarding-contracts')
+  @ApiOperation({
+    summary:
+      'Real Contracting tab — every contract issued as part of onboarding a client',
+  })
+  getOnboardingContracts(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.tenantClientService.getOnboardingContracts(t || u);
+  }
+
   // ── Assign ────────────────────────────────────────────────
   @Patch(':id/assign')
   @Roles(
