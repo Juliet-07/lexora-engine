@@ -548,7 +548,7 @@ export class ClientDashboardService {
             ? `Your onboarding form is ${percent}% complete. Please finish and submit.`
             : 'Please complete your KYC/AML onboarding form to activate your account.',
         action: 'Continue Onboarding',
-        link: '/client/onboarding',
+        link: '/onboarding',
       },
       [OnboardingStatus.SUBMITTED]: {
         type: 'success',
@@ -563,7 +563,7 @@ export class ClientDashboardService {
         message:
           'Your advisor has requested additional information. Please update your form.',
         action: 'Update Form',
-        link: '/client/onboarding',
+        link: '/onboarding',
       },
       [OnboardingStatus.APPROVED]: {
         type: 'success',
@@ -579,7 +579,7 @@ export class ClientDashboardService {
         message:
           'Your onboarding was not approved. Please contact your advisor for details.',
         action: 'Contact Advisor',
-        link: '/client/support',
+        link: null,
       },
     };
 

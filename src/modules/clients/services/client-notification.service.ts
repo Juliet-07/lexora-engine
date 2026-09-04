@@ -128,7 +128,7 @@ export class ClientNotificationService {
       ClientNotificationType.DOCUMENT,
       'Document ready for signature',
       `${e.title} requires your e-signature`,
-      '/documents',
+      '/contracts',
     );
   }
 
@@ -140,7 +140,7 @@ export class ClientNotificationService {
       ClientNotificationType.DOCUMENT,
       'Document fully executed',
       `${e.title} has been signed by both parties`,
-      '/documents',
+      '/contracts',
     );
   }
 
