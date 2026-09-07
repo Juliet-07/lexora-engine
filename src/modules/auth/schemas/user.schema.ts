@@ -4,9 +4,6 @@ import {
   UserType,
   AccountStatus,
   ClientClassification,
-  ClientRole,
-  TenantRole,
-  SuperAdminRole,
 } from '../../../common/interfaces/user-role.enum';
 
 export type UserDocument = User & Document;
@@ -116,6 +113,17 @@ export class User {
 
   @Prop({ default: null })
   passwordResetExpires: Date;
+
+  // Real, public token for a locked-out (inactive/suspended) tenant
+  // to reach the reactivation flow without logging in — the same
+  // real pattern as password reset (hashed, never returned by
+  // default, expires). Set when the tenant is deactivated for
+  // expiry, or re-issued via a resend request.
+  @Prop({ default: null, select: false })
+  reactivationToken: string;
+
+  @Prop({ default: null })
+  reactivationTokenExpires: Date;
 
   // For tenants/clients — tracks who created them
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })

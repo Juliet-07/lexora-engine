@@ -41,10 +41,13 @@ import {
   PlatformContractTemplateService,
   PlatformTemplateFolderService,
 } from './services/contract-template.service';
+import { PaymentModule } from '../payment/payment.module';
+import { ReactivationController } from './controllers/reactivation.controller';
 
 @Module({
   imports: [
     EmailModule,
+    PaymentModule,
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       { name: PlatformModule.name, schema: PlatformModuleSchema },
@@ -73,6 +76,7 @@ import {
     PlatformTemplateFolderController,
     KnowledgeBaseAdminController,
     KnowledgeBaseController,
+    ReactivationController,
   ],
   providers: [
     SuperAdminService,

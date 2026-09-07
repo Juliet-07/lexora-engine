@@ -398,7 +398,7 @@ export class PaymentService {
     // Only a genuinely first-time activation generates credentials —
     // an already-active tenant upgrading their plan keeps their real,
     // existing login untouched. Guarded internally by account status.
-    await this.activateTenantAccount(tenantId);
+    await this.activateTenantAccount(tenantId, transaction.plan);
 
     const updated = await this.transactionModel.findById(transactionId).lean();
 
@@ -467,6 +467,36 @@ export class PaymentService {
     return this.transactionModel
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  // The real, single open invoice a tenant might have, if any — the
+  // same real states tenantRequestUpgrade already treats as "already
+  // has one open."
+  async getOpenTransaction(tenantId: string) {
+    return this.transactionModel
+      .findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        status: {
+          $in: [
+            PaymentTransactionStatus.AWAITING_PAYMENT,
+            PaymentTransactionStatus.PAYMENT_CLAIMED,
+          ],
+        },
+      })
+      .lean();
+  }
+
+  // Real, published plans — reused by the public reactivation flow
+  // (no login available there) as well as the general, authenticated
+  // "available plans" route.
+  async getAvailablePlans() {
+    return this.planModel
+      .find({ isActive: true })
+      .select(
+        'plan displayName description priceMonthly priceAnnual features maxClients maxUsers includedModules',
+      )
+      .sort({ priceMonthly: 1 })
       .lean();
   }
 
@@ -629,7 +659,10 @@ export class PaymentService {
   // PRIVATE — activate tenant account (invoice → paid flow)
   // ═══════════════════════════════════════════════════════════
 
-  private async activateTenantAccount(tenantId: string): Promise<void> {
+  private async activateTenantAccount(
+    tenantId: string,
+    plan: string,
+  ): Promise<void> {
     const tenant = await this.userModel
       .findById(tenantId)
       .select('email firstName status tenantProfile')
@@ -637,38 +670,82 @@ export class PaymentService {
 
     if (!tenant) return;
 
-    // Only activate if status is awaiting_payment
-    // Guards against double-activation
-    if ((tenant as any).status !== AccountStatus.AWAITING_PAYMENT) {
-      this.logger.warn(
-        `activateTenantAccount: tenant ${tenantId} has status ${(tenant as any).status}, skipping`,
+    const status = (tenant as any).status;
+    const businessName =
+      (tenant as any).tenantProfile?.businessName || (tenant as any).firstName;
+
+    if (status === AccountStatus.AWAITING_PAYMENT) {
+      // Brand-new tenant, never had real credentials — generate them
+      // now and send the real welcome email.
+      const tempPassword = this.generateTempPassword();
+      const hashedPassword = await bcrypt.hash(tempPassword, 12);
+
+      await this.userModel.findByIdAndUpdate(tenantId, {
+        status: AccountStatus.PENDING,
+        password: hashedPassword,
+        mustChangePassword: true,
+      });
+
+      await this.mailService.sendTenantWelcome({
+        to: (tenant as any).email,
+        firstName: (tenant as any).firstName,
+        businessName,
+        tempPassword,
+        loginUrl: `${process.env.TENANT_APP_URL}`,
+      });
+
+      this.logger.log(
+        `Tenant ${tenantId} activated — credentials sent to ${(tenant as any).email}`,
       );
       return;
     }
 
-    // Generate real credentials
-    const tempPassword = this.generateTempPassword();
-    const hashedPassword = await bcrypt.hash(tempPassword, 12);
+    if (
+      status === AccountStatus.INACTIVE ||
+      status === AccountStatus.SUSPENDED
+    ) {
+      // A real, existing tenant locked out after their subscription
+      // expired — they already have real credentials from before, so
+      // this only lifts the lock, cascades reactivation to their own
+      // team (mirroring the cascade the expiry job applied when
+      // deactivating), and tells them they can log in again with the
+      // password they already have.
+      await this.userModel.findByIdAndUpdate(tenantId, {
+        status: AccountStatus.ACTIVE,
+      });
+      await this.userModel.updateMany(
+        {
+          tenantId: new Types.ObjectId(tenantId),
+          'metadata.deactivatedByTenantCascade': true,
+        },
+        {
+          $set: { status: AccountStatus.ACTIVE },
+          $unset: { 'metadata.deactivatedByTenantCascade': '' },
+        },
+      );
 
-    await this.userModel.findByIdAndUpdate(tenantId, {
-      status: AccountStatus.PENDING,
-      password: hashedPassword,
-      mustChangePassword: true,
-    });
+      const periodEnd = new Date(
+        new Date().setMonth(new Date().getMonth() + 1),
+      );
+      await this.mailService.sendSubscriptionRenewed({
+        to: (tenant as any).email,
+        firstName: (tenant as any).firstName,
+        businessName,
+        plan,
+        newPeriodEnd: periodEnd,
+        loginUrl: `${process.env.TENANT_APP_URL}/login`,
+      });
 
-    const businessName =
-      (tenant as any).tenantProfile?.businessName || (tenant as any).firstName;
+      this.logger.log(
+        `Tenant ${tenantId} reactivated after being locked out — can log in again`,
+      );
+      return;
+    }
 
-    await this.mailService.sendTenantWelcome({
-      to: (tenant as any).email,
-      firstName: (tenant as any).firstName,
-      businessName,
-      tempPassword,
-      loginUrl: `${process.env.TENANT_APP_URL}`,
-    });
-
-    this.logger.log(
-      `Tenant ${tenantId} activated — credentials sent to ${(tenant as any).email}`,
+    // Any other status (already active, pending, etc.) — nothing to
+    // do here; guards against double-activation.
+    this.logger.warn(
+      `activateTenantAccount: tenant ${tenantId} has status ${status}, skipping`,
     );
   }
 
@@ -778,7 +855,10 @@ export class PaymentService {
 
     // Activate account if still awaiting payment
     // (receipt = payment confirmed = account should be live)
-    await this.activateTenantAccount(transaction.tenantId.toString());
+    await this.activateTenantAccount(
+      transaction.tenantId.toString(),
+      transaction.plan,
+    );
   }
 
   // ═══════════════════════════════════════════════════════════

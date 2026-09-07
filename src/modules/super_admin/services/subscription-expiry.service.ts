@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import * as crypto from 'crypto';
 import {
   TenantSubscription,
   TenantSubscriptionDocument,
@@ -149,14 +150,28 @@ export class SubscriptionExpiryService {
       // 3. Deactivate all clients under this tenant
       await this.cascadeDeactivateTenantUsers(tenantId);
 
-      // 4. Send expiry notification email
+      // 4. Send expiry notification email — with a real, public
+      // reactivation link, since this tenant can no longer log in
+      // to reach the authenticated settings page at all.
       const tenant = await this.userModel
         .findById(tenantId)
         .select('email firstName tenantProfile')
         .lean();
 
       if (tenant) {
-        const renewalUrl = `${process.env.TENANT_APP_URL}/settings?tab=plan`;
+        const rawToken = crypto.randomBytes(32).toString('hex');
+        const hashedToken = crypto
+          .createHash('sha256')
+          .update(rawToken)
+          .digest('hex');
+        await this.userModel.findByIdAndUpdate(tenantId, {
+          reactivationToken: hashedToken,
+          reactivationTokenExpires: new Date(
+            Date.now() + 30 * 24 * 60 * 60 * 1000,
+          ), // 30 days — this may sit unused for a while before the tenant acts
+        });
+
+        const renewalUrl = `${process.env.TENANT_APP_URL}/reactivate?token=${rawToken}`;
 
         await this.mailService.sendSubscriptionExpired({
           to: (tenant as any).email,
@@ -229,6 +244,88 @@ export class SubscriptionExpiryService {
     return {
       success: true,
       message: 'Subscription reactivated. Tenant can now log in.',
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // PUBLIC: Resend a fresh reactivation link — for when the
+  // original email is lost or its token has expired. Same real
+  // security pattern as forgotPassword: identical response either
+  // way, so this can't be used to probe which emails are registered.
+  // ═══════════════════════════════════════════════════════════
+
+  async resendReactivationLink(
+    email: string,
+  ): Promise<{ success: true; message: string }> {
+    const genericResponse = {
+      success: true as const,
+      message:
+        'If that email is registered and locked out, a reactivation link has been sent.',
+    };
+
+    const tenant = await this.userModel.findOne({
+      email: email.toLowerCase(),
+      userType: UserType.TENANT,
+      status: { $in: [AccountStatus.INACTIVE, AccountStatus.SUSPENDED] },
+    });
+    if (!tenant) return genericResponse;
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const hashedToken = crypto
+      .createHash('sha256')
+      .update(rawToken)
+      .digest('hex');
+
+    await this.userModel.findByIdAndUpdate(tenant._id, {
+      reactivationToken: hashedToken,
+      reactivationTokenExpires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
+
+    const sub = await this.subscriptionModel
+      .findOne({ tenantId: tenant._id })
+      .lean();
+
+    await this.mailService.sendSubscriptionExpired({
+      to: tenant.email,
+      firstName: tenant.firstName,
+      businessName:
+        (tenant as any).tenantProfile?.businessName || 'Your Business',
+      plan: sub?.plan || '',
+      renewalUrl: `${process.env.TENANT_APP_URL}/reactivate?token=${rawToken}`,
+    });
+
+    return genericResponse;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // PUBLIC: Resolve a real reactivation token to the real, locked-
+  // out tenant it belongs to. Used by the public reactivation
+  // controller — never exposes which emails exist, since the token
+  // itself is the only thing that can be checked.
+  // ═══════════════════════════════════════════════════════════
+
+  async getTenantByReactivationToken(token: string) {
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    const tenant = await this.userModel
+      .findOne({
+        reactivationToken: hashedToken,
+        reactivationTokenExpires: { $gt: new Date() },
+      })
+      .select('+reactivationToken')
+      .lean();
+    if (!tenant) return null;
+
+    const sub = await this.subscriptionModel
+      .findOne({ tenantId: tenant._id })
+      .lean();
+
+    return {
+      tenantId: tenant._id.toString(),
+      businessName:
+        (tenant as any).tenantProfile?.businessName || tenant.firstName,
+      firstName: tenant.firstName,
+      currentPlan: sub?.plan ?? null,
+      subscriptionStatus: sub?.status ?? null,
     };
   }
 
