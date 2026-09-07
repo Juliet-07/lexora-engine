@@ -72,6 +72,13 @@ export class PaymentTransaction {
   @Prop({ required: true })
   plan: string;
 
+  // A super admin's real, per-tenant exception to the plan's
+  // standard user limit — set at invoice-creation time, only
+  // actually applied to the subscription once this invoice is
+  // confirmed as paid. Never set by a tenant's own self-upgrade.
+  @Prop({ default: null })
+  maxUsersOverride: number | null;
+
   @Prop({ enum: DocumentType, default: null })
   documentType: DocumentType | null;
 

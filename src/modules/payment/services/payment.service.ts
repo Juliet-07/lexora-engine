@@ -303,6 +303,7 @@ export class PaymentService {
     amount: number;
     currency: Currency;
     documentType: DocumentType;
+    maxUsersOverride?: number;
     paymentReference?: string;
     notes?: string;
     recordedBy: string;
@@ -326,6 +327,7 @@ export class PaymentService {
       amount: dto.amount,
       currency: dto.currency,
       plan: dto.plan,
+      maxUsersOverride: dto.maxUsersOverride ?? null,
       paymentMethod: PaymentMethod.MANUAL,
       documentType: dto.documentType,
       invoiceNumber:
@@ -387,7 +389,11 @@ export class PaymentService {
 
     // Real plan application — covers both a brand-new tenant's first
     // plan and an existing, already-active tenant's real upgrade.
-    await this.applyPlanToSubscription(tenantId, transaction.plan);
+    await this.applyPlanToSubscription(
+      tenantId,
+      transaction.plan,
+      transaction.maxUsersOverride,
+    );
 
     // Only a genuinely first-time activation generates credentials —
     // an already-active tenant upgrading their plan keeps their real,
@@ -567,6 +573,7 @@ export class PaymentService {
   private async applyPlanToSubscription(
     tenantId: string,
     planKey: string,
+    maxUsersOverride?: number | null,
   ): Promise<void> {
     // Every plan grants every real, active platform module — plans
     // only actually differ by maxUsers. Deliberately not filtered by
@@ -592,21 +599,28 @@ export class PaymentService {
 
     const periodEnd = new Date(new Date().setMonth(new Date().getMonth() + 1));
 
+    const setFields: Record<string, any> = {
+      plan: planKey,
+      status: 'active',
+      baseModules: allModules,
+      addonModules: [],
+      activeModules,
+      currentPeriodStart: new Date(),
+      currentPeriodEnd: periodEnd,
+      trialEndsAt: null,
+      cancelledAt: null,
+    };
+    // Only ever touches maxUsersOverride when this specific
+    // confirmation actually carries one — otherwise a tenant's own
+    // later self-upgrade (which never sets this) would silently
+    // wipe out an exception a super admin had deliberately granted.
+    if (maxUsersOverride !== undefined && maxUsersOverride !== null) {
+      setFields.maxUsersOverride = maxUsersOverride;
+    }
+
     await this.subscriptionModel.findOneAndUpdate(
       { tenantId: new Types.ObjectId(tenantId) },
-      {
-        $set: {
-          plan: planKey,
-          status: 'active',
-          baseModules: allModules as any,
-          addonModules: [] as any,
-          activeModules: activeModules as any,
-          currentPeriodStart: new Date(),
-          currentPeriodEnd: periodEnd,
-          trialEndsAt: null,
-          cancelledAt: null,
-        },
-      },
+      { $set: setFields },
       { upsert: true, new: true },
     );
   }

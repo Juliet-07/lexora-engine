@@ -54,6 +54,11 @@ export class RecordManualPaymentDto {
   documentType: DocumentType; // 'invoice' or 'receipt'
 
   @IsOptional()
+  @IsNumber()
+  @Min(1)
+  maxUsersOverride?: number;
+
+  @IsOptional()
   @IsString()
   paymentReference?: string;
 
