@@ -176,6 +176,22 @@ export interface PaymentInvoiceEmailData {
   amount: number;
   currency: string;
   dueDate: Date;
+  // Real payment destinations — genuine alternatives so the tenant
+  // can actually pay, not just be told to "make a payment" with no
+  // account to pay into. Currency-matched bank details plus mobile
+  // money, since both are real, common ways to pay in this market.
+  bankDetails?: {
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+    swiftCode?: string;
+    branch?: string;
+  };
+  momoDetails?: {
+    provider: string;
+    number: string;
+    name: string;
+  };
 }
 
 export function paymentInvoiceTemplate(data: PaymentInvoiceEmailData): {
@@ -302,6 +318,80 @@ export function paymentInvoiceTemplate(data: PaymentInvoiceEmailData): {
                              text-transform:uppercase;color:#c97a2c;font-family:Arial,sans-serif;">
                     How to Pay
                   </p>
+                  ${
+                    data.bankDetails || data.momoDetails
+                      ? `<p style="margin:0 0 16px;font-size:13px;color:#555555;line-height:1.8;font-family:Arial,sans-serif;">
+                    You can pay using either of the options below.
+                  </p>`
+                      : ''
+                  }
+
+                  ${
+                    data.bankDetails
+                      ? `
+                  <table width="100%" cellpadding="0" cellspacing="0"
+                    style="background-color:#ffffff;border:1px solid #e0dbd4;border-radius:4px;margin-bottom:14px;">
+                    <tr>
+                      <td style="padding:12px 16px 4px;font-size:11px;font-weight:bold;letter-spacing:1px;
+                                 text-transform:uppercase;color:#4B0082;font-family:Arial,sans-serif;">
+                        Bank Transfer
+                      </td>
+                    </tr>
+                    ${[
+                      ['Bank', data.bankDetails.bankName],
+                      ['Account Name', data.bankDetails.accountName],
+                      ['Account Number', data.bankDetails.accountNumber],
+                      ...(data.bankDetails.branch
+                        ? [['Branch', data.bankDetails.branch]]
+                        : []),
+                      ...(data.bankDetails.swiftCode
+                        ? [['SWIFT/BIC', data.bankDetails.swiftCode]]
+                        : []),
+                    ]
+                      .map(
+                        ([label, value]) => `
+                    <tr>
+                      <td style="padding:4px 16px;font-size:13px;color:#2c2c2c;font-family:Arial,sans-serif;">
+                        <span style="color:#888888;">${label}:</span> <strong>${value}</strong>
+                      </td>
+                    </tr>`,
+                      )
+                      .join('')}
+                    <tr><td style="height:10px;font-size:0;">&nbsp;</td></tr>
+                  </table>`
+                      : ''
+                  }
+
+                  ${
+                    data.momoDetails
+                      ? `
+                  <table width="100%" cellpadding="0" cellspacing="0"
+                    style="background-color:#ffffff;border:1px solid #e0dbd4;border-radius:4px;margin-bottom:16px;">
+                    <tr>
+                      <td style="padding:12px 16px 4px;font-size:11px;font-weight:bold;letter-spacing:1px;
+                                 text-transform:uppercase;color:#4B0082;font-family:Arial,sans-serif;">
+                        Mobile Money
+                      </td>
+                    </tr>
+                    ${[
+                      ['Provider', data.momoDetails.provider],
+                      ['Number', data.momoDetails.number],
+                      ['Name', data.momoDetails.name],
+                    ]
+                      .map(
+                        ([label, value]) => `
+                    <tr>
+                      <td style="padding:4px 16px;font-size:13px;color:#2c2c2c;font-family:Arial,sans-serif;">
+                        <span style="color:#888888;">${label}:</span> <strong>${value}</strong>
+                      </td>
+                    </tr>`,
+                      )
+                      .join('')}
+                    <tr><td style="height:10px;font-size:0;">&nbsp;</td></tr>
+                  </table>`
+                      : ''
+                  }
+
                   <p style="margin:0;font-size:13px;color:#555555;line-height:1.8;font-family:Arial,sans-serif;">
                     Once you've made payment, please email your Proof of Payment to
                     <strong>finance@lexoraafrica.com</strong>, quoting invoice number

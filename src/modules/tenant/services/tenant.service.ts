@@ -685,33 +685,22 @@ export class TenantService {
       throw new BadRequestException('You are already on this plan');
     }
 
-    // Update subscription with new plan's modules
-    let baseModules: string[] = [];
+    // Every plan grants every real, active platform module — plans
+    // only actually differ by maxUsers. Deliberately not filtered by
+    // plan: the previous paid-plan branch queried a field
+    // (includedInPlans) that never existed on PlatformModule, so it
+    // silently always returned nothing, leaving a tenant with no
+    // modules after upgrading to a paid plan.
+    const allModules = (
+      await this.moduleModel.find({ isActive: true }).select('key').lean()
+    ).map((m) => m.key);
 
-    if (newPlan === 'free') {
-      // FREE plan gets all active modules
-      const allModules = await this.moduleModel
-        .find({ isActive: true })
-        .select('key')
-        .lean();
-      baseModules = allModules.map((m) => m.key);
-    } else {
-      // Paid plan: find all active modules that include this plan
-      const planModules = await this.moduleModel
-        .find({ isActive: true, includedInPlans: newPlan })
-        .select('key')
-        .lean();
-      baseModules = planModules.map((m) => m.key);
-
-      // Fallback: if no modules found via includedInPlans, try planConfig
-      // (handles edge case where modules haven't been linked yet)
-      if (baseModules.length === 0 && plan.includedModules?.length > 0) {
-        baseModules = plan.includedModules;
-      }
-    }
-
-    const addonModules = current.addonModules || [];
-    const activeModules = [...new Set([...baseModules, ...addonModules])];
+    // A tenant's own per-tenant module toggle is independent of
+    // plan — upgrading must not silently re-enable something the
+    // super admin had deliberately switched off for them.
+    const activeModules = current.activeModules?.length
+      ? current.activeModules
+      : allModules;
     const periodEnd = new Date(new Date().setMonth(new Date().getMonth() + 1));
 
     await this.subscriptionModel.findOneAndUpdate(
@@ -719,7 +708,7 @@ export class TenantService {
       {
         plan: newPlan,
         status: 'active',
-        baseModules,
+        baseModules: allModules,
         activeModules,
         currentPeriodStart: new Date(),
         currentPeriodEnd: periodEnd,

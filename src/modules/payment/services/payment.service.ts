@@ -568,12 +568,28 @@ export class PaymentService {
     tenantId: string,
     planKey: string,
   ): Promise<void> {
-    const planModules = await this.moduleModel
-      .find({ isActive: true, includedInPlans: planKey })
-      .select('key')
+    // Every plan grants every real, active platform module — plans
+    // only actually differ by maxUsers. Deliberately not filtered by
+    // plan: an earlier version queried a field (includedInPlans)
+    // that never existed on PlatformModule, so it silently always
+    // returned nothing, leaving a tenant with no modules after their
+    // plan was confirmed. This is the same real pattern already used
+    // correctly elsewhere (a newly created module is added to every
+    // plan and every active subscription).
+    const allModules = (
+      await this.moduleModel.find({ isActive: true }).select('key').lean()
+    ).map((m: any) => m.key);
+
+    const existing = await this.subscriptionModel
+      .findOne({ tenantId: new Types.ObjectId(tenantId) })
       .lean();
-    const baseModules = planModules.map((m: any) => m.key);
-    const activeModules = [...new Set(baseModules)];
+    // A tenant's own per-tenant module toggle is independent of
+    // plan — confirming a plan change must not silently re-enable
+    // something the super admin had deliberately switched off.
+    const activeModules = (existing as any)?.activeModules?.length
+      ? (existing as any).activeModules
+      : allModules;
+
     const periodEnd = new Date(new Date().setMonth(new Date().getMonth() + 1));
 
     await this.subscriptionModel.findOneAndUpdate(
@@ -582,7 +598,7 @@ export class PaymentService {
         $set: {
           plan: planKey,
           status: 'active',
-          baseModules: baseModules as any,
+          baseModules: allModules as any,
           addonModules: [] as any,
           activeModules: activeModules as any,
           currentPeriodStart: new Date(),
