@@ -143,9 +143,106 @@ export class PaymentService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // DPO CALLBACK — BackURL called by DPO after payment
-  // Verifies payment, activates subscription, sends receipt
+  // TENANT SELF-UPGRADE — no gateway available yet. Real,
+  // invoice-based interim flow: creates the same real invoice a
+  // super admin would, and sends the same real branded email with
+  // Proof-of-Payment instructions. No credentials/plan change
+  // happen until a super admin later confirms the payment.
   // ═══════════════════════════════════════════════════════════
+
+  async tenantRequestUpgrade(
+    tenantId: string,
+    planKey: string,
+    currency: Currency = Currency.USD,
+  ): Promise<PaymentTransactionDocument> {
+    const [tenant, plan] = await Promise.all([
+      this.userModel.findById(tenantId).select('-password').lean(),
+      this.planModel.findOne({ plan: planKey, isActive: true }).lean(),
+    ]);
+
+    if (!tenant) throw new NotFoundException('Tenant not found');
+    if (!plan) throw new NotFoundException(`Plan "${planKey}" not found`);
+
+    const amount =
+      currency === Currency.RWF
+        ? plan.priceMonthly * (Number(process.env.USD_TO_RWF_RATE) || 1350)
+        : plan.priceMonthly;
+
+    if (!amount || amount <= 0) {
+      throw new BadRequestException(
+        'This plan has no price configured. Contact your administrator.',
+      );
+    }
+
+    // A tenant shouldn't be able to stack multiple open invoices for
+    // themselves — real, existing awaiting_payment/payment_claimed
+    // requests block a new one until resolved.
+    const openExisting = await this.transactionModel.findOne({
+      tenantId: new Types.ObjectId(tenantId),
+      status: {
+        $in: [
+          PaymentTransactionStatus.AWAITING_PAYMENT,
+          PaymentTransactionStatus.PAYMENT_CLAIMED,
+        ],
+      },
+    });
+    if (openExisting) {
+      throw new BadRequestException(
+        'You already have an open invoice awaiting payment confirmation.',
+      );
+    }
+
+    const invoiceNumber = await this.generateInvoiceNumber();
+
+    const transaction = await this.transactionModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      type: PaymentTransactionType.SUBSCRIPTION_UPGRADE,
+      status: PaymentTransactionStatus.AWAITING_PAYMENT,
+      amount,
+      currency,
+      plan: planKey,
+      paymentMethod: PaymentMethod.INVOICE,
+      documentType: DocumentType.INVOICE,
+      invoiceNumber,
+      metadata: { planName: plan.name, requestedByTenant: true },
+    });
+
+    await this.sendInvoiceEmail(tenantId, transaction, invoiceNumber);
+
+    return transaction;
+  }
+
+  // Tenant's own "I've made payment" declaration — the real,
+  // no-gateway substitute for automatic payment verification. Only
+  // ever moves an open invoice into PAYMENT_CLAIMED; the actual plan
+  // change and account activation still require a super admin's own
+  // confirmation once they've verified the real Proof of Payment
+  // received at finance@lexoraafrica.com.
+  async tenantMarkPaymentClaimed(
+    tenantId: string,
+    transactionId: string,
+  ): Promise<PaymentTransactionDocument> {
+    const transaction = await this.transactionModel.findOne({
+      _id: transactionId,
+      tenantId: new Types.ObjectId(tenantId),
+      status: PaymentTransactionStatus.AWAITING_PAYMENT,
+    });
+    if (!transaction) {
+      throw new NotFoundException('Invoice not found or already actioned');
+    }
+
+    const updated = await this.transactionModel.findByIdAndUpdate(
+      transactionId,
+      {
+        $set: {
+          status: PaymentTransactionStatus.PAYMENT_CLAIMED,
+          paymentClaimedAt: new Date(),
+        },
+      },
+      { new: true },
+    );
+    return updated as PaymentTransactionDocument;
+  }
 
   async handleDpoCallback(query: Record<string, any>): Promise<void> {
     const transToken = query.TransID || query.TransactionToken || query.token;
@@ -260,7 +357,12 @@ export class PaymentService {
   ): Promise<PaymentTransactionDocument> {
     const transaction = await this.transactionModel.findOne({
       _id: transactionId,
-      status: PaymentTransactionStatus.AWAITING_PAYMENT,
+      status: {
+        $in: [
+          PaymentTransactionStatus.AWAITING_PAYMENT,
+          PaymentTransactionStatus.PAYMENT_CLAIMED,
+        ],
+      },
     });
 
     if (!transaction) {
@@ -281,10 +383,27 @@ export class PaymentService {
       },
     });
 
-    // Activate tenant account and send credentials
-    await this.activateTenantAccount(transaction.tenantId.toString());
+    const tenantId = transaction.tenantId.toString();
+
+    // Real plan application — covers both a brand-new tenant's first
+    // plan and an existing, already-active tenant's real upgrade.
+    await this.applyPlanToSubscription(tenantId, transaction.plan);
+
+    // Only a genuinely first-time activation generates credentials —
+    // an already-active tenant upgrading their plan keeps their real,
+    // existing login untouched. Guarded internally by account status.
+    await this.activateTenantAccount(tenantId);
 
     const updated = await this.transactionModel.findById(transactionId).lean();
+
+    // Real receipt, either way — the plan is now active regardless
+    // of whether this was a new account or an existing upgrade.
+    await this.sendReceiptEmail(
+      tenantId,
+      updated as PaymentTransactionDocument,
+      receiptNumber,
+    );
+
     return updated as PaymentTransactionDocument;
   }
 
@@ -428,7 +547,27 @@ export class PaymentService {
     const tenantId = transaction.tenantId.toString();
     const planKey = transaction.plan;
 
-    // Read modules from source of truth
+    await this.applyPlanToSubscription(tenantId, planKey);
+
+    // Send receipt email
+    await this.sendReceiptEmail(tenantId, transaction, receiptNumber);
+
+    this.logger.log(
+      `Payment confirmed for tenant ${tenantId} — plan: ${planKey} — receipt: ${receiptNumber}`,
+    );
+  }
+
+  // Real, shared plan application — moves a tenant's actual
+  // subscription record onto the given plan and its real modules.
+  // Used both by the DPO callback path and by a super admin
+  // confirming an invoice, so an existing, already-active tenant
+  // upgrading their plan gets the real new plan applied — not just
+  // an account-activation no-op, which is all a brand-new tenant
+  // needs.
+  private async applyPlanToSubscription(
+    tenantId: string,
+    planKey: string,
+  ): Promise<void> {
     const planModules = await this.moduleModel
       .find({ isActive: true, includedInPlans: planKey })
       .select('key')
@@ -437,7 +576,6 @@ export class PaymentService {
     const activeModules = [...new Set(baseModules)];
     const periodEnd = new Date(new Date().setMonth(new Date().getMonth() + 1));
 
-    // Activate subscription
     await this.subscriptionModel.findOneAndUpdate(
       { tenantId: new Types.ObjectId(tenantId) },
       {
@@ -454,13 +592,6 @@ export class PaymentService {
         },
       },
       { upsert: true, new: true },
-    );
-
-    // Send receipt email
-    await this.sendReceiptEmail(tenantId, transaction, receiptNumber);
-
-    this.logger.log(
-      `Payment confirmed for tenant ${tenantId} — plan: ${planKey} — receipt: ${receiptNumber}`,
     );
   }
 

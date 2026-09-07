@@ -303,9 +303,10 @@ export function paymentInvoiceTemplate(data: PaymentInvoiceEmailData): {
                     How to Pay
                   </p>
                   <p style="margin:0;font-size:13px;color:#555555;line-height:1.8;font-family:Arial,sans-serif;">
-                    Please make payment using the bank details provided by your account manager,
-                    quoting invoice number <strong>${data.invoiceNumber}</strong> as your payment reference.
-                    Your account will be activated within 24 hours of payment confirmation.
+                    Once you've made payment, please email your Proof of Payment to
+                    <strong>finance@lexoraafrica.com</strong>, quoting invoice number
+                    <strong>${data.invoiceNumber}</strong> as your reference. Your account will be
+                    validated and activated once we've confirmed receipt.
                   </p>
                 </td>
               </tr>

@@ -13,6 +13,12 @@ export type PaymentTransactionDocument = PaymentTransaction & Document;
 export enum PaymentTransactionStatus {
   PENDING = 'pending',
   AWAITING_PAYMENT = 'awaiting_payment',
+  // Real, distinct state — the tenant has self-declared payment was
+  // made (no gateway to verify it automatically), but a super admin
+  // hasn't yet confirmed it against the actual Proof of Payment
+  // received at finance@lexoraafrica.com. Deliberately not the same
+  // as PAID, which only ever means a super admin has verified it.
+  PAYMENT_CLAIMED = 'payment_claimed',
   PAID = 'paid',
   FAILED = 'failed',
   CANCELLED = 'cancelled',
@@ -77,6 +83,11 @@ export class PaymentTransaction {
 
   @Prop({ default: null })
   paidAt: Date | null;
+
+  // When the tenant self-declared they'd paid — set only by the
+  // tenant's own "I've made payment" action, never by a super admin.
+  @Prop({ default: null })
+  paymentClaimedAt: Date | null;
 
   @Prop({ enum: PaymentMethod, default: null })
   paymentMethod: PaymentMethod | null;

@@ -109,6 +109,56 @@ export class TenantPaymentController {
   }
 
   /**
+   * POST /tenant/payments/request-upgrade
+   * Real, no-gateway interim flow — creates a real invoice and sends
+   * the same real branded email with Proof-of-Payment instructions.
+   * No plan change happens until a super admin later confirms it.
+   */
+  @Post('request-upgrade')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Request a plan upgrade — real invoice, no payment gateway',
+    description:
+      'Creates a real invoice for the selected plan and emails it with ' +
+      'Proof-of-Payment instructions. A super admin must confirm the ' +
+      'payment before the plan actually changes.',
+  })
+  requestUpgrade(
+    @CurrentUser('sub') tenantId: string,
+    @Body() dto: InitiateUpgradeDto,
+  ) {
+    return this.paymentService.tenantRequestUpgrade(
+      tenantId,
+      dto.plan,
+      dto.currency,
+    );
+  }
+
+  /**
+   * POST /tenant/payments/:id/mark-paid
+   * Tenant's own "I've made payment" declaration — the real,
+   * no-gateway substitute for automatic verification.
+   */
+  @Post(':id/mark-paid')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Declare that payment has been made for an open invoice',
+    description:
+      'Moves the invoice to payment_claimed. Does not activate the ' +
+      'plan — a super admin still confirms it against the real Proof ' +
+      'of Payment received at finance@lexoraafrica.com.',
+  })
+  markPaid(
+    @CurrentUser('sub') tenantId: string,
+    @Param('id') transactionId: string,
+  ) {
+    return this.paymentService.tenantMarkPaymentClaimed(
+      tenantId,
+      transactionId,
+    );
+  }
+
+  /**
    * GET /tenant/payments/history
    * Tenant views their own payment history.
    */
