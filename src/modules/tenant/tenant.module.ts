@@ -21,6 +21,7 @@ import {
   ClientProfileSchema,
 } from './schemas/client-profile.schema';
 import { OnboardingSchema, KycUpdateRequestSchema } from '../clients/schemas';
+import { Contact, ContactSchema } from '../crm/crm/schemas/contact.schema';
 import { PlatformModule, PlatformModuleSchema } from '../super_admin/schemas';
 import { Employee, EmployeeSchema } from '../hr/schemas';
 import { Risk, RiskSchema } from '../grc/risk/schemas/risk.schema';
@@ -70,6 +71,7 @@ import { TenantNotificationController } from './controllers';
       { name: ClientCommercialRecord.name, schema: ClientCommercialSchema },
       { name: 'OnboardingSubmission', schema: OnboardingSchema },
       { name: 'KycUpdateRequest', schema: KycUpdateRequestSchema },
+      { name: Contact.name, schema: ContactSchema },
       { name: PlatformModule.name, schema: PlatformModuleSchema },
       { name: Employee.name, schema: EmployeeSchema },
       { name: Risk.name, schema: RiskSchema },

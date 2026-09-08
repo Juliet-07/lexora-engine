@@ -359,6 +359,44 @@ export class TenantController {
     return this.tenantClientService.getKycUpdateRequests(t || u);
   }
 
+  // ── My Contacts — real, server-enforced employee scoping ─────
+  @Get('my-contacts')
+  @ApiOperation({
+    summary:
+      "List contacts — an employee's own assigned ones, or all for a tenant admin",
+  })
+  getMyContacts(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+    @CurrentUser('roles') roles: string[],
+  ) {
+    return this.tenantClientService.getMyContacts(
+      t || u,
+      u,
+      userType,
+      roles ?? [],
+    );
+  }
+
+  @Post('my-contacts/:id/activity')
+  @ApiOperation({
+    summary: 'Log a timeline entry on a contact assigned to you',
+  })
+  logMyContactActivity(
+    @Param('id') id: string,
+    @Body() dto: { type: string; summary: string },
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.tenantClientService.logContactActivityAsEmployee(
+      t || u,
+      u,
+      id,
+      dto,
+    );
+  }
+
   @Patch('kyc-update-requests/:requestId/review')
   @ApiOperation({
     summary: 'Approve or reject a client-submitted KYC update',

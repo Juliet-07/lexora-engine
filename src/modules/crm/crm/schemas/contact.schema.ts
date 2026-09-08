@@ -61,6 +61,15 @@ export class Contact {
   @Prop({ type: [String], default: [] }) roleTags: string[];
 
   @Prop({ default: '' }) owner: string;
+
+  // Real, queryable link to the employee this contact is assigned
+  // to — distinct from `owner` above, which stays a free-text
+  // display label. This is what actually gates an employee's
+  // "My Contacts" access; owner alone could never do that safely
+  // since it's just typed text, not an enforced relationship.
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null, index: true })
+  assignedTo: Types.ObjectId | null;
+
   @Prop({ default: '' }) notes: string;
 
   // Set once at creation, matching the confirmed prototype — editing

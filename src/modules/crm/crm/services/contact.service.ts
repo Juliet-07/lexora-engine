@@ -49,6 +49,41 @@ export class ContactService {
       .lean();
   }
 
+  // Real, server-enforced scoping for an employee's own "My
+  // Contacts" view — never trusts a frontend-supplied filter, since
+  // that could be tampered with to see contacts assigned to someone
+  // else.
+  async getMyContacts(tenantId: string, employeeId: string) {
+    return this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        assignedTo: new Types.ObjectId(employeeId),
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  // Real assignment — sets both the enforced relationship and the
+  // free-text display label together, so they never drift out of
+  // sync on the contact's own record.
+  async assign(
+    tenantId: string,
+    id: string,
+    employeeId: string | null,
+    employeeName: string,
+  ) {
+    const c = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!c) throw new NotFoundException('Contact not found');
+
+    c.assignedTo = employeeId ? (new Types.ObjectId(employeeId) as any) : null;
+    c.owner = employeeId ? employeeName : '';
+    await c.save();
+    return c.toObject();
+  }
+
   async getById(tenantId: string, id: string) {
     const c = await this.model
       .findOne({ _id: id, tenantId: new Types.ObjectId(tenantId) })
@@ -158,6 +193,33 @@ export class ContactService {
       tenantId: new Types.ObjectId(tenantId),
     });
     if (!c) throw new NotFoundException('Contact not found');
+    c.activity.push({
+      type: dto.type,
+      summary: dto.summary,
+      by: dto.by ?? '',
+      at: new Date(),
+    } as any);
+    await c.save();
+    return c.toObject();
+  }
+
+  // Same real logging, but only ever allowed on a contact genuinely
+  // assigned to this specific employee — the shared "My Contacts"
+  // route uses this instead of the tenant-wide logActivity above.
+  async logActivityAsEmployee(
+    tenantId: string,
+    employeeId: string,
+    id: string,
+    dto: LogActivityDto,
+  ) {
+    const c = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+      assignedTo: new Types.ObjectId(employeeId),
+    });
+    if (!c) {
+      throw new NotFoundException('Contact not found or not assigned to you');
+    }
     c.activity.push({
       type: dto.type,
       summary: dto.summary,

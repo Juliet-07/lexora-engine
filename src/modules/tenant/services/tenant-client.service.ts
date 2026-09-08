@@ -68,6 +68,8 @@ export class TenantClientsService {
     private readonly onboardingModel: Model<any>,
     @InjectModel('KycUpdateRequest')
     private readonly kycUpdateModel: Model<any>,
+    @InjectModel('Contact')
+    private readonly contactModel: Model<any>,
     @InjectModel('TenantSubscription')
     private readonly subscriptionModel: Model<any>,
     @InjectModel(Mandate.name)
@@ -790,6 +792,58 @@ export class TenantClientsService {
     await request.save();
 
     return request;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // MY CONTACTS — real, server-enforced scoping for an employee's
+  // own assigned contacts, same pattern already used for
+  // getClients: a plain employee only ever sees/acts on their own;
+  // a tenant admin or a role-bearing employee sees everyone's.
+  // ═══════════════════════════════════════════════════════════
+
+  async getMyContacts(
+    tenantId: string,
+    callerId: string,
+    callerUserType: string,
+    callerRoles: string[],
+  ) {
+    const callerHasAdminAccess =
+      callerUserType === 'tenant' ||
+      (callerUserType === 'employee' && callerRoles.length > 0);
+
+    return this.contactModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        ...(callerHasAdminAccess
+          ? {}
+          : { assignedTo: new Types.ObjectId(callerId) }),
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  async logContactActivityAsEmployee(
+    tenantId: string,
+    employeeId: string,
+    contactId: string,
+    dto: { type: string; summary: string },
+  ) {
+    const contact = await this.contactModel.findOne({
+      _id: contactId,
+      tenantId: new Types.ObjectId(tenantId),
+      assignedTo: new Types.ObjectId(employeeId),
+    });
+    if (!contact) {
+      throw new NotFoundException('Contact not found or not assigned to you');
+    }
+    contact.activity.push({
+      type: dto.type,
+      summary: dto.summary,
+      by: '',
+      at: new Date(),
+    });
+    await contact.save();
+    return contact.toObject();
   }
 
   async requestInfo(

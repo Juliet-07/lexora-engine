@@ -113,4 +113,22 @@ export class ContactController {
   ) {
     return this.service.logActivity(t || u, id, dto);
   }
+
+  @Patch(':id/assign')
+  @ApiOperation({
+    summary: 'Assign a contact to an employee, or unassign with null',
+  })
+  assign(
+    @Param('id') id: string,
+    @Body() dto: { employeeId: string | null; employeeName?: string },
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.assign(
+      t || u,
+      id,
+      dto.employeeId,
+      dto.employeeName ?? '',
+    );
+  }
 }
