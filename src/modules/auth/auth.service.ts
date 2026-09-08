@@ -117,6 +117,22 @@ export class AuthService {
       );
     }
 
+    // Real, separate check from account status above — an ex-client
+    // relationship has genuinely ended, so their portal access is
+    // revoked even though their account status itself is untouched
+    // and all their records remain retained elsewhere in the system.
+    if (user.userType === UserType.CLIENT) {
+      const profile = await this.clientProfileModel
+        .findOne({ userId: user._id })
+        .select('isExClient')
+        .lean();
+      if (profile?.isExClient) {
+        throw new UnauthorizedException(
+          'This account is no longer active. Please contact your advisor.',
+        );
+      }
+    }
+
     const valid = await bcrypt.compare(dto.password, user.password);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 

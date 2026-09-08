@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform } from 'class-transformer';
 import {
   IsString,
   IsOptional,
@@ -268,7 +268,14 @@ export class ClientFilterDto {
       'Set true to see only ex-clients, false (default) for active clients only.',
   })
   @IsOptional()
-  @Type(() => Boolean)
+  // Real fix for a genuine bug: @Type(() => Boolean) coerces ANY
+  // non-empty string — including the literal string "false" that
+  // arrives from a query param — to `true`, since JS's Boolean()
+  // constructor treats non-empty strings as truthy. That silently
+  // broke the "show active clients" request, since the frontend
+  // sends exClientsOnly=false explicitly and it was being read as
+  // true. This transform actually checks the string's real value.
+  @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   exClientsOnly?: boolean;
 }
