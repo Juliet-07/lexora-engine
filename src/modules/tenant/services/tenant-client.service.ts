@@ -2,7 +2,6 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
-  ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -26,7 +25,7 @@ import {
   UpdateClientStatusDto,
   RequestClientInfoDto,
   UpdateClientCommercialDto,
-} from '../dto/client.dto';
+} from '../dtos';
 import {
   UserType,
   ClientRole,

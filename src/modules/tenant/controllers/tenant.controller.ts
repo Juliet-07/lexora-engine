@@ -13,7 +13,6 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { TenantService } from '../services/tenant.service';
-import { UpdateTenantProfileDto, UpgradePlanDto } from '../dto/tenant.dto';
 import {
   UserTypes,
   Roles,
@@ -25,13 +24,15 @@ import {
 } from '../../../common/interfaces/user-role.enum';
 import { PaginationDto } from '../../../common/pagination.dto';
 import {
+  UpdateTenantProfileDto,
+  UpgradePlanDto,
   CreateClientWithContractDto,
   ClientFilterDto,
   AssignClientDto,
   UpdateClientStatusDto,
   RequestClientInfoDto,
   UpdateClientCommercialDto,
-} from '../dto/client.dto';
+} from '../dtos';
 import { TenantClientsService } from '../services/tenant-client.service';
 import { Response } from 'express';
 
