@@ -332,16 +332,30 @@ export class TenantController {
   })
   markAsExClient(
     @Param('id') id: string,
-    @Body() dto: { reason?: string },
+    @Body()
+    dto: {
+      reason?: string;
+      relationshipFrom?: string;
+      relationshipTo?: string;
+      lifetimeRevenue?: number;
+      currency?: string;
+      relationshipManager?: string;
+      serviceLines?: string[];
+      notes?: string;
+    },
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.tenantClientService.markAsExClient(
-      id,
-      t || u,
-      u,
-      dto?.reason ?? '',
-    );
+    return this.tenantClientService.markAsExClient(id, t || u, u, {
+      reason: dto?.reason ?? '',
+      relationshipFrom: dto?.relationshipFrom,
+      relationshipTo: dto?.relationshipTo,
+      lifetimeRevenue: dto?.lifetimeRevenue,
+      currency: dto?.currency,
+      relationshipManager: dto?.relationshipManager,
+      serviceLines: dto?.serviceLines,
+      notes: dto?.notes,
+    });
   }
 
   @Patch(':id/reactivate-ex-client')

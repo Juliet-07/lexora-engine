@@ -124,6 +124,32 @@ export class ClientProfileRecord {
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   exClientMarkedBy: Types.ObjectId | null;
 
+  // Real snapshot of the commercial relationship at the moment of
+  // archiving — captured here (rather than only read live from the
+  // commercial record) since that record can change or be removed
+  // later, and the ex-client history should stay accurate to how
+  // things stood when the relationship actually ended.
+  @Prop({ default: null })
+  exClientRelationshipFrom: Date | null;
+
+  @Prop({ default: null })
+  exClientRelationshipTo: Date | null;
+
+  @Prop({ default: 0 })
+  exClientLifetimeRevenue: number;
+
+  @Prop({ default: 'USD' })
+  exClientCurrency: string;
+
+  @Prop({ default: '' })
+  exClientRelationshipManager: string;
+
+  @Prop({ type: [String], default: [] })
+  exClientServiceLines: string[];
+
+  @Prop({ default: '' })
+  exClientNotes: string;
+
   @Prop({ type: Object, default: {} })
   metadata: Record<string, any>;
 }

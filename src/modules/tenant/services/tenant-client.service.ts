@@ -316,6 +316,13 @@ export class TenantClientsService {
           isExClient: { $ifNull: ['$profile.isExClient', false] },
           exClientAt: '$profile.exClientAt',
           exClientReason: '$profile.exClientReason',
+          exClientRelationshipFrom: '$profile.exClientRelationshipFrom',
+          exClientRelationshipTo: '$profile.exClientRelationshipTo',
+          exClientLifetimeRevenue: '$profile.exClientLifetimeRevenue',
+          exClientCurrency: '$profile.exClientCurrency',
+          exClientRelationshipManager: '$profile.exClientRelationshipManager',
+          exClientServiceLines: '$profile.exClientServiceLines',
+          exClientNotes: '$profile.exClientNotes',
         },
       },
       { $project: { password: 0, passwordResetToken: 0 } },
@@ -692,7 +699,16 @@ export class TenantClientsService {
     clientId: string,
     tenantId: string,
     markedBy: string,
-    reason: string,
+    dto: {
+      reason: string;
+      relationshipFrom?: string;
+      relationshipTo?: string;
+      lifetimeRevenue?: number;
+      currency?: string;
+      relationshipManager?: string;
+      serviceLines?: string[];
+      notes?: string;
+    },
   ) {
     const client = await this.userModel.findOne({
       _id: clientId,
@@ -707,8 +723,19 @@ export class TenantClientsService {
         $set: {
           isExClient: true,
           exClientAt: new Date(),
-          exClientReason: reason || '',
+          exClientReason: dto.reason || '',
           exClientMarkedBy: new Types.ObjectId(markedBy),
+          exClientRelationshipFrom: dto.relationshipFrom
+            ? new Date(dto.relationshipFrom)
+            : null,
+          exClientRelationshipTo: dto.relationshipTo
+            ? new Date(dto.relationshipTo)
+            : new Date(),
+          exClientLifetimeRevenue: dto.lifetimeRevenue ?? 0,
+          exClientCurrency: dto.currency || 'USD',
+          exClientRelationshipManager: dto.relationshipManager || '',
+          exClientServiceLines: dto.serviceLines ?? [],
+          exClientNotes: dto.notes || '',
         },
       },
       { new: true },
