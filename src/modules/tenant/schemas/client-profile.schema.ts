@@ -105,6 +105,25 @@ export class ClientProfileRecord {
   @Prop({ type: [String], default: [] })
   tags: string[];
 
+  // ── Ex-client — a real, separate record of a relationship that
+  // has ended, distinct from User.status (which already carries a
+  // different meaning for "inactive" — a client rejected during
+  // onboarding, reactivated back into the onboarding flow). Marking
+  // someone an ex-client never touches that lifecycle or deletes
+  // anything; it's purely "no longer an active engagement, but every
+  // record stays retrievable."
+  @Prop({ default: false, index: true })
+  isExClient: boolean;
+
+  @Prop({ default: null })
+  exClientAt: Date | null;
+
+  @Prop({ default: '' })
+  exClientReason: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  exClientMarkedBy: Types.ObjectId | null;
+
   @Prop({ type: Object, default: {} })
   metadata: Record<string, any>;
 }

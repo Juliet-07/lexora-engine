@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsString,
   IsOptional,
@@ -258,6 +259,18 @@ export class ClientFilterDto {
   @IsOptional()
   @IsString()
   assignedTo?: string;
+
+  // Ex-clients are excluded from the default list — the tenant
+  // opts in specifically to see them, matching "retained but not in
+  // the way of day-to-day active work."
+  @ApiPropertyOptional({
+    description:
+      'Set true to see only ex-clients, false (default) for active clients only.',
+  })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  exClientsOnly?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────

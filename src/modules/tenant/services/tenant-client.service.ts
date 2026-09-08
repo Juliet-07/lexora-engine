@@ -302,6 +302,11 @@ export class TenantClientsService {
           ]
         : []),
       {
+        $match: filters.exClientsOnly
+          ? { 'profile.isExClient': true }
+          : { 'profile.isExClient': { $ne: true } },
+      },
+      {
         $addFields: {
           fullName: { $concat: ['$firstName', ' ', '$lastName'] },
           classifications: '$profile.classifications',
@@ -309,6 +314,9 @@ export class TenantClientsService {
           riskLevel: '$profile.riskLevel',
           country: '$profile.address.country',
           assignedTo: '$profile.assignedTo',
+          isExClient: { $ifNull: ['$profile.isExClient', false] },
+          exClientAt: '$profile.exClientAt',
+          exClientReason: '$profile.exClientReason',
         },
       },
       { $project: { password: 0, passwordResetToken: 0 } },
@@ -670,6 +678,80 @@ export class TenantClientsService {
       success: true,
       message:
         'Client reactivated. They can now log in and redo their onboarding.',
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // EX-CLIENT — a real, separate lifecycle from the rejection/
+  // reactivation flow above. Marks a fully-onboarded, previously
+  // active client as no longer an active engagement, while
+  // retaining every record (KYC data, deals, invoices, contacts)
+  // exactly as-is for future reference.
+  // ═══════════════════════════════════════════════════════════
+
+  async markAsExClient(
+    clientId: string,
+    tenantId: string,
+    markedBy: string,
+    reason: string,
+  ) {
+    const client = await this.userModel.findOne({
+      _id: clientId,
+      tenantId: new Types.ObjectId(tenantId),
+      userType: UserType.CLIENT,
+    });
+    if (!client) throw new NotFoundException('Client not found');
+
+    const profile = await this.profileModel.findOneAndUpdate(
+      { userId: new Types.ObjectId(clientId) },
+      {
+        $set: {
+          isExClient: true,
+          exClientAt: new Date(),
+          exClientReason: reason || '',
+          exClientMarkedBy: new Types.ObjectId(markedBy),
+        },
+      },
+      { new: true },
+    );
+    if (!profile) {
+      throw new NotFoundException('Client profile not found');
+    }
+
+    return {
+      success: true,
+      message:
+        'Client marked as ex-client. All their records remain retained and searchable.',
+    };
+  }
+
+  async reactivateFromExClient(clientId: string, tenantId: string) {
+    const client = await this.userModel.findOne({
+      _id: clientId,
+      tenantId: new Types.ObjectId(tenantId),
+      userType: UserType.CLIENT,
+    });
+    if (!client) throw new NotFoundException('Client not found');
+
+    const profile = await this.profileModel.findOneAndUpdate(
+      { userId: new Types.ObjectId(clientId), isExClient: true },
+      {
+        $set: {
+          isExClient: false,
+          exClientAt: null,
+          exClientReason: '',
+          exClientMarkedBy: null,
+        },
+      },
+      { new: true },
+    );
+    if (!profile) {
+      throw new NotFoundException('Client is not currently an ex-client');
+    }
+
+    return {
+      success: true,
+      message: 'Client restored to active status.',
     };
   }
 

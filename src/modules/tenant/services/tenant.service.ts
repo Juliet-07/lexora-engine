@@ -7,7 +7,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
-import { UpdateTenantProfileDto } from '../dto/tenant.dto';
+import { UpdateTenantProfileDto } from '../dtos/tenant.dto';
 import {
   UserType,
   AccountStatus,

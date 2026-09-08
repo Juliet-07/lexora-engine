@@ -322,6 +322,39 @@ export class TenantController {
     return this.tenantClientService.reactivateClient(id, t || u, u);
   }
 
+  // ── Ex-client — real, separate lifecycle from reject/reactivate ──
+  @Patch(':id/mark-ex-client')
+  @ApiOperation({
+    summary: 'Mark a fully-onboarded client as an ex-client',
+    description:
+      'Retains every record — KYC data, deals, invoices, contacts — exactly as-is. Excluded from the default active client list, but always searchable.',
+  })
+  markAsExClient(
+    @Param('id') id: string,
+    @Body() dto: { reason?: string },
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.tenantClientService.markAsExClient(
+      id,
+      t || u,
+      u,
+      dto?.reason ?? '',
+    );
+  }
+
+  @Patch(':id/reactivate-ex-client')
+  @ApiOperation({
+    summary: 'Restore an ex-client to active status',
+  })
+  reactivateFromExClient(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.tenantClientService.reactivateFromExClient(id, t || u);
+  }
+
   // ── Request info ──────────────────────────────────────────
   @Post(':id/request-info')
   @HttpCode(HttpStatus.OK)
