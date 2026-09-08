@@ -66,6 +66,8 @@ export class TenantClientsService {
     private readonly commercialModel: Model<ClientCommercialDocument>,
     @InjectModel('OnboardingSubmission')
     private readonly onboardingModel: Model<any>,
+    @InjectModel('KycUpdateRequest')
+    private readonly kycUpdateModel: Model<any>,
     @InjectModel('TenantSubscription')
     private readonly subscriptionModel: Model<any>,
     @InjectModel(Mandate.name)
@@ -667,6 +669,127 @@ export class TenantClientsService {
       message:
         'Client reactivated. They can now log in and redo their onboarding.',
     };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // KYC UPDATE REQUEST — periodic refresh for an already-active
+  // client (e.g. annual review), deliberately separate from the
+  // original onboarding record and from requestInfo (which is only
+  // for the pre-approval flow and would wrongly flip an active
+  // client back into review).
+  // ═══════════════════════════════════════════════════════════
+
+  async requestKycUpdate(
+    clientId: string,
+    tenantId: string,
+    requestedBy: string,
+    dto: { message: string; requestedSections?: string[] },
+  ) {
+    const client = await this.userModel.findOne({
+      _id: clientId,
+      tenantId: new Types.ObjectId(tenantId),
+      userType: UserType.CLIENT,
+    });
+    if (!client) throw new NotFoundException('Client not found');
+
+    const existingOpen = await this.kycUpdateModel.findOne({
+      clientId: new Types.ObjectId(clientId),
+      status: { $in: ['requested', 'submitted'] },
+    });
+    if (existingOpen) {
+      throw new BadRequestException(
+        'This client already has an open KYC update request.',
+      );
+    }
+
+    // Real snapshot of their current approved data — they edit from
+    // this, not a blank form, since most fields likely haven't
+    // changed since they last onboarded.
+    const original = await this.onboardingModel
+      .findOne({ clientId: new Types.ObjectId(clientId) })
+      .lean();
+
+    const kycUpdate = await this.kycUpdateModel.create({
+      clientId: new Types.ObjectId(clientId),
+      tenantId: new Types.ObjectId(tenantId),
+      status: 'requested',
+      message: dto.message,
+      requestedSections: dto.requestedSections || [],
+      requestedBy: new Types.ObjectId(requestedBy),
+      snapshotData: (original as any)?.formData || {},
+      snapshotDocuments: (original as any)?.documents || [],
+      formData: (original as any)?.formData || {},
+      documents: (original as any)?.documents || [],
+    });
+
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.businessName firstName')
+      .lean();
+
+    await this.mailService.sendKycUpdateRequest({
+      to: client.email,
+      firstName: client.firstName,
+      tenantBusinessName:
+        (tenant as any)?.tenantProfile?.businessName || 'Your Provider',
+      message: dto.message,
+      requestedSections: dto.requestedSections || [],
+      loginUrl: `${process.env.CLIENT_APP_URL}/login`,
+    });
+
+    return kycUpdate;
+  }
+
+  // Tenant-side review list — every KYC update request for this
+  // tenant's clients, most recent first.
+  async getKycUpdateRequests(tenantId: string) {
+    return this.kycUpdateModel
+      .find({ tenantId: new Types.ObjectId(tenantId) })
+      .populate('clientId', 'firstName lastName email')
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  // Tenant approves a client's submitted KYC update — the real
+  // effect is merging the refreshed data into the one, permanent
+  // onboarding record, since that's the actual source of truth for
+  // the client's current KYC data everywhere else in the app.
+  async reviewKycUpdate(
+    requestId: string,
+    tenantId: string,
+    reviewedBy: string,
+    dto: { approve: boolean; rejectionReason?: string },
+  ) {
+    const request = await this.kycUpdateModel.findOne({
+      _id: requestId,
+      tenantId: new Types.ObjectId(tenantId),
+      status: 'submitted',
+    });
+    if (!request) {
+      throw new NotFoundException(
+        'KYC update request not found or not yet submitted',
+      );
+    }
+
+    if (dto.approve) {
+      await this.onboardingModel.findOneAndUpdate(
+        { clientId: request.clientId },
+        {
+          $set: {
+            formData: request.formData,
+            documents: request.documents,
+          },
+        },
+      );
+    }
+
+    request.status = dto.approve ? 'approved' : 'rejected';
+    request.reviewedAt = new Date();
+    request.reviewedBy = new Types.ObjectId(reviewedBy) as any;
+    if (!dto.approve) request.rejectionReason = dto.rejectionReason || '';
+    await request.save();
+
+    return request;
   }
 
   async requestInfo(

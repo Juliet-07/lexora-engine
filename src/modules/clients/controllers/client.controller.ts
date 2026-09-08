@@ -23,6 +23,7 @@ import {
 import { Request } from 'express';
 
 import { OnboardingService } from '../services/onboarding.service';
+import { KycUpdateService } from '../services/kyc-update.service';
 import { ClientDashboardService } from '../services/client-dashboard.service';
 import {
   SaveOnboardingDto,
@@ -271,5 +272,86 @@ export class ClientOnboardingController {
     @Req() req: Request,
   ) {
     return this.onboardingService.submit(clientId, dto, req.ip || '');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Periodic KYC update — a real, separate flow from initial
+// onboarding above. Only ever operates on an open request the
+// tenant has explicitly created; never touches the client's active
+// kycStatus, so their portal access is unaffected throughout.
+// ─────────────────────────────────────────────────────────────
+@ApiTags('Client — KYC Update')
+@ApiBearerAuth()
+@UserTypes('client')
+@Controller('client/kyc-update')
+export class ClientKycUpdateController {
+  constructor(private readonly kycUpdateService: KycUpdateService) {}
+
+  @Get()
+  @ApiOperation({
+    summary: 'Get the current open KYC update request, if any',
+    description:
+      "Returns the pre-filled snapshot of the client's existing approved " +
+      'data for them to review and edit. 404 if there is no open request.',
+  })
+  get(@CurrentUser('sub') clientId: string) {
+    return this.kycUpdateService.getOpenRequest(clientId);
+  }
+
+  @Patch('save')
+  @ApiOperation({ summary: 'Save progress on an open KYC update' })
+  save(
+    @CurrentUser('sub') clientId: string,
+    @Body() dto: { formData?: Record<string, any> },
+  ) {
+    return this.kycUpdateService.save(clientId, dto);
+  }
+
+  @Post('documents')
+  @ApiOperation({
+    summary: 'Attach an uploaded document to the open KYC update',
+    description:
+      'Upload the file first via POST /client/onboarding/upload (same ' +
+      'generic file storage), then attach the returned URL here.',
+  })
+  addDocument(
+    @CurrentUser('sub') clientId: string,
+    @Body()
+    dto: {
+      name: string;
+      category: string;
+      url: string;
+      mimeType?: string;
+      size?: number;
+      description?: string;
+    },
+  ) {
+    return this.kycUpdateService.addDocument(clientId, dto);
+  }
+
+  @Delete('documents')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remove a document by URL' })
+  removeDocument(
+    @CurrentUser('sub') clientId: string,
+    @Body() dto: { url: string },
+  ) {
+    return this.kycUpdateService.removeDocument(clientId, dto.url);
+  }
+
+  @Post('submit')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Submit the KYC update for tenant review',
+    description:
+      'Locks further edits until the tenant reviews it. Does not affect ' +
+      "the client's active kycStatus or portal access.",
+  })
+  submit(
+    @CurrentUser('sub') clientId: string,
+    @Body() dto: { formData: Record<string, any> },
+  ) {
+    return this.kycUpdateService.submit(clientId, dto);
   }
 }

@@ -335,6 +335,43 @@ export class TenantController {
     return this.tenantClientService.requestInfo(id, t || u, dto);
   }
 
+  // ── KYC update requests (periodic refresh for active clients) ──
+  @Post(':id/kyc-update')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Request a periodic KYC update from an already-active client',
+  })
+  requestKycUpdate(
+    @Param('id') id: string,
+    @Body() dto: { message: string; requestedSections?: string[] },
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.tenantClientService.requestKycUpdate(id, t || u, u, dto);
+  }
+
+  @Get('kyc-update-requests')
+  @ApiOperation({ summary: 'List all KYC update requests for this tenant' })
+  getKycUpdateRequests(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.tenantClientService.getKycUpdateRequests(t || u);
+  }
+
+  @Patch('kyc-update-requests/:requestId/review')
+  @ApiOperation({
+    summary: 'Approve or reject a client-submitted KYC update',
+  })
+  reviewKycUpdate(
+    @Param('requestId') requestId: string,
+    @Body() dto: { approve: boolean; rejectionReason?: string },
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.tenantClientService.reviewKycUpdate(requestId, t || u, u, dto);
+  }
+
   // ── Status ────────────────────────────────────────────────
   @Patch(':id/status')
   @Roles(

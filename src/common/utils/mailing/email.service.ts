@@ -29,6 +29,10 @@ import {
   infoRequestTemplate,
 } from './templates/client-info-request.template';
 import {
+  KycUpdateRequestEmailData,
+  kycUpdateRequestTemplate,
+} from './templates/client-kyc-update-request.template';
+import {
   ClientApprovalData,
   clientApprovalTemplate,
 } from './templates/client-approval.template';
@@ -314,6 +318,16 @@ export class EmailService {
 
   async sendInfoRequest(data: InfoRequestEmailData): Promise<void> {
     const { subject, html } = infoRequestTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendKycUpdateRequest(data: KycUpdateRequestEmailData): Promise<void> {
+    const { subject, html } = kycUpdateRequestTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

@@ -5,8 +5,10 @@ import {
   ClientDashboardController,
   ClientNotificationController,
   ClientOnboardingController,
+  ClientKycUpdateController,
 } from './controllers';
 import { OnboardingService } from './services/onboarding.service';
+import { KycUpdateService } from './services/kyc-update.service';
 import { ClientDashboardService } from './services/client-dashboard.service';
 
 import { User, UserSchema } from '../auth/schemas/user.schema';
@@ -14,6 +16,10 @@ import {
   OnboardingSubmission,
   OnboardingSchema,
 } from './schemas/onboarding.schema';
+import {
+  KycUpdateRequest,
+  KycUpdateRequestSchema,
+} from './schemas/kyc-update-request.schema';
 import {
   ClientProfileRecord,
   ClientProfileSchema,
@@ -42,6 +48,7 @@ import { ClientNotificationService } from './services';
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       { name: OnboardingSubmission.name, schema: OnboardingSchema },
+      { name: KycUpdateRequest.name, schema: KycUpdateRequestSchema },
       { name: ClientProfileRecord.name, schema: ClientProfileSchema },
       { name: ComplianceAlert.name, schema: ComplianceAlertSchema },
       { name: Mandate.name, schema: MandateSchema },
@@ -55,14 +62,16 @@ import { ClientNotificationService } from './services';
   controllers: [
     ClientDashboardController,
     ClientOnboardingController,
+    ClientKycUpdateController,
     ClientNotificationController,
   ],
   providers: [
     OnboardingService,
+    KycUpdateService,
     ClientDashboardService,
     EmailService,
     ClientNotificationService,
   ],
-  exports: [OnboardingService, ClientDashboardService],
+  exports: [OnboardingService, KycUpdateService, ClientDashboardService],
 })
 export class ClientModule {}

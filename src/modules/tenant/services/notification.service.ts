@@ -293,6 +293,23 @@ export class TenantNotificationService {
     );
   }
 
+  @OnEvent('tenant.kyc_update.submitted')
+  async onKycUpdateSubmitted(e: {
+    tenantId: string;
+    clientUserId: string;
+    requestId: string;
+  }) {
+    const recipient = await this.resolveRecipient(e.tenantId, e.clientUserId);
+    await this.create(
+      e.tenantId,
+      recipient,
+      TenantNotificationType.ONBOARDING,
+      'KYC update submitted',
+      'A client has submitted their periodic KYC update and is ready for review.',
+      '/clients/kyc-updates',
+    );
+  }
+
   @OnEvent('employee.probation.started')
   async onProbationStarted(e: ProbationStartedEvent) {
     const employee = await this.employeeModel
