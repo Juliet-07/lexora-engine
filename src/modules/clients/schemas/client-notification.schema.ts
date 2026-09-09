@@ -9,6 +9,7 @@ export enum ClientNotificationType {
   COMPLIANCE = 'Compliance',
   ONBOARDING = 'Onboarding',
   NEWSLETTER = 'Newsletter',
+  CASE = 'Case',
   GENERAL = 'General',
 }
 

@@ -24,7 +24,11 @@ import {
   RecordLitigationOutcomeDto,
 } from '../dtos';
 import { TimeEntryService } from './time-entry.service';
+import { MandateService } from './mandate.service';
 import { buildReportPdf } from '../../../../common/utils/pdf/report-builder.util';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EmailService } from '../../../../common/utils/mailing/email.service';
+import { User, UserDocument } from '../../../auth/schemas/user.schema';
 
 @Injectable()
 export class LitigationCaseService {
@@ -38,7 +42,12 @@ export class LitigationCaseService {
     // the model, not the service.
     @InjectModel(AdrCase.name)
     private readonly adrCaseModel: Model<AdrCaseDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
     private readonly timeEntryService: TimeEntryService,
+    private readonly mandateService: MandateService,
+    private readonly emailService: EmailService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -254,7 +263,62 @@ export class LitigationCaseService {
         },
       ],
     });
+
+    // Real client notification — same rule as ADR: only fires when
+    // the case is genuinely linked to a mandate that has a
+    // registered client.
+    if (dto.mandateId) {
+      const mandate: any = await this.mandateService.getById(
+        tenantId,
+        dto.mandateId,
+      );
+      if (mandate.clientUserId) {
+        await this.notifyClientOfCase(
+          tenantId,
+          String(mandate.clientUserId),
+          created.toObject(),
+        );
+      }
+    }
+
     return created.toObject();
+  }
+
+  private async notifyClientOfCase(
+    tenantId: string,
+    clientUserId: string,
+    createdCase: any,
+  ) {
+    const [client, tenant] = await Promise.all([
+      this.userModel.findById(clientUserId).select('firstName email').lean(),
+      this.userModel
+        .findById(tenantId)
+        .select('tenantProfile.businessName')
+        .lean(),
+    ]);
+    if (!client?.email) return;
+
+    const tenantBusinessName =
+      (tenant as any)?.tenantProfile?.businessName || 'Your Provider';
+
+    await this.emailService.sendCaseNotice({
+      to: client.email,
+      firstName: client.firstName,
+      tenantBusinessName,
+      caseType: 'Litigation',
+      caseTitle: createdCase.title,
+      caseRef: createdCase.ref,
+      mandateName: createdCase.mandateName,
+      loginUrl: `${process.env.CLIENT_APP_URL}/login`,
+    });
+
+    this.eventEmitter.emit('client.case.filed', {
+      tenantId,
+      clientUserId,
+      caseType: 'Litigation',
+      caseTitle: createdCase.title,
+      caseRef: createdCase.ref,
+    });
   }
 
   async updateDetails(

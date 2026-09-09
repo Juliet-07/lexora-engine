@@ -1,4 +1,5 @@
 export * from './adr-case.controller';
+export * from './client-case.controller';
 export * from './client-projects.controller';
 export * from './employee-projects.controller';
 export * from './kb-article.controller';

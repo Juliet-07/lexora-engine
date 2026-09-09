@@ -1,4 +1,5 @@
 export * from './adr-case.service';
+export * from './client-case.service';
 export * from './client-projects.service';
 export * from './employee-projects.service';
 export * from './kb-article.service';

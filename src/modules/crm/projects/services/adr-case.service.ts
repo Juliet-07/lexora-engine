@@ -32,15 +32,22 @@ import { MandateService } from './mandate.service';
 import { TimeEntryService } from './time-entry.service';
 import { LitigationCaseService } from './litigation-case.service';
 import { buildReportPdf } from '../../../../common/utils/pdf/report-builder.util';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EmailService } from '../../../../common/utils/mailing/email.service';
+import { User, UserDocument } from '../../../auth/schemas/user.schema';
 
 @Injectable()
 export class AdrCaseService {
   constructor(
     @InjectModel(AdrCase.name)
     private readonly model: Model<AdrCaseDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
     private readonly mandateService: MandateService,
     private readonly timeEntryService: TimeEntryService,
     private readonly litigationCaseService: LitigationCaseService,
+    private readonly emailService: EmailService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -220,11 +227,9 @@ export class AdrCaseService {
     // the request body, same discipline the contract/invoice
     // modules already use for denormalized names.
     let mandateName = '';
+    let mandate: any = null;
     if (dto.mandateId) {
-      const mandate: any = await this.mandateService.getById(
-        tenantId,
-        dto.mandateId,
-      );
+      mandate = await this.mandateService.getById(tenantId, dto.mandateId);
       mandateName = mandate.name;
     }
 
@@ -264,7 +269,57 @@ export class AdrCaseService {
         },
       ],
     });
+
+    // Real client notification — only fires when the case is
+    // genuinely linked to a mandate that has a registered client,
+    // matching exactly what was asked: a case linked to a mandate
+    // notifies the client that mandate is for, by email and portal.
+    if (mandate?.clientUserId) {
+      await this.notifyClientOfCase(
+        tenantId,
+        String(mandate.clientUserId),
+        created.toObject(),
+      );
+    }
+
     return created.toObject();
+  }
+
+  private async notifyClientOfCase(
+    tenantId: string,
+    clientUserId: string,
+    createdCase: any,
+  ) {
+    const [client, tenant] = await Promise.all([
+      this.userModel.findById(clientUserId).select('firstName email').lean(),
+      this.userModel
+        .findById(tenantId)
+        .select('tenantProfile.businessName')
+        .lean(),
+    ]);
+    if (!client?.email) return;
+
+    const tenantBusinessName =
+      (tenant as any)?.tenantProfile?.businessName || 'Your Provider';
+
+    await this.emailService.sendCaseNotice({
+      to: client.email,
+      firstName: client.firstName,
+      tenantBusinessName,
+      caseType: 'ADR',
+      caseTitle: createdCase.title,
+      caseRef: createdCase.ref,
+      mandateName: createdCase.mandateName,
+      loginUrl: `${process.env.CLIENT_APP_URL}/login`,
+    });
+
+    this.eventEmitter.emit('client.case.filed', {
+      tenantId,
+      clientUserId,
+      caseType: 'ADR',
+      caseTitle: createdCase.title,
+      caseRef: createdCase.ref,
+    });
   }
 
   async updateDetails(

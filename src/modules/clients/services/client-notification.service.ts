@@ -46,6 +46,13 @@ interface NewsletterSentEvent {
   campaignId: string;
   subject: string;
 }
+interface CaseFiledEvent {
+  tenantId: string;
+  clientUserId: string;
+  caseType: 'ADR' | 'Litigation';
+  caseTitle: string;
+  caseRef: string;
+}
 
 @Injectable()
 export class ClientNotificationService {
@@ -221,6 +228,18 @@ export class ClientNotificationService {
       'New newsletter',
       e.subject,
       '/newsletters',
+    );
+  }
+
+  @OnEvent('client.case.filed')
+  async onCaseFiled(e: CaseFiledEvent) {
+    await this.create(
+      e.tenantId,
+      e.clientUserId,
+      ClientNotificationType.CASE,
+      `${e.caseType} matter opened — ${e.caseRef}`,
+      e.caseTitle,
+      '/cases',
     );
   }
 }

@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { EmailService } from '../../../common/utils/mailing/email.service';
+import { User, UserSchema } from '../../auth/schemas/user.schema';
 import {
   Mandate,
   MandateSchema,
@@ -45,6 +47,7 @@ import {
   MyKbService,
   ClientKbService,
   AdrCaseService,
+  ClientCaseService,
   LitigationCaseService,
   PortfolioRiskService,
 } from './services';
@@ -63,6 +66,7 @@ import {
   MyKbController,
   ClientKbController,
   AdrCaseController,
+  ClientCaseController,
   LitigationCaseController,
   PortfolioRiskController,
 } from './controllers';
@@ -87,6 +91,7 @@ import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
 @Module({
   imports: [
     MongooseModule.forFeature([
+      { name: User.name, schema: UserSchema },
       { name: Mandate.name, schema: MandateSchema },
       { name: MandateMessage.name, schema: MandateMessageSchema },
       {
@@ -108,6 +113,7 @@ import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
     ]),
   ],
   providers: [
+    EmailService,
     RateCardService,
     TimeEntryService,
     TicketService,
@@ -117,6 +123,7 @@ import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
     MyKbService,
     ClientKbService,
     AdrCaseService,
+    ClientCaseService,
     LitigationCaseService,
     PortfolioRiskService,
     MandateService,
@@ -135,6 +142,7 @@ import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
     MyKbController,
     ClientKbController,
     AdrCaseController,
+    ClientCaseController,
     LitigationCaseController,
     PortfolioRiskController,
     MandateController,
