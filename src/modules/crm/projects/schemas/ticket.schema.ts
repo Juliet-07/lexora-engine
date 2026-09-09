@@ -99,6 +99,15 @@ export class Ticket {
   @Prop({ default: 0 }) totalPausedMs: number;
   @Prop({ default: null }) slaStoppedAt: Date | null;
 
+  // Real dedup guard for breach notifications — records the highest
+  // threshold (75/90/100) already notified for, so the periodic
+  // check below never re-sends the same alert every time it runs.
+  // Reset to 0 whenever the ticket is un-paused past a point where
+  // it would legitimately need re-alerting again is deliberately
+  // NOT done — once notified for a threshold, that's permanent for
+  // this ticket's lifetime, matching "escalate once, not repeatedly."
+  @Prop({ default: 0 }) lastNotifiedThreshold: number;
+
   // Not wired to real Timesheets in this pass — ticket-level time
   // tracking is its own integration, same deferral reasoning as
   // "Convert to mandate" below.
@@ -111,6 +120,29 @@ export class Ticket {
   notes: Types.DocumentArray<TicketNote>;
 }
 export const TicketSchema = SchemaFactory.createForClass(Ticket);
+
+// Real, simple per-tenant escalation preferences for the SLA
+// Management "Breach management" tab — which thresholds actually
+// trigger a notification, and who real notifications route to
+// beyond the ticket's own assigned agent.
+export type SlaSettingsDocument = SlaSettings & Document;
+
+@Schema({ timestamps: true, collection: 'crm_sla_settings' })
+export class SlaSettings {
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'User',
+    required: true,
+    unique: true,
+    index: true,
+  })
+  tenantId: Types.ObjectId;
+
+  @Prop({ default: true }) notifyAt75: boolean;
+  @Prop({ default: true }) notifyAt90: boolean;
+  @Prop({ default: true }) notifyAt100: boolean;
+}
+export const SlaSettingsSchema = SchemaFactory.createForClass(SlaSettings);
 
 export type KbArticleDocument = KbArticle & Document;
 

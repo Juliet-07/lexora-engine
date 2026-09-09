@@ -50,6 +50,29 @@ export class TicketController {
     return this.service.getAll(t || u, { status, agentUserId });
   }
 
+  // ── SLA escalation settings — real, per-tenant preferences for
+  // the "Breach management" tab. Declared before :id below so
+  // "sla-settings" is never swallowed as a ticket id. ──
+  @Get('sla-settings')
+  @ApiOperation({ summary: "Get this tenant's SLA escalation settings" })
+  getSlaSettings(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getSlaSettings(t || u);
+  }
+
+  @Patch('sla-settings')
+  @ApiOperation({ summary: "Update this tenant's SLA escalation settings" })
+  updateSlaSettings(
+    @Body()
+    dto: { notifyAt75?: boolean; notifyAt90?: boolean; notifyAt100?: boolean },
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateSlaSettings(t || u, dto);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'One ticket' })
   getOne(

@@ -2,7 +2,9 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -11,6 +13,8 @@ import {
   TicketDocument,
   TicketStatus,
   SLA_TARGET_HRS_BY_PRIORITY,
+  SlaSettings,
+  SlaSettingsDocument,
 } from '../schemas';
 import {
   CreateTicketDto,
@@ -22,8 +26,12 @@ import {
 
 @Injectable()
 export class TicketService {
+  private readonly logger = new Logger(TicketService.name);
+
   constructor(
     @InjectModel(Ticket.name) private readonly model: Model<TicketDocument>,
+    @InjectModel(SlaSettings.name)
+    private readonly slaSettingsModel: Model<SlaSettingsDocument>,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -154,6 +162,110 @@ export class TicketService {
     t.status = dto.status;
     await t.save();
     return this.normalize(t.toObject());
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // SLA ESCALATION — real, per-tenant settings plus a periodic
+  // check that actually notifies when a ticket crosses a threshold,
+  // replacing the old "notifications go live once Service Desk is
+  // built" placeholder now that Service Desk is real.
+  // ═══════════════════════════════════════════════════════════
+
+  async getSlaSettings(tenantId: string) {
+    const existing = await this.slaSettingsModel
+      .findOne({ tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+    if (existing) return existing;
+    // Real defaults — every threshold on — rather than requiring an
+    // explicit first save before any escalation ever fires.
+    return {
+      tenantId,
+      notifyAt75: true,
+      notifyAt90: true,
+      notifyAt100: true,
+    };
+  }
+
+  async updateSlaSettings(
+    tenantId: string,
+    dto: { notifyAt75?: boolean; notifyAt90?: boolean; notifyAt100?: boolean },
+  ) {
+    return this.slaSettingsModel.findOneAndUpdate(
+      { tenantId: new Types.ObjectId(tenantId) },
+      { $set: dto },
+      { upsert: true, new: true },
+    );
+  }
+
+  // Runs every 15 minutes — frequent enough that a breach is caught
+  // promptly, infrequent enough not to hammer the database. Checks
+  // every still-open ticket across every tenant, computes its real,
+  // live elapsed percentage, and emits one notification the first
+  // time it crosses each threshold — never repeats for the same
+  // threshold on the same ticket, via lastNotifiedThreshold.
+  @Cron('*/15 * * * *', { name: 'sla-breach-check' })
+  async checkSlaBreaches() {
+    const openTickets = await this.model
+      .find({
+        slaStoppedAt: null,
+        status: { $ne: TicketStatus.PENDING_CLIENT },
+      })
+      .lean();
+
+    if (!openTickets.length) return;
+
+    const tenantIds = [...new Set(openTickets.map((t) => String(t.tenantId)))];
+    const settingsByTenant = new Map<string, SlaSettingsDocument | null>();
+    for (const tid of tenantIds) {
+      settingsByTenant.set(
+        tid,
+        await this.slaSettingsModel
+          .findOne({ tenantId: new Types.ObjectId(tid) })
+          .lean(),
+      );
+    }
+
+    for (const t of openTickets) {
+      const pct = Math.round(
+        (this.computeElapsedHrs(t) / t.slaTargetHrs) * 100,
+      );
+      const settings = settingsByTenant.get(String(t.tenantId));
+      const notifyAt75 = settings?.notifyAt75 ?? true;
+      const notifyAt90 = settings?.notifyAt90 ?? true;
+      const notifyAt100 = settings?.notifyAt100 ?? true;
+
+      let crossedThreshold: number | null = null;
+      if (pct >= 100 && notifyAt100 && t.lastNotifiedThreshold < 100) {
+        crossedThreshold = 100;
+      } else if (pct >= 90 && notifyAt90 && t.lastNotifiedThreshold < 90) {
+        crossedThreshold = 90;
+      } else if (pct >= 75 && notifyAt75 && t.lastNotifiedThreshold < 75) {
+        crossedThreshold = 75;
+      }
+
+      if (crossedThreshold === null) continue;
+
+      try {
+        await this.model.updateOne(
+          { _id: t._id },
+          { $set: { lastNotifiedThreshold: crossedThreshold } },
+        );
+        this.eventEmitter.emit('tenant.sla.threshold_crossed', {
+          tenantId: String(t.tenantId),
+          ticketId: String(t._id),
+          ticketRef: t.ref,
+          subject: t.subject,
+          clientName: t.clientName,
+          agentUserId: t.agentUserId ? String(t.agentUserId) : null,
+          threshold: crossedThreshold,
+          pctElapsed: pct,
+        });
+      } catch (err) {
+        this.logger.error(
+          `Failed to emit SLA breach notification for ticket ${t._id}: ${err}`,
+        );
+      }
+    }
   }
 
   async addNote(tenantId: string, id: string, dto: AddTicketNoteDto) {

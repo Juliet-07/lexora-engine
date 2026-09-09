@@ -310,6 +310,34 @@ export class TenantNotificationService {
     );
   }
 
+  @OnEvent('tenant.sla.threshold_crossed')
+  async onSlaThresholdCrossed(e: {
+    tenantId: string;
+    ticketId: string;
+    ticketRef: string;
+    subject: string;
+    clientName: string;
+    agentUserId: string | null;
+    threshold: number;
+    pctElapsed: number;
+  }) {
+    // Real ticket owner if assigned, otherwise the tenant owner —
+    // never a client, since this is purely an internal escalation.
+    const recipient = e.agentUserId ?? e.tenantId;
+    const label =
+      e.threshold >= 100
+        ? 'SLA breached'
+        : `SLA at ${e.threshold}% — escalating`;
+    await this.create(
+      e.tenantId,
+      recipient,
+      TenantNotificationType.TICKET,
+      `${label}: ${e.ticketRef}`,
+      `"${e.subject}" for ${e.clientName} is at ${e.pctElapsed}% of its SLA target.`,
+      `/crm/tickets/${e.ticketId}`,
+    );
+  }
+
   @OnEvent('employee.probation.started')
   async onProbationStarted(e: ProbationStartedEvent) {
     const employee = await this.employeeModel
