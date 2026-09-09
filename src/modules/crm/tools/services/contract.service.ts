@@ -1469,10 +1469,15 @@ export class TenantContractTemplateService {
   // for the client-onboarding contract flow — leaving it unset
   // returns every published platform template, matching this
   // method's original, general-purpose behaviour.
-  async getAvailableTemplates(_tenantId: string, moduleKey?: string) {
+  async getAvailableTemplates(
+    _tenantId: string,
+    moduleKey?: string,
+    areaKey?: string,
+  ) {
     const platform = await this.platformTemplateService.getAll(
       undefined,
       moduleKey,
+      areaKey,
     );
     return (platform as any[])
       .filter((t) => t.status === 'Published')

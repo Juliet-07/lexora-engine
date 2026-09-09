@@ -599,8 +599,9 @@ export class TenantContractTemplateController {
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
     @Query('moduleKey') moduleKey?: string,
+    @Query('areaKey') areaKey?: string,
   ) {
-    return this.service.getAvailableTemplates(t || u, moduleKey);
+    return this.service.getAvailableTemplates(t || u, moduleKey, areaKey);
   }
 
   @Get('folders')

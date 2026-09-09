@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Patch, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, Res } from '@nestjs/common';
+import { Response } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AdrCaseService } from '../services';
 import {
@@ -46,6 +47,29 @@ export class AdrCaseController {
   @ApiOperation({ summary: 'All ADR cases' })
   getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
     return this.service.getAll(t || u);
+  }
+
+  // ── Reporting — declared before :id below so "report" is never
+  // swallowed as a case id. ──
+  @Get('report')
+  @ApiOperation({ summary: 'Real, server-computed ADR case register stats' })
+  getReport(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
+    return this.service.getReport(t || u);
+  }
+
+  @Get('report/export')
+  @ApiOperation({ summary: 'ADR case register as a PDF, house style' })
+  async exportReportPdf(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.service.exportReportPdf(t || u);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="adr-case-register-${new Date().toISOString().split('T')[0]}.pdf"`,
+    });
+    res.send(buffer);
   }
 
   @Get(':id')

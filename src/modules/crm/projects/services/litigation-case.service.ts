@@ -9,6 +9,8 @@ import {
   PleadingStatus,
   AdrCase,
   AdrCaseDocument,
+  LitigationStage,
+  LITIGATION_STAGES,
 } from '../schemas';
 import {
   CreateLitigationCaseDto,
@@ -22,6 +24,7 @@ import {
   RecordLitigationOutcomeDto,
 } from '../dtos';
 import { TimeEntryService } from './time-entry.service';
+import { buildReportPdf } from '../../../../common/utils/pdf/report-builder.util';
 
 @Injectable()
 export class LitigationCaseService {
@@ -129,6 +132,65 @@ export class LitigationCaseService {
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // REPORTING — real, server-computed register stats, mirroring
+  // ADR's reporting exactly (same house style, same reasoning).
+  // ═══════════════════════════════════════════════════════════
+
+  private async computeReport(tenantId: string) {
+    const cases = await this.getAll(tenantId);
+    const active = cases.filter(
+      (c) => c.status === LitigationCaseStatus.ACTIVE,
+    );
+    const escalatedFromAdr = cases.filter((c) => c.adrCaseId);
+    const claimValueActive = active.reduce(
+      (sum, c) => sum + (c.claimValue ?? 0),
+      0,
+    );
+    const courtFeesPaid = cases.reduce(
+      (sum, c) => sum + (c.courtFeesPaid ?? 0),
+      0,
+    );
+    const byStage = LITIGATION_STAGES.map((s) => ({
+      stage: s,
+      count: cases.filter((c) => c.stage === s).length,
+    }));
+
+    return {
+      total: cases.length,
+      active,
+      escalatedFromAdr,
+      claimValueActive,
+      courtFeesPaid,
+      byStage,
+    };
+  }
+
+  async getReport(tenantId: string) {
+    return this.computeReport(tenantId);
+  }
+
+  async exportReportPdf(tenantId: string): Promise<Buffer> {
+    const r = await this.computeReport(tenantId);
+    return buildReportPdf({
+      title: 'Litigation Case Register',
+      subtitle: 'CRM · Litigation',
+      summary: [
+        { label: 'Active cases', value: r.active.length },
+        { label: 'Escalated from ADR', value: r.escalatedFromAdr.length },
+        { label: 'Claim value active', value: r.claimValueActive },
+        { label: 'Court fees paid', value: r.courtFeesPaid },
+      ],
+      sections: [
+        {
+          heading: 'Cases by stage',
+          columns: ['Stage', 'Cases'],
+          rows: r.byStage.map((s) => [s.stage, s.count]),
+        },
+      ],
+    });
   }
 
   async getById(tenantId: string, id: string) {

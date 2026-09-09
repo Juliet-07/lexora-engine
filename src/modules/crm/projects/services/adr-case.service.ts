@@ -31,6 +31,7 @@ import {
 import { MandateService } from './mandate.service';
 import { TimeEntryService } from './time-entry.service';
 import { LitigationCaseService } from './litigation-case.service';
+import { buildReportPdf } from '../../../../common/utils/pdf/report-builder.util';
 
 @Injectable()
 export class AdrCaseService {
@@ -52,6 +53,105 @@ export class AdrCaseService {
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // REPORTING — real, server-computed register stats, the
+  // authoritative source for the exported document rather than
+  // trusting client-computed numbers for an official export.
+  // ═══════════════════════════════════════════════════════════
+
+  private async computeReport(tenantId: string) {
+    const cases = await this.getAll(tenantId);
+    const active = cases.filter((c) => c.status === AdrCaseStatus.ACTIVE);
+    const resolved = cases.filter((c) => c.status === AdrCaseStatus.RESOLVED);
+    const escalated = cases.filter((c) => c.status === AdrCaseStatus.ESCALATED);
+    const withdrawn = cases.filter((c) => c.status === AdrCaseStatus.WITHDRAWN);
+    const closedTotal = resolved.length + escalated.length + withdrawn.length;
+
+    const avgResolutionDays = resolved.length
+      ? Math.round(
+          resolved.reduce((sum, c) => {
+            const days =
+              (new Date((c as any).updatedAt).getTime() -
+                new Date(c.filedOn).getTime()) /
+              86_400_000;
+            return sum + Math.max(0, days);
+          }, 0) / resolved.length,
+        )
+      : 0;
+
+    const claimAtStake = active.reduce(
+      (sum, c) => sum + (c.claimValue ?? 0),
+      0,
+    );
+
+    const typeBreakdown = new Map<string, number>();
+    for (const c of active) {
+      typeBreakdown.set(c.type, (typeBreakdown.get(c.type) ?? 0) + 1);
+    }
+
+    const now = new Date();
+    const upcomingSessions = cases.reduce(
+      (sum, c) =>
+        sum +
+        (c.sessions ?? []).filter(
+          (s: any) => s.status === 'Scheduled' && new Date(s.date) > now,
+        ).length,
+      0,
+    );
+
+    return {
+      active,
+      resolved,
+      escalated,
+      withdrawn,
+      closedTotal,
+      resolutionRate: closedTotal
+        ? Math.round((resolved.length / closedTotal) * 100)
+        : 0,
+      avgResolutionDays,
+      claimAtStake,
+      typeBreakdown: Array.from(typeBreakdown.entries()),
+      upcomingSessions,
+    };
+  }
+
+  async getReport(tenantId: string) {
+    return this.computeReport(tenantId);
+  }
+
+  async exportReportPdf(tenantId: string): Promise<Buffer> {
+    const r = await this.computeReport(tenantId);
+    return buildReportPdf({
+      title: 'ADR Case Register',
+      subtitle: 'CRM · Alternative Dispute Resolution',
+      summary: [
+        { label: 'Active cases', value: r.active.length },
+        {
+          label: 'Resolution rate',
+          value: r.closedTotal ? `${r.resolutionRate}%` : '—',
+        },
+        {
+          label: 'Avg. resolution time',
+          value: r.resolved.length ? `${r.avgResolutionDays} days` : '—',
+        },
+        { label: 'Claim value at stake', value: r.claimAtStake },
+      ],
+      sections: [
+        {
+          heading: 'Case breakdown',
+          columns: ['Category', 'Count'],
+          rows: [
+            ...r.typeBreakdown.map(([t, n]) => [`Active — ${t}`, n]),
+            ['Upcoming sessions', r.upcomingSessions],
+            ['Resolved', r.resolved.length],
+            ['Escalated to litigation', r.escalated.length],
+            ['Withdrawn', r.withdrawn.length],
+          ],
+        },
+      ],
+    });
   }
 
   async getById(tenantId: string, id: string) {
