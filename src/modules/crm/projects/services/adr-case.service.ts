@@ -19,6 +19,9 @@ import {
   AdrDraftStatus,
   AdrDocumentEntry,
   AdrDocumentEntryDocument,
+  AdrDeadlineRule,
+  AdrDeadlineRuleDocument,
+  DeadlineTriggerSource,
 } from '../schemas';
 import {
   CreateAdrCaseDto,
@@ -40,6 +43,8 @@ import {
   CreateAdrDraftDto,
   SaveAdrDraftVersionDto,
   UpdateAdrDraftStatusDto,
+  CreateAdrDeadlineRuleDto,
+  UpdateAdrDeadlineRuleDto,
 } from '../dtos';
 import { MandateService } from './mandate.service';
 import { TimeEntryService } from './time-entry.service';
@@ -68,6 +73,8 @@ export class AdrCaseService {
     private readonly documentModel: Model<AdrDocumentEntryDocument>,
     @InjectModel(PlatformContractTemplate.name)
     private readonly templateModel: Model<PlatformContractTemplateDocument>,
+    @InjectModel(AdrDeadlineRule.name)
+    private readonly deadlineRuleModel: Model<AdrDeadlineRuleDocument>,
     private readonly mandateService: MandateService,
     private readonly timeEntryService: TimeEntryService,
     private readonly litigationCaseService: LitigationCaseService,
@@ -643,6 +650,173 @@ export class AdrCaseService {
       await c.save();
     }
     return c.folders;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // DEADLINE RULES — the due date is always computed, never typed
+  // in. Trigger dates are resolved live from real case data on
+  // every read, so nothing here can silently go stale.
+  // ═══════════════════════════════════════════════════════════
+
+  // Resolves one rule's real trigger date from the case's actual
+  // data. Returns null when the trigger genuinely hasn't happened
+  // yet (e.g. the session it tracks doesn't exist, or the cascade
+  // rule it depends on hasn't itself triggered).
+  private async resolveTriggerDate(
+    c: any,
+    rule: any,
+    depth = 0,
+  ): Promise<Date | null> {
+    if (depth > 5) return null; // real, simple guard against a cascade cycle
+    switch (rule.triggerSource) {
+      case DeadlineTriggerSource.CASE_FILED:
+        return c.filedOn;
+      case DeadlineTriggerSource.SESSION_DATE: {
+        const session = c.sessions?.[rule.triggerSessionIndex];
+        return session ? session.date : null;
+      }
+      case DeadlineTriggerSource.SETTLEMENT:
+        return c.settlement ? c.settlement.date : null;
+      case DeadlineTriggerSource.CUSTOM:
+        return rule.customTriggerDate;
+      case DeadlineTriggerSource.CASCADE: {
+        if (!rule.cascadeFromRuleId) return null;
+        const parent = await this.deadlineRuleModel
+          .findById(rule.cascadeFromRuleId)
+          .lean();
+        if (!parent) return null;
+        const parentTrigger = await this.resolveTriggerDate(
+          c,
+          parent,
+          depth + 1,
+        );
+        if (!parentTrigger) return null;
+        // The cascade fires exactly when the parent rule's own
+        // window elapses — its due date, not its trigger date.
+        return new Date(
+          new Date(parentTrigger).getTime() +
+            parent.windowDays * 24 * 60 * 60 * 1000,
+        );
+      }
+      default:
+        return null;
+    }
+  }
+
+  private computeRuleView(c: any, rule: any, triggerDate: Date | null) {
+    const dueDate = triggerDate
+      ? new Date(
+          new Date(triggerDate).getTime() +
+            rule.windowDays * 24 * 60 * 60 * 1000,
+        )
+      : null;
+    let status: 'not_triggered' | 'due' | 'overdue' | 'met';
+    if (!triggerDate) status = 'not_triggered';
+    else if (rule.metAt) status = 'met';
+    else if (dueDate && dueDate.getTime() < Date.now()) status = 'overdue';
+    else status = 'due';
+
+    return {
+      ...rule,
+      triggerDate,
+      dueDate,
+      status,
+    };
+  }
+
+  async getDeadlineRules(tenantId: string, caseId: string) {
+    const c = await this.model
+      .findOne({ _id: caseId, tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+    if (!c) throw new NotFoundException('Case not found');
+
+    const rules = await this.deadlineRuleModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        caseId: new Types.ObjectId(caseId),
+      })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    const views = [];
+    for (const rule of rules) {
+      const triggerDate = await this.resolveTriggerDate(c, rule);
+      views.push(this.computeRuleView(c, rule, triggerDate));
+    }
+    return views;
+  }
+
+  async createDeadlineRule(
+    tenantId: string,
+    caseId: string,
+    dto: CreateAdrDeadlineRuleDto,
+  ) {
+    await this.getRawDoc(tenantId, caseId); // real existence + tenant check
+    const created = await this.deadlineRuleModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      caseId: new Types.ObjectId(caseId),
+      triggerLabel: dto.triggerLabel,
+      triggerSource: dto.triggerSource,
+      triggerSessionIndex: dto.triggerSessionIndex ?? null,
+      cascadeFromRuleId: dto.cascadeFromRuleId
+        ? new Types.ObjectId(dto.cascadeFromRuleId)
+        : null,
+      customTriggerDate: dto.customTriggerDate
+        ? new Date(dto.customTriggerDate)
+        : null,
+      ruleLabel: dto.ruleLabel,
+      windowDays: dto.windowDays,
+    });
+    return created.toObject();
+  }
+
+  async updateDeadlineRule(
+    tenantId: string,
+    caseId: string,
+    ruleId: string,
+    dto: UpdateAdrDeadlineRuleDto,
+  ) {
+    const rule = await this.deadlineRuleModel.findOne({
+      _id: ruleId,
+      tenantId: new Types.ObjectId(tenantId),
+      caseId: new Types.ObjectId(caseId),
+    });
+    if (!rule) throw new NotFoundException('Deadline rule not found');
+
+    if (dto.triggerLabel !== undefined) rule.triggerLabel = dto.triggerLabel;
+    if (dto.triggerSource !== undefined)
+      rule.triggerSource = dto.triggerSource as DeadlineTriggerSource;
+    if (dto.triggerSessionIndex !== undefined)
+      rule.triggerSessionIndex = dto.triggerSessionIndex;
+    if (dto.cascadeFromRuleId !== undefined)
+      rule.cascadeFromRuleId = dto.cascadeFromRuleId
+        ? (new Types.ObjectId(dto.cascadeFromRuleId) as any)
+        : null;
+    if (dto.customTriggerDate !== undefined)
+      rule.customTriggerDate = dto.customTriggerDate
+        ? new Date(dto.customTriggerDate)
+        : null;
+    if (dto.ruleLabel !== undefined) rule.ruleLabel = dto.ruleLabel;
+    if (dto.windowDays !== undefined) rule.windowDays = dto.windowDays;
+    await rule.save();
+    return rule.toObject();
+  }
+
+  async markDeadlineRuleMet(tenantId: string, caseId: string, ruleId: string) {
+    const rule = await this.deadlineRuleModel.findOne({
+      _id: ruleId,
+      tenantId: new Types.ObjectId(tenantId),
+      caseId: new Types.ObjectId(caseId),
+    });
+    if (!rule) throw new NotFoundException('Deadline rule not found');
+    rule.metAt = new Date();
+    await rule.save();
+
+    const c = await this.getRawDoc(tenantId, caseId);
+    this.logTimeline(c, 'Deadline met', rule.ruleLabel);
+    await c.save();
+
+    return rule.toObject();
   }
 
   async getDocuments(tenantId: string, caseId: string) {

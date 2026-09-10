@@ -184,3 +184,57 @@ export class UpdateAdrDraftStatusDto {
 export class CreateAdrFolderDto {
   @ApiProperty() @IsString() name: string;
 }
+
+// ── Deadline rules ───────────────────────────────────────────────
+export class CreateAdrDeadlineRuleDto {
+  @ApiProperty() @IsString() triggerLabel: string;
+  @ApiProperty({
+    enum: ['case_filed', 'session_date', 'settlement', 'cascade', 'custom'],
+  })
+  @IsEnum(['case_filed', 'session_date', 'settlement', 'cascade', 'custom'])
+  triggerSource:
+    | 'case_filed'
+    | 'session_date'
+    | 'settlement'
+    | 'cascade'
+    | 'custom';
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  triggerSessionIndex?: number;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() cascadeFromRuleId?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  customTriggerDate?: string;
+  @ApiProperty() @IsString() ruleLabel: string;
+  @ApiProperty() @IsNumber() @Min(1) windowDays: number;
+}
+
+export class UpdateAdrDeadlineRuleDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() triggerLabel?: string;
+  @ApiPropertyOptional({
+    enum: ['case_filed', 'session_date', 'settlement', 'cascade', 'custom'],
+  })
+  @IsOptional()
+  @IsEnum(['case_filed', 'session_date', 'settlement', 'cascade', 'custom'])
+  triggerSource?:
+    | 'case_filed'
+    | 'session_date'
+    | 'settlement'
+    | 'cascade'
+    | 'custom';
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  triggerSessionIndex?: number;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() cascadeFromRuleId?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  customTriggerDate?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() ruleLabel?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(1) windowDays?: number;
+}

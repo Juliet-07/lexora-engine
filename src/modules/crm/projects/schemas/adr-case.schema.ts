@@ -352,3 +352,49 @@ export class AdrDocumentEntry {
 }
 export const AdrDocumentEntrySchema =
   SchemaFactory.createForClass(AdrDocumentEntry);
+
+// ── Deadline rules — the due date is always computed (trigger date
+// + window), never typed in directly. The trigger date itself is
+// resolved live from real case data at read time, so editing a
+// session's date or a cascade rule's own due date cascades forward
+// automatically — nothing here is a stored snapshot.
+export enum DeadlineTriggerSource {
+  CASE_FILED = 'case_filed',
+  SESSION_DATE = 'session_date',
+  SETTLEMENT = 'settlement',
+  CASCADE = 'cascade',
+  CUSTOM = 'custom',
+}
+
+export type AdrDeadlineRuleDocument = AdrDeadlineRule & Document;
+
+@Schema({ timestamps: true, collection: 'adr_deadline_rules' })
+export class AdrDeadlineRule {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'AdrCase', required: true, index: true })
+  caseId: Types.ObjectId;
+
+  @Prop({ required: true }) triggerLabel: string;
+  @Prop({ enum: DeadlineTriggerSource, required: true })
+  triggerSource: DeadlineTriggerSource;
+  // Only set when triggerSource is SESSION_DATE — which session in
+  // AdrCase.sessions (0-indexed) this rule's trigger tracks.
+  @Prop({ default: null }) triggerSessionIndex: number | null;
+  // Only set when triggerSource is CASCADE — this rule's trigger
+  // date is that other rule's own computed due date.
+  @Prop({ type: Types.ObjectId, default: null })
+  cascadeFromRuleId: Types.ObjectId | null;
+  // Only set when triggerSource is CUSTOM.
+  @Prop({ default: null }) customTriggerDate: Date | null;
+
+  @Prop({ required: true }) ruleLabel: string;
+  @Prop({ required: true, min: 1 }) windowDays: number;
+
+  // Compliance with a deadline isn't something the system can infer
+  // on its own — a real person marks it met, and when.
+  @Prop({ default: null }) metAt: Date | null;
+}
+export const AdrDeadlineRuleSchema =
+  SchemaFactory.createForClass(AdrDeadlineRule);

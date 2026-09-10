@@ -56,6 +56,8 @@ import {
   SaveAdrDraftVersionDto,
   UpdateAdrDraftStatusDto,
   CreateAdrFolderDto,
+  CreateAdrDeadlineRuleDto,
+  UpdateAdrDeadlineRuleDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
@@ -328,6 +330,53 @@ export class AdrCaseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.createFolder(t || u, id, dto.name);
+  }
+
+  // ── Deadline rules ───────────────────────────────────────────
+  @Get(':id/deadline-rules')
+  @ApiOperation({
+    summary: "This case's deadline rules, with live-computed due dates",
+  })
+  getDeadlineRules(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getDeadlineRules(t || u, id);
+  }
+
+  @Post(':id/deadline-rules')
+  @ApiOperation({ summary: 'Add a new deadline rule' })
+  createDeadlineRule(
+    @Param('id') id: string,
+    @Body() dto: CreateAdrDeadlineRuleDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.createDeadlineRule(t || u, id, dto);
+  }
+
+  @Patch(':id/deadline-rules/:ruleId')
+  @ApiOperation({ summary: 'Edit a deadline rule' })
+  updateDeadlineRule(
+    @Param('id') id: string,
+    @Param('ruleId') ruleId: string,
+    @Body() dto: UpdateAdrDeadlineRuleDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateDeadlineRule(t || u, id, ruleId, dto);
+  }
+
+  @Post(':id/deadline-rules/:ruleId/mark-met')
+  @ApiOperation({ summary: 'Mark a deadline rule as met, today' })
+  markDeadlineRuleMet(
+    @Param('id') id: string,
+    @Param('ruleId') ruleId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.markDeadlineRuleMet(t || u, id, ruleId);
   }
 
   @Get(':id/documents')

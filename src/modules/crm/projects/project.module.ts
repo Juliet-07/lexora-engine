@@ -37,6 +37,8 @@ import {
   AdrCaseDraftSchema,
   AdrDocumentEntry,
   AdrDocumentEntrySchema,
+  AdrDeadlineRule,
+  AdrDeadlineRuleSchema,
   LitigationCase,
   LitigationCaseSchema,
   PortfolioRisk,
@@ -120,6 +122,7 @@ import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
       { name: AdrCaseMessage.name, schema: AdrCaseMessageSchema },
       { name: AdrCaseDraft.name, schema: AdrCaseDraftSchema },
       { name: AdrDocumentEntry.name, schema: AdrDocumentEntrySchema },
+      { name: AdrDeadlineRule.name, schema: AdrDeadlineRuleSchema },
       {
         name: PlatformContractTemplate.name,
         schema: PlatformContractTemplateSchema,
