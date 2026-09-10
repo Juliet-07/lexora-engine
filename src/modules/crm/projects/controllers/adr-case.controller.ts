@@ -58,6 +58,8 @@ import {
   CreateAdrFolderDto,
   CreateAdrDeadlineRuleDto,
   UpdateAdrDeadlineRuleDto,
+  RecordAdrClosureDto,
+  LinkAdrSettlementDeedDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
@@ -183,6 +185,34 @@ export class AdrCaseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.recordSettlement(t || u, id, dto);
+  }
+
+  @Post(':id/settlement/deed')
+  @ApiOperation({
+    summary:
+      "Link a real document from this case's Documents as the settlement deed",
+  })
+  linkSettlementDeed(
+    @Param('id') id: string,
+    @Body() dto: LinkAdrSettlementDeedDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.linkSettlementDeed(t || u, id, dto);
+  }
+
+  @Post(':id/closure')
+  @ApiOperation({
+    summary:
+      'Record real closure details — client satisfaction, lessons learned, precedent value',
+  })
+  recordClosure(
+    @Param('id') id: string,
+    @Body() dto: RecordAdrClosureDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.recordClosure(t || u, id, dto);
   }
 
   @Post(':id/outcome')

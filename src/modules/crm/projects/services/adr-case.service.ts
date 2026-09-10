@@ -45,6 +45,8 @@ import {
   UpdateAdrDraftStatusDto,
   CreateAdrDeadlineRuleDto,
   UpdateAdrDeadlineRuleDto,
+  RecordAdrClosureDto,
+  LinkAdrSettlementDeedDto,
 } from '../dtos';
 import { MandateService } from './mandate.service';
 import { TimeEntryService } from './time-entry.service';
@@ -1081,6 +1083,7 @@ export class AdrCaseService {
       amount: dto.amount,
       date: new Date(),
       terms: dto.terms ?? '',
+      deedDocumentId: null,
     } as any;
     c.stage = 'Resolution' as any;
     c.status = AdrCaseStatus.RESOLVED;
@@ -1089,6 +1092,58 @@ export class AdrCaseService {
       'Settlement reached',
       `Settled at ${dto.amount} ${c.currency}.${dto.terms ? ` ${dto.terms}` : ''}`,
     );
+    await c.save();
+    return c.toObject();
+  }
+
+  async linkSettlementDeed(
+    tenantId: string,
+    id: string,
+    dto: LinkAdrSettlementDeedDto,
+  ) {
+    const c = await this.getRawDoc(tenantId, id);
+    if (!c.settlement) {
+      throw new NotFoundException(
+        'Record a settlement before linking its deed',
+      );
+    }
+    // Real check — the document must genuinely be filed on this
+    // case, not any document id in the system.
+    const doc = await this.documentModel.findOne({
+      _id: dto.documentId,
+      tenantId: new Types.ObjectId(tenantId),
+      caseId: new Types.ObjectId(id),
+    });
+    if (!doc) {
+      throw new NotFoundException(
+        "That document isn't filed on this case's Documents tab",
+      );
+    }
+    c.settlement.deedDocumentId = new Types.ObjectId(dto.documentId) as any;
+    this.logTimeline(c, 'Settlement deed linked', doc.name);
+    await c.save();
+    return c.toObject();
+  }
+
+  async recordClosure(tenantId: string, id: string, dto: RecordAdrClosureDto) {
+    const c = await this.getRawDoc(tenantId, id);
+    if (c.status === AdrCaseStatus.ACTIVE) {
+      throw new NotFoundException(
+        'Closure details can only be recorded once the case has ended',
+      );
+    }
+    c.closure = {
+      clientSatisfaction:
+        dto.clientSatisfaction ?? c.closure?.clientSatisfaction ?? '',
+      clientSatisfactionNotes:
+        dto.clientSatisfactionNotes ?? c.closure?.clientSatisfactionNotes ?? '',
+      lessonsLearned: dto.lessonsLearned ?? c.closure?.lessonsLearned ?? '',
+      precedentValue: dto.precedentValue ?? c.closure?.precedentValue ?? false,
+      precedentNotes: dto.precedentNotes ?? c.closure?.precedentNotes ?? '',
+      recordedBy: 'You',
+      recordedAt: new Date(),
+    } as any;
+    this.logTimeline(c, 'Closure details recorded', '');
     await c.save();
     return c.toObject();
   }

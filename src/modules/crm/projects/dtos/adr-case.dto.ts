@@ -238,3 +238,22 @@ export class UpdateAdrDeadlineRuleDto {
   @ApiPropertyOptional() @IsOptional() @IsString() ruleLabel?: string;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(1) windowDays?: number;
 }
+
+// ── Closure ──────────────────────────────────────────────────────
+export class RecordAdrClosureDto {
+  @ApiPropertyOptional({ enum: ['', 'Excellent', 'Good', 'Fair', 'Poor'] })
+  @IsOptional()
+  @IsEnum(['', 'Excellent', 'Good', 'Fair', 'Poor'])
+  clientSatisfaction?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  clientSatisfactionNotes?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() lessonsLearned?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() precedentValue?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() precedentNotes?: string;
+}
+
+export class LinkAdrSettlementDeedDto {
+  @ApiProperty() @IsMongoId() documentId: string;
+}

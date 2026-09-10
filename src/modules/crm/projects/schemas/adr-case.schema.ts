@@ -115,8 +115,30 @@ export class AdrSettlement {
   @Prop({ required: true }) amount: number;
   @Prop({ required: true }) date: Date;
   @Prop({ default: '' }) terms: string;
+  // Real link to a document actually filed in this case's Documents
+  // tab — not a static label. Null until the tenant links one.
+  @Prop({ type: Types.ObjectId, ref: 'AdrDocumentEntry', default: null })
+  deedDocumentId: Types.ObjectId | null;
 }
 export const AdrSettlementSchema = SchemaFactory.createForClass(AdrSettlement);
+
+// Real closure fields — recorded by a person once the case actually
+// ends, not placeholder text that never changes. Distinct from the
+// settlement/outcome data itself, since a case can close via
+// settlement, escalation, or withdrawal and these apply regardless.
+@Schema({ _id: false })
+export class AdrClosureDetails {
+  @Prop({ enum: ['', 'Excellent', 'Good', 'Fair', 'Poor'], default: '' })
+  clientSatisfaction: string;
+  @Prop({ default: '' }) clientSatisfactionNotes: string;
+  @Prop({ default: '' }) lessonsLearned: string;
+  @Prop({ default: false }) precedentValue: boolean;
+  @Prop({ default: '' }) precedentNotes: string;
+  @Prop({ default: '' }) recordedBy: string;
+  @Prop({ default: null }) recordedAt: Date | null;
+}
+export const AdrClosureDetailsSchema =
+  SchemaFactory.createForClass(AdrClosureDetails);
 
 // The real dependency-tracking mechanism the product owner asked
 // for — every meaningful transition (stage change, session added,
@@ -250,6 +272,9 @@ export class AdrCase {
   // folder merely inferred from documents.folder values couldn't do.
   @Prop({ type: [String], default: ['General'] })
   folders: string[];
+
+  @Prop({ type: AdrClosureDetailsSchema, default: null })
+  closure: AdrClosureDetails | null;
 }
 export const AdrCaseSchema = SchemaFactory.createForClass(AdrCase);
 
