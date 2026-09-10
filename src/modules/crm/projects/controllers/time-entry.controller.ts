@@ -137,4 +137,17 @@ export class TimeEntryController {
   ) {
     return this.service.reject(t || u, id, dto);
   }
+
+  @Post(':id/approve-for-billing')
+  @ApiOperation({
+    summary:
+      'Approved → moved into the billable WIP register, ready to invoice',
+  })
+  approveForBilling(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.approveForBilling(t || u, id);
+  }
 }

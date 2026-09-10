@@ -179,6 +179,61 @@ export class MyProjectsController {
   ) {
     return this.service.submitMyTimeEntry(t || u, u, id);
   }
+
+  // ── My Cases — ADR only for now ─────────────────────────────
+  @Get('my-cases')
+  @ApiOperation({
+    summary:
+      "ADR cases the caller is involved in — every case for a tenant-type caller, or the employee's own team's cases for a genuine employee",
+  })
+  getMyCases(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    return this.service.getMyCases(t || u, u, userType);
+  }
+
+  @Get('my-cases/:id')
+  @ApiOperation({ summary: 'One case — team-gated for a genuine employee' })
+  getMyCaseDetail(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    return this.service.getMyCaseDetail(t || u, u, id, userType);
+  }
+
+  @Post('my-cases/:id/time')
+  @ApiOperation({ summary: 'Log billable time against this case' })
+  logMyCaseTime(
+    @Param('id') id: string,
+    @Body()
+    dto: {
+      narrative?: string;
+      date: string;
+      hours: number;
+      billable?: boolean;
+    },
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.logMyCaseTime(t || u, u, { caseId: id, ...dto });
+  }
+
+  @Post('my-cases/:id/call')
+  @ApiOperation({
+    summary: "Log a call to this case's timeline — not billable time",
+  })
+  logMyCaseCall(
+    @Param('id') id: string,
+    @Body() dto: { summary: string },
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.logMyCaseCall(t || u, u, id, dto);
+  }
 }
 
 @ApiTags('CRM — Employee Projects Controllers')

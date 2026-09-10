@@ -40,9 +40,13 @@ export class CreateTimeEntryDto {
 // already has the authorized mandate in hand when this runs, so it
 // fills that in rather than asking the caller to supply it twice).
 export class CreateMyTimeEntryDto {
-  @ApiProperty() @IsMongoId() mandateId: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() taskId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() taskTitle?: string;
+  // Set when logging time directly against an ADR/litigation case —
+  // at most one of these two should be set alongside mandateId.
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() adrCaseId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() litigationCaseId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() narrative?: string;
   @ApiProperty() @IsDateString() date: string;
   @ApiProperty() @IsNumber() @Min(0.01) hours: number;
