@@ -242,4 +242,22 @@ export class ClientNotificationService {
       '/cases',
     );
   }
+
+  @OnEvent('client.case.message')
+  async onCaseMessage(e: {
+    tenantId: string;
+    clientUserId: string;
+    caseType: 'ADR' | 'Litigation';
+    caseTitle: string;
+    caseRef: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.clientUserId,
+      ClientNotificationType.CASE,
+      `New message — ${e.caseRef}`,
+      e.caseTitle,
+      '/cases',
+    );
+  }
 }

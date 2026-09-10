@@ -11,6 +11,9 @@ import {
   AdrCaseStatus,
   AdrSessionStatus,
   AdrTimelineSource,
+  AdrCaseMessage,
+  AdrCaseMessageDocument,
+  MessageDirection,
 } from '../schemas';
 import {
   CreateAdrCaseDto,
@@ -27,6 +30,8 @@ import {
   SetAdrChecklistItemDoneDto,
   AddAdrDisbursementDto,
   EscalateToLitigationDto,
+  SendAdrPartyEmailDto,
+  CreateMessageDto,
 } from '../dtos';
 import { MandateService } from './mandate.service';
 import { TimeEntryService } from './time-entry.service';
@@ -43,6 +48,8 @@ export class AdrCaseService {
     private readonly model: Model<AdrCaseDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    @InjectModel(AdrCaseMessage.name)
+    private readonly messageModel: Model<AdrCaseMessageDocument>,
     private readonly mandateService: MandateService,
     private readonly timeEntryService: TimeEntryService,
     private readonly litigationCaseService: LitigationCaseService,
@@ -346,6 +353,134 @@ export class AdrCaseService {
       caseTitle: createdCase.title,
       caseRef: createdCase.ref,
     });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // COMMUNICATION — two real, separate channels. A tenant↔client
+  // thread (same shape as MandateMessage, visible in the portal),
+  // and ad-hoc outbound emails to case parties (who frequently
+  // aren't the mandate's own client and may have no portal account
+  // at all) — logged to the timeline, not a two-way conversation.
+  // ═══════════════════════════════════════════════════════════
+
+  async getMessages(tenantId: string, caseId: string) {
+    return this.messageModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        caseId: new Types.ObjectId(caseId),
+      })
+      .sort({ createdAt: 1 })
+      .lean();
+  }
+
+  async addMessage(
+    tenantId: string,
+    caseId: string,
+    direction: MessageDirection,
+    dto: CreateMessageDto,
+  ) {
+    const created = await this.messageModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      caseId: new Types.ObjectId(caseId),
+      direction,
+      author: dto.author,
+      body: dto.body,
+    });
+
+    const c = await this.model.findById(caseId).lean();
+    if (!c) return created.toObject();
+
+    if (direction === MessageDirection.TENANT && c.mandateId) {
+      const mandate: any = await this.mandateService
+        .getById(tenantId, String(c.mandateId))
+        .catch(() => null);
+      if (mandate?.clientUserId) {
+        const client = await this.userModel
+          .findById(mandate.clientUserId)
+          .select('email firstName')
+          .lean();
+        if (client?.email) {
+          const tenant = await this.userModel
+            .findById(tenantId)
+            .select('tenantProfile.businessName')
+            .lean();
+          await this.emailService.sendCaseNotice({
+            to: client.email,
+            firstName: client.firstName,
+            tenantBusinessName:
+              (tenant as any)?.tenantProfile?.businessName || 'Your Provider',
+            caseType: 'ADR',
+            caseTitle: c.title,
+            caseRef: c.ref,
+            mandateName: c.mandateName,
+            loginUrl: `${process.env.CLIENT_APP_URL}/login`,
+          });
+        }
+        this.eventEmitter.emit('client.case.message', {
+          tenantId,
+          clientUserId: String(mandate.clientUserId),
+          caseType: 'ADR',
+          caseTitle: c.title,
+          caseRef: c.ref,
+        });
+      }
+    }
+
+    if (direction === MessageDirection.CLIENT) {
+      this.eventEmitter.emit('tenant.case.client_replied', {
+        tenantId,
+        caseId,
+        caseType: 'ADR',
+        caseTitle: c.title,
+        caseRef: c.ref,
+      });
+    }
+
+    return created.toObject();
+  }
+
+  async sendPartyEmail(
+    tenantId: string,
+    caseId: string,
+    dto: SendAdrPartyEmailDto,
+  ) {
+    const c = await this.getRawDoc(tenantId, caseId);
+    const targets = c.parties.filter(
+      (p: any) => dto.partyIds.includes(String(p._id)) && p.email,
+    );
+    if (!targets.length) {
+      throw new NotFoundException(
+        'None of the selected parties have an email on file',
+      );
+    }
+
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.businessName')
+      .lean();
+    const tenantBusinessName =
+      (tenant as any)?.tenantProfile?.businessName || 'Your Provider';
+
+    for (const party of targets) {
+      await this.emailService.sendPartyCommunication({
+        to: party.email,
+        partyName: party.name,
+        tenantBusinessName,
+        caseRef: c.ref,
+        subject: dto.subject,
+        body: dto.body,
+      });
+    }
+
+    c.timeline.push({
+      at: new Date(),
+      title: `Email sent to ${targets.map((p) => p.name).join(', ')}`,
+      description: dto.subject,
+      source: AdrTimelineSource.SYSTEM,
+    } as any);
+    await c.save();
+
+    return { success: true, sentTo: targets.map((p) => p.name) };
   }
 
   async updateDetails(

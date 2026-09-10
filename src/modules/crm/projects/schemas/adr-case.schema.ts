@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import { MessageDirection } from './mandate-workspace.schema';
 
 export type AdrCaseDocument = AdrCase & Document;
 
@@ -245,3 +246,24 @@ export class AdrCase {
   litigationCaseId: Types.ObjectId | null;
 }
 export const AdrCaseSchema = SchemaFactory.createForClass(AdrCase);
+
+// Real tenant↔client thread scoped to one case — same shape as
+// MandateMessage, since a case's client communication is the same
+// kind of thing as a mandate's, just scoped one level down.
+export type AdrCaseMessageDocument = AdrCaseMessage & Document;
+
+@Schema({ timestamps: true, collection: 'adr_case_messages' })
+export class AdrCaseMessage {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'AdrCase', required: true, index: true })
+  caseId: Types.ObjectId;
+
+  @Prop({ enum: MessageDirection, required: true })
+  direction: MessageDirection;
+  @Prop({ required: true }) author: string;
+  @Prop({ required: true }) body: string;
+}
+export const AdrCaseMessageSchema =
+  SchemaFactory.createForClass(AdrCaseMessage);

@@ -149,3 +149,18 @@ export class AddAdrDisbursementDto {
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() date?: string;
 }
+
+// Real, ad-hoc outbound email to one or more case parties — distinct
+// from the tenant↔client thread above, since parties frequently
+// aren't the mandate's own client and may have no portal account at
+// all. Logged to the case timeline as a real record of what was
+// sent, to whom, and when — not a two-way conversation.
+export class SendAdrPartyEmailDto {
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  partyIds: string[];
+
+  @ApiProperty() @IsString() subject: string;
+  @ApiProperty() @IsString() body: string;
+}

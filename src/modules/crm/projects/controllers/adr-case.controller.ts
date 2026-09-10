@@ -2,6 +2,7 @@ import { Controller, Get, Post, Patch, Body, Param, Res } from '@nestjs/common';
 import { Response } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AdrCaseService } from '../services';
+import { MessageDirection } from '../schemas';
 import {
   CreateAdrCaseDto,
   UpdateAdrCaseDetailsDto,
@@ -17,6 +18,8 @@ import {
   SetAdrChecklistItemDoneDto,
   AddAdrDisbursementDto,
   EscalateToLitigationDto,
+  SendAdrPartyEmailDto,
+  CreateMessageDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
@@ -178,6 +181,41 @@ export class AdrCaseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.withdraw(t || u, id, dto);
+  }
+
+  // ── Communication ────────────────────────────────────────────
+  @Get(':id/messages')
+  @ApiOperation({ summary: 'The tenant↔client message thread for this case' })
+  getMessages(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getMessages(t || u, id);
+  }
+
+  @Post(':id/messages')
+  @ApiOperation({ summary: "Send a message to the case mandate's client" })
+  sendMessage(
+    @Param('id') id: string,
+    @Body() dto: CreateMessageDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addMessage(t || u, id, MessageDirection.TENANT, dto);
+  }
+
+  @Post(':id/party-email')
+  @ApiOperation({
+    summary: 'Send an ad-hoc email to one or more case parties',
+  })
+  sendPartyEmail(
+    @Param('id') id: string,
+    @Body() dto: SendAdrPartyEmailDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.sendPartyEmail(t || u, id, dto);
   }
 
   @Post(':id/timeline')

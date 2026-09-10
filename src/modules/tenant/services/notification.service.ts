@@ -310,6 +310,24 @@ export class TenantNotificationService {
     );
   }
 
+  @OnEvent('tenant.case.client_replied')
+  async onCaseClientReplied(e: {
+    tenantId: string;
+    caseId: string;
+    caseType: 'ADR' | 'Litigation';
+    caseTitle: string;
+    caseRef: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.tenantId,
+      TenantNotificationType.TICKET,
+      `Client replied — ${e.caseRef}`,
+      `New message on "${e.caseTitle}".`,
+      `/crm/${e.caseType.toLowerCase()}?case=${e.caseId}`,
+    );
+  }
+
   @OnEvent('tenant.sla.threshold_crossed')
   async onSlaThresholdCrossed(e: {
     tenantId: string;

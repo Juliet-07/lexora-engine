@@ -1,4 +1,4 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ClientCaseService } from '../services';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
@@ -35,5 +35,26 @@ export class ClientCaseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.getMyCase(t || u, u, type, id);
+  }
+
+  @Get('adr/:id/messages')
+  @ApiOperation({ summary: "This case's message thread with the firm" })
+  getMessages(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getMessages(t || u, u, id);
+  }
+
+  @Post('adr/:id/messages')
+  @ApiOperation({ summary: 'Reply to the firm on this case' })
+  sendMessage(
+    @Param('id') id: string,
+    @Body() dto: { author: string; body: string },
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.sendMessage(t || u, u, id, dto);
   }
 }

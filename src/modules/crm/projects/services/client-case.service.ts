@@ -1,11 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Mandate,
   MandateDocument_,
   AdrCase,
   AdrCaseDocument,
+  AdrCaseMessage,
+  AdrCaseMessageDocument,
+  MessageDirection,
   LitigationCase,
   LitigationCaseDocument,
 } from '../schemas';
@@ -22,8 +26,11 @@ export class ClientCaseService {
     private readonly mandateModel: Model<MandateDocument_>,
     @InjectModel(AdrCase.name)
     private readonly adrModel: Model<AdrCaseDocument>,
+    @InjectModel(AdrCaseMessage.name)
+    private readonly messageModel: Model<AdrCaseMessageDocument>,
     @InjectModel(LitigationCase.name)
     private readonly litigationModel: Model<LitigationCaseDocument>,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private stripInternal(c: any) {
@@ -95,5 +102,61 @@ export class ClientCaseService {
       ...this.stripInternal(c),
       caseType: caseType === 'adr' ? ('ADR' as const) : ('Litigation' as const),
     };
+  }
+
+  // ── Communication — ADR only for now; litigation messaging is a
+  // later phase of this build. ──
+  private async assertOwnsAdrCase(
+    tenantId: string,
+    clientUserId: string,
+    caseId: string,
+  ) {
+    const mandateIds = await this.myMandateIds(tenantId, clientUserId);
+    const c = await this.adrModel
+      .findOne({
+        _id: caseId,
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: { $in: mandateIds },
+      })
+      .lean();
+    if (!c) throw new NotFoundException('Case not found');
+    return c;
+  }
+
+  async getMessages(tenantId: string, clientUserId: string, caseId: string) {
+    await this.assertOwnsAdrCase(tenantId, clientUserId, caseId);
+    return this.messageModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        caseId: new Types.ObjectId(caseId),
+      })
+      .sort({ createdAt: 1 })
+      .lean();
+  }
+
+  async sendMessage(
+    tenantId: string,
+    clientUserId: string,
+    caseId: string,
+    dto: { author: string; body: string },
+  ) {
+    const c = await this.assertOwnsAdrCase(tenantId, clientUserId, caseId);
+    const created = await this.messageModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      caseId: new Types.ObjectId(caseId),
+      direction: MessageDirection.CLIENT,
+      author: dto.author,
+      body: dto.body,
+    });
+
+    this.eventEmitter.emit('tenant.case.client_replied', {
+      tenantId,
+      caseId,
+      caseType: 'ADR',
+      caseTitle: c.title,
+      caseRef: c.ref,
+    });
+
+    return created.toObject();
   }
 }
