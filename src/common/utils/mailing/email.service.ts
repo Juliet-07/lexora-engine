@@ -37,6 +37,10 @@ import {
   caseNoticeTemplate,
 } from './templates/case-notice.template';
 import {
+  PartyCaseNoticeEmailData,
+  partyCaseNoticeTemplate,
+} from './templates/party-case-notice.template';
+import {
   ClientApprovalData,
   clientApprovalTemplate,
 } from './templates/client-approval.template';
@@ -342,6 +346,16 @@ export class EmailService {
 
   async sendCaseNotice(data: CaseNoticeEmailData): Promise<void> {
     const { subject, html } = caseNoticeTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendPartyCaseNotice(data: PartyCaseNoticeEmailData): Promise<void> {
+    const { subject, html } = partyCaseNoticeTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

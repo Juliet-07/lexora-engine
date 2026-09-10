@@ -244,6 +244,7 @@ export class AdrCaseService {
         name: p.name,
         role: p.role,
         organisation: p.organisation ?? '',
+        email: p.email ?? '',
         userId: p.userId ? new Types.ObjectId(p.userId) : null,
       })),
       neutralUserId: dto.neutralUserId
@@ -280,6 +281,29 @@ export class AdrCaseService {
         String(mandate.clientUserId),
         created.toObject(),
       );
+    }
+
+    // Real party notification — independent of any mandate link,
+    // since a case's parties (the other side, outside counsel, a
+    // neutral) are frequently not the mandate's own client at all.
+    // Every party with an email on file gets notified directly.
+    const tenantForParties = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.businessName')
+      .lean();
+    const tenantBusinessName =
+      (tenantForParties as any)?.tenantProfile?.businessName || 'Your Provider';
+    for (const party of created.parties) {
+      if (!party.email) continue;
+      await this.emailService.sendPartyCaseNotice({
+        to: party.email,
+        partyName: party.name,
+        tenantBusinessName,
+        caseTitle: created.title,
+        caseRef: created.ref,
+        partyRole: party.role,
+        caseType: 'ADR',
+      });
     }
 
     return created.toObject();

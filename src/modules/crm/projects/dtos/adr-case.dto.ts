@@ -8,6 +8,7 @@ import {
   IsDateString,
   IsMongoId,
   IsBoolean,
+  IsEmail,
   ValidateNested,
   Min,
 } from 'class-validator';
@@ -25,6 +26,7 @@ export class AdrPartyDto {
   @ApiProperty() @IsString() name: string;
   @ApiProperty({ enum: AdrPartyRole }) @IsEnum(AdrPartyRole) role: AdrPartyRole;
   @ApiPropertyOptional() @IsOptional() @IsString() organisation?: string;
+  @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() userId?: string;
 }
 

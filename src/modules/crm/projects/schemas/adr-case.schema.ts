@@ -80,6 +80,10 @@ export class AdrParty {
   @Prop({ required: true, trim: true }) name: string;
   @Prop({ enum: AdrPartyRole, required: true }) role: AdrPartyRole;
   @Prop({ default: '' }) organisation: string;
+  // Real contact point for a party who may never be a mandate's
+  // client and may never have a platform account at all — filing
+  // notifications go here directly, independent of any mandate link.
+  @Prop({ default: '' }) email: string;
   // Set when the party is a real employee (e.g. counsel/lead) —
   // left null for external parties (the other side, an outside
   // neutral) who aren't platform users at all.
