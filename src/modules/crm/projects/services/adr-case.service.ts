@@ -240,6 +240,8 @@ export class AdrCaseService {
       type: dto.type,
       mandateId: dto.mandateId ? new Types.ObjectId(dto.mandateId) : null,
       mandateName,
+      teamId: dto.teamId ? new Types.ObjectId(dto.teamId) : null,
+      teamName: dto.teamName ?? '',
       parties: (dto.parties ?? []).map((p) => ({
         name: p.name,
         role: p.role,
@@ -362,11 +364,15 @@ export class AdrCaseService {
     if (dto.adrClause !== undefined) c.adrClause = dto.adrClause;
     if (dto.escalationPath !== undefined) c.escalationPath = dto.escalationPath;
     if (dto.claimValue !== undefined) c.claimValue = dto.claimValue;
+    if (dto.teamId !== undefined)
+      c.teamId = dto.teamId ? (new Types.ObjectId(dto.teamId) as any) : null;
+    if (dto.teamName !== undefined) c.teamName = dto.teamName;
     if (dto.parties) {
       c.parties = dto.parties.map((p) => ({
         name: p.name,
         role: p.role,
         organisation: p.organisation ?? '',
+        email: p.email ?? '',
         userId: p.userId ? new Types.ObjectId(p.userId) : null,
       })) as any;
     }

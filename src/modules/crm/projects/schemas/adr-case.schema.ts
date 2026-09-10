@@ -186,6 +186,13 @@ export class AdrCase {
   mandateId: Types.ObjectId | null;
   @Prop({ default: '' }) mandateName: string;
 
+  // Real HR team assigned to handle this case — the anchor for the
+  // internal side of case communication, matching the same pattern
+  // already proven on Mandate.
+  @Prop({ type: Types.ObjectId, ref: 'HrTeam', default: null })
+  teamId: Types.ObjectId | null;
+  @Prop({ default: '' }) teamName: string;
+
   @Prop({ type: [AdrPartySchema], default: [] }) parties: AdrParty[];
 
   // A neutral is nearly always a real employee for arbitration

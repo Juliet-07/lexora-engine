@@ -44,6 +44,8 @@ export class CreateAdrCaseDto {
   @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() neutralUserId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() neutral?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() teamId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() teamName?: string;
 
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) claimValue?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
@@ -59,6 +61,8 @@ export class CreateAdrCaseDto {
 
 export class UpdateAdrCaseDetailsDto {
   @ApiPropertyOptional() @IsOptional() @IsString() category?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() teamId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() teamName?: string;
   @ApiPropertyOptional() @IsOptional() @IsNumber() settlementTargetMin?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() settlementTargetMax?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() venue?: string;
