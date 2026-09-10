@@ -379,6 +379,25 @@ export class AdrCaseController {
     return this.service.markDeadlineRuleMet(t || u, id, ruleId);
   }
 
+  // ── Audit trail ───────────────────────────────────────────────
+  @Get(':id/audit-trail/export')
+  @ApiOperation({
+    summary: "This case's full audit trail as a PDF, house style",
+  })
+  async exportAuditTrailPdf(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.service.exportAuditTrailPdf(t || u, id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="audit-trail-${id}-${new Date().toISOString().split('T')[0]}.pdf"`,
+    });
+    res.send(buffer);
+  }
+
   @Get(':id/documents')
   @ApiOperation({ summary: 'All documents filed on this case' })
   getDocuments(

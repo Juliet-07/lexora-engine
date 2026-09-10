@@ -819,6 +819,51 @@ export class AdrCaseService {
     return rule.toObject();
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // AUDIT TRAIL — the case's real timeline, which already records
+  // every meaningful event on the case (filing, sessions, stage
+  // moves, settlement, party emails, drafts finalised, deadlines
+  // met). Not a separate log — the same record shown elsewhere,
+  // exported as a real, house-style PDF.
+  // ═══════════════════════════════════════════════════════════
+
+  async exportAuditTrailPdf(tenantId: string, caseId: string): Promise<Buffer> {
+    const c = await this.model
+      .findOne({ _id: caseId, tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+    if (!c) throw new NotFoundException('Case not found');
+
+    const entries = [...c.timeline].sort(
+      (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime(),
+    );
+
+    return buildReportPdf({
+      title: `Audit Trail — ${c.title}`,
+      subtitle: `${c.ref} · CRM · Alternative Dispute Resolution`,
+      summary: [
+        { label: 'Case reference', value: c.ref },
+        { label: 'Type', value: c.type },
+        { label: 'Stage', value: c.stage },
+        { label: 'Status', value: c.status },
+        { label: 'Filed on', value: new Date(c.filedOn).toLocaleDateString() },
+        { label: 'Total events', value: entries.length },
+      ],
+      sections: [
+        {
+          heading: 'Event log',
+          columns: ['Date & time', 'Event', 'Detail', 'Source'],
+          rows: entries.map((e) => [
+            new Date(e.at).toLocaleString(),
+            e.title,
+            e.description || '—',
+            e.source,
+          ]),
+          note: 'A complete, chronological record of every recorded event on this case.',
+        },
+      ],
+    });
+  }
+
   async getDocuments(tenantId: string, caseId: string) {
     return this.documentModel
       .find({
