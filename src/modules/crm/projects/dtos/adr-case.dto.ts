@@ -164,3 +164,19 @@ export class SendAdrPartyEmailDto {
   @ApiProperty() @IsString() subject: string;
   @ApiProperty() @IsString() body: string;
 }
+
+// ── Drafting ──────────────────────────────────────────────────
+export class CreateAdrDraftDto {
+  @ApiProperty() @IsString() title: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() templateId?: string;
+}
+
+export class SaveAdrDraftVersionDto {
+  @ApiProperty() @IsString() content: string;
+}
+
+export class UpdateAdrDraftStatusDto {
+  @ApiProperty({ enum: ['Draft', 'In review', 'Final'] })
+  @IsEnum(['Draft', 'In review', 'Final'])
+  status: 'Draft' | 'In review' | 'Final';
+}

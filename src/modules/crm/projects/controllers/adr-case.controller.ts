@@ -1,8 +1,40 @@
-import { Controller, Get, Post, Patch, Body, Param, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  Param,
+  Res,
+  Query,
+  UseInterceptors,
+  UploadedFile,
+} from '@nestjs/common';
 import { Response } from 'express';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { existsSync, mkdirSync } from 'fs';
+import { join, extname } from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiConsumes,
+} from '@nestjs/swagger';
 import { AdrCaseService } from '../services';
 import { MessageDirection } from '../schemas';
+
+const documentStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const p = join(process.cwd(), 'uploads', 'crm', 'adr-cases');
+    if (!existsSync(p)) mkdirSync(p, { recursive: true });
+    cb(null, p);
+  },
+  filename: (_req, file, cb) =>
+    cb(null, `${uuidv4()}${extname(file.originalname)}`),
+});
+
 import {
   CreateAdrCaseDto,
   UpdateAdrCaseDetailsDto,
@@ -20,6 +52,9 @@ import {
   EscalateToLitigationDto,
   SendAdrPartyEmailDto,
   CreateMessageDto,
+  CreateAdrDraftDto,
+  SaveAdrDraftVersionDto,
+  UpdateAdrDraftStatusDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
@@ -216,6 +251,84 @@ export class AdrCaseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.sendPartyEmail(t || u, id, dto);
+  }
+
+  // ── Drafting ──────────────────────────────────────────────────
+  @Get(':id/drafts')
+  @ApiOperation({ summary: 'All drafts for this case' })
+  getDrafts(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getDrafts(t || u, id);
+  }
+
+  @Post(':id/drafts')
+  @ApiOperation({
+    summary: 'Start a new draft — from a real platform template, or blank',
+  })
+  createDraft(
+    @Param('id') id: string,
+    @Body() dto: CreateAdrDraftDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.createDraft(t || u, id, dto);
+  }
+
+  @Patch(':id/drafts/:draftId')
+  @ApiOperation({
+    summary: 'Save a new version of the draft content',
+  })
+  saveDraftVersion(
+    @Param('id') id: string,
+    @Param('draftId') draftId: string,
+    @Body() dto: SaveAdrDraftVersionDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.saveDraftVersion(t || u, id, draftId, 'You', dto);
+  }
+
+  @Patch(':id/drafts/:draftId/status')
+  @ApiOperation({
+    summary:
+      'Move a draft through Draft → In review → Final. Final files a real document.',
+  })
+  updateDraftStatus(
+    @Param('id') id: string,
+    @Param('draftId') draftId: string,
+    @Body() dto: UpdateAdrDraftStatusDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateDraftStatus(t || u, id, draftId, dto);
+  }
+
+  // ── Documents ─────────────────────────────────────────────────
+  @Get(':id/documents')
+  @ApiOperation({ summary: 'All documents filed on this case' })
+  getDocuments(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getDocuments(t || u, id);
+  }
+
+  @Post(':id/documents')
+  @UseInterceptors(FileInterceptor('file', { storage: documentStorage }))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload a document into a folder' })
+  uploadDocument(
+    @Param('id') id: string,
+    @Query('folder') folder: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.uploadDocument(t || u, id, folder, 'You', file);
   }
 
   @Post(':id/timeline')

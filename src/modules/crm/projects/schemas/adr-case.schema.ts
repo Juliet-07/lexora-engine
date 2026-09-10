@@ -267,3 +267,82 @@ export class AdrCaseMessage {
 }
 export const AdrCaseMessageSchema =
   SchemaFactory.createForClass(AdrCaseMessage);
+
+// ── Drafting — real templates, real rich-text editing, real
+// version history. Each save snapshots the previous content into
+// versions before overwriting, so nothing is ever silently lost.
+export enum AdrDraftStatus {
+  DRAFT = 'Draft',
+  IN_REVIEW = 'In review',
+  FINAL = 'Final',
+}
+
+@Schema({ _id: true })
+export class AdrDraftVersion {
+  @Prop({ required: true }) versionNumber: number;
+  @Prop({ required: true }) content: string;
+  @Prop({ required: true }) savedBy: string;
+  @Prop({ required: true, default: () => new Date() }) savedAt: Date;
+}
+export const AdrDraftVersionSchema =
+  SchemaFactory.createForClass(AdrDraftVersion);
+
+export type AdrCaseDraftDocument = AdrCaseDraft & Document;
+
+@Schema({ timestamps: true, collection: 'adr_case_drafts' })
+export class AdrCaseDraft {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'AdrCase', required: true, index: true })
+  caseId: Types.ObjectId;
+
+  @Prop({ required: true }) title: string;
+  @Prop({ required: true, default: '' }) content: string;
+  @Prop({ enum: AdrDraftStatus, default: AdrDraftStatus.DRAFT })
+  status: AdrDraftStatus;
+
+  // Real provenance — which platform template this started from, if
+  // any. Null for a blank draft.
+  @Prop({ default: '' }) sourceTemplateId: string;
+  @Prop({ default: '' }) sourceTemplateTitle: string;
+
+  @Prop({ type: [AdrDraftVersionSchema], default: [] })
+  versions: AdrDraftVersion[];
+  @Prop({ default: 1 }) currentVersion: number;
+
+  // Set once this draft is finalised and a real document is filed
+  // for it — a draft can only ever produce one document.
+  @Prop({ type: Types.ObjectId, ref: 'AdrDocumentEntry', default: null })
+  documentId: Types.ObjectId | null;
+}
+export const AdrCaseDraftSchema = SchemaFactory.createForClass(AdrCaseDraft);
+
+// ── Documents — folder-organised, matching the same
+// authored/uploaded distinction already used for contract templates:
+// content for something drafted on the platform, fileUrl for
+// something actually uploaded.
+export type AdrDocumentEntryDocument = AdrDocumentEntry & Document;
+
+@Schema({ timestamps: true, collection: 'adr_case_documents' })
+export class AdrDocumentEntry {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'AdrCase', required: true, index: true })
+  caseId: Types.ObjectId;
+
+  @Prop({ required: true }) folder: string;
+  @Prop({ required: true }) name: string;
+
+  @Prop({ default: '' }) content: string;
+  @Prop({ default: '' }) fileUrl: string;
+  @Prop({ default: 0 }) size: number;
+  @Prop({ default: '' }) mimeType: string;
+  @Prop({ default: '' }) uploadedBy: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'AdrCaseDraft', default: null })
+  sourceDraftId: Types.ObjectId | null;
+}
+export const AdrDocumentEntrySchema =
+  SchemaFactory.createForClass(AdrDocumentEntry);

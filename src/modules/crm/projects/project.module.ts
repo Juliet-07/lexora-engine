@@ -3,6 +3,10 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { EmailService } from '../../../common/utils/mailing/email.service';
 import { User, UserSchema } from '../../auth/schemas/user.schema';
 import {
+  PlatformContractTemplate,
+  PlatformContractTemplateSchema,
+} from '../../super_admin/schemas/contract-template.schema';
+import {
   Mandate,
   MandateSchema,
   MandateMessage,
@@ -29,6 +33,10 @@ import {
   AdrCaseSchema,
   AdrCaseMessage,
   AdrCaseMessageSchema,
+  AdrCaseDraft,
+  AdrCaseDraftSchema,
+  AdrDocumentEntry,
+  AdrDocumentEntrySchema,
   LitigationCase,
   LitigationCaseSchema,
   PortfolioRisk,
@@ -110,6 +118,12 @@ import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
       { name: KbArticle.name, schema: KbArticleSchema },
       { name: AdrCase.name, schema: AdrCaseSchema },
       { name: AdrCaseMessage.name, schema: AdrCaseMessageSchema },
+      { name: AdrCaseDraft.name, schema: AdrCaseDraftSchema },
+      { name: AdrDocumentEntry.name, schema: AdrDocumentEntrySchema },
+      {
+        name: PlatformContractTemplate.name,
+        schema: PlatformContractTemplateSchema,
+      },
       { name: LitigationCase.name, schema: LitigationCaseSchema },
       { name: PortfolioRisk.name, schema: PortfolioRiskSchema },
       { name: Employee.name, schema: EmployeeSchema },

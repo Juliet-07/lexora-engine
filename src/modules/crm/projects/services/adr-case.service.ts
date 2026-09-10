@@ -14,6 +14,11 @@ import {
   AdrCaseMessage,
   AdrCaseMessageDocument,
   MessageDirection,
+  AdrCaseDraft,
+  AdrCaseDraftDocument,
+  AdrDraftStatus,
+  AdrDocumentEntry,
+  AdrDocumentEntryDocument,
 } from '../schemas';
 import {
   CreateAdrCaseDto,
@@ -32,6 +37,9 @@ import {
   EscalateToLitigationDto,
   SendAdrPartyEmailDto,
   CreateMessageDto,
+  CreateAdrDraftDto,
+  SaveAdrDraftVersionDto,
+  UpdateAdrDraftStatusDto,
 } from '../dtos';
 import { MandateService } from './mandate.service';
 import { TimeEntryService } from './time-entry.service';
@@ -40,6 +48,10 @@ import { buildReportPdf } from '../../../../common/utils/pdf/report-builder.util
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EmailService } from '../../../../common/utils/mailing/email.service';
 import { User, UserDocument } from '../../../auth/schemas/user.schema';
+import {
+  PlatformContractTemplate,
+  PlatformContractTemplateDocument,
+} from '../../../super_admin/schemas/contract-template.schema';
 
 @Injectable()
 export class AdrCaseService {
@@ -50,6 +62,12 @@ export class AdrCaseService {
     private readonly userModel: Model<UserDocument>,
     @InjectModel(AdrCaseMessage.name)
     private readonly messageModel: Model<AdrCaseMessageDocument>,
+    @InjectModel(AdrCaseDraft.name)
+    private readonly draftModel: Model<AdrCaseDraftDocument>,
+    @InjectModel(AdrDocumentEntry.name)
+    private readonly documentModel: Model<AdrDocumentEntryDocument>,
+    @InjectModel(PlatformContractTemplate.name)
+    private readonly templateModel: Model<PlatformContractTemplateDocument>,
     private readonly mandateService: MandateService,
     private readonly timeEntryService: TimeEntryService,
     private readonly litigationCaseService: LitigationCaseService,
@@ -481,6 +499,155 @@ export class AdrCaseService {
     await c.save();
 
     return { success: true, sentTo: targets.map((p) => p.name) };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // DRAFTING — real platform templates, real rich-text content,
+  // real version history. A finalised draft files a real document,
+  // matching "finalised drafts move into Documents and lock a
+  // version" exactly.
+  // ═══════════════════════════════════════════════════════════
+
+  async getDrafts(tenantId: string, caseId: string) {
+    return this.draftModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        caseId: new Types.ObjectId(caseId),
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  async createDraft(tenantId: string, caseId: string, dto: CreateAdrDraftDto) {
+    let content = '';
+    let sourceTemplateTitle = '';
+    if (dto.templateId) {
+      const template = await this.templateModel.findById(dto.templateId).lean();
+      if (!template) throw new NotFoundException('Template not found');
+      content = (template as any).content ?? '';
+      sourceTemplateTitle = (template as any).title ?? '';
+    }
+
+    const created = await this.draftModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      caseId: new Types.ObjectId(caseId),
+      title: dto.title,
+      content,
+      sourceTemplateId: dto.templateId ?? '',
+      sourceTemplateTitle,
+      versions: [
+        {
+          versionNumber: 1,
+          content,
+          savedBy: 'System',
+          savedAt: new Date(),
+        },
+      ],
+      currentVersion: 1,
+    });
+    return created.toObject();
+  }
+
+  async saveDraftVersion(
+    tenantId: string,
+    caseId: string,
+    draftId: string,
+    savedBy: string,
+    dto: SaveAdrDraftVersionDto,
+  ) {
+    const d = await this.draftModel.findOne({
+      _id: draftId,
+      tenantId: new Types.ObjectId(tenantId),
+      caseId: new Types.ObjectId(caseId),
+    });
+    if (!d) throw new NotFoundException('Draft not found');
+
+    const nextVersion = d.currentVersion + 1;
+    d.versions.push({
+      versionNumber: nextVersion,
+      content: dto.content,
+      savedBy,
+      savedAt: new Date(),
+    } as any);
+    d.content = dto.content;
+    d.currentVersion = nextVersion;
+    await d.save();
+    return d.toObject();
+  }
+
+  async updateDraftStatus(
+    tenantId: string,
+    caseId: string,
+    draftId: string,
+    dto: UpdateAdrDraftStatusDto,
+  ) {
+    const d = await this.draftModel.findOne({
+      _id: draftId,
+      tenantId: new Types.ObjectId(tenantId),
+      caseId: new Types.ObjectId(caseId),
+    });
+    if (!d) throw new NotFoundException('Draft not found');
+
+    d.status = dto.status as AdrDraftStatus;
+
+    // Real filing — a Final draft becomes a real document exactly
+    // once, the moment it first reaches Final. Re-saving an
+    // already-final draft's status doesn't file a duplicate.
+    if (dto.status === AdrDraftStatus.FINAL && !d.documentId) {
+      const doc = await this.documentModel.create({
+        tenantId: new Types.ObjectId(tenantId),
+        caseId: new Types.ObjectId(caseId),
+        folder: 'Drafts',
+        name: d.title,
+        content: d.content,
+        uploadedBy: 'System',
+        sourceDraftId: d._id,
+      });
+      d.documentId = doc._id as any;
+
+      const c = await this.getRawDoc(tenantId, caseId);
+      c.timeline.push({
+        at: new Date(),
+        title: `Document finalised — ${d.title}`,
+        description: `Filed to Documents from drafting.`,
+        source: AdrTimelineSource.SYSTEM,
+      } as any);
+      await c.save();
+    }
+
+    await d.save();
+    return d.toObject();
+  }
+
+  // ── Documents ─────────────────────────────────────────────────
+  async getDocuments(tenantId: string, caseId: string) {
+    return this.documentModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        caseId: new Types.ObjectId(caseId),
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  async uploadDocument(
+    tenantId: string,
+    caseId: string,
+    folder: string,
+    uploadedBy: string,
+    file: Express.Multer.File,
+  ) {
+    const created = await this.documentModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      caseId: new Types.ObjectId(caseId),
+      folder: folder || 'General',
+      name: file.originalname,
+      fileUrl: `/uploads/crm/adr-cases/${file.filename}`,
+      size: file.size,
+      mimeType: file.mimetype,
+      uploadedBy,
+    });
+    return created.toObject();
   }
 
   async updateDetails(
