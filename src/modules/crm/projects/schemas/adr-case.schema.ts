@@ -244,6 +244,12 @@ export class AdrCase {
   // doesn't need a further migration.
   @Prop({ type: Types.ObjectId, ref: 'LitigationCase', default: null })
   litigationCaseId: Types.ObjectId | null;
+
+  // Real, named folders for this case's document filing system —
+  // can exist before any document is ever filed into them, which a
+  // folder merely inferred from documents.folder values couldn't do.
+  @Prop({ type: [String], default: ['General'] })
+  folders: string[];
 }
 export const AdrCaseSchema = SchemaFactory.createForClass(AdrCase);
 

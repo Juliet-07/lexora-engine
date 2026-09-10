@@ -594,6 +594,10 @@ export class AdrCaseService {
     // once, the moment it first reaches Final. Re-saving an
     // already-final draft's status doesn't file a duplicate.
     if (dto.status === AdrDraftStatus.FINAL && !d.documentId) {
+      const c = await this.getRawDoc(tenantId, caseId);
+      if (!c.folders.some((f) => f.toLowerCase() === 'drafts')) {
+        c.folders.push('Drafts');
+      }
       const doc = await this.documentModel.create({
         tenantId: new Types.ObjectId(tenantId),
         caseId: new Types.ObjectId(caseId),
@@ -605,7 +609,6 @@ export class AdrCaseService {
       });
       d.documentId = doc._id as any;
 
-      const c = await this.getRawDoc(tenantId, caseId);
       c.timeline.push({
         at: new Date(),
         title: `Document finalised — ${d.title}`,
@@ -620,6 +623,28 @@ export class AdrCaseService {
   }
 
   // ── Documents ─────────────────────────────────────────────────
+  // ── Folders — real, named buckets that exist independently of any
+  // document being filed into them yet. ──
+  async getFolders(tenantId: string, caseId: string) {
+    const c = await this.model
+      .findOne({ _id: caseId, tenantId: new Types.ObjectId(tenantId) })
+      .select('folders')
+      .lean();
+    if (!c) throw new NotFoundException('Case not found');
+    return c.folders ?? ['General'];
+  }
+
+  async createFolder(tenantId: string, caseId: string, name: string) {
+    const c = await this.getRawDoc(tenantId, caseId);
+    const trimmed = name.trim();
+    if (!trimmed) throw new NotFoundException('Folder name is required');
+    if (!c.folders.some((f) => f.toLowerCase() === trimmed.toLowerCase())) {
+      c.folders.push(trimmed);
+      await c.save();
+    }
+    return c.folders;
+  }
+
   async getDocuments(tenantId: string, caseId: string) {
     return this.documentModel
       .find({
@@ -637,10 +662,22 @@ export class AdrCaseService {
     uploadedBy: string,
     file: Express.Multer.File,
   ) {
+    // Real filing discipline — a document can only be filed into a
+    // folder that genuinely exists on this case, not an arbitrary
+    // string typed into a query param.
+    const c = await this.getRawDoc(tenantId, caseId);
+    const targetFolder = folder || 'General';
+    if (
+      !c.folders.some((f) => f.toLowerCase() === targetFolder.toLowerCase())
+    ) {
+      throw new NotFoundException(
+        `Folder "${targetFolder}" doesn't exist on this case yet — create it first.`,
+      );
+    }
     const created = await this.documentModel.create({
       tenantId: new Types.ObjectId(tenantId),
       caseId: new Types.ObjectId(caseId),
-      folder: folder || 'General',
+      folder: targetFolder,
       name: file.originalname,
       fileUrl: `/uploads/crm/adr-cases/${file.filename}`,
       size: file.size,
@@ -717,7 +754,75 @@ export class AdrCaseService {
       `${dto.mode} session on ${dto.date}${dto.venue ? ` at ${dto.venue}` : ''}.`,
     );
     await c.save();
+
+    await this.notifySessionScheduled(tenantId, c);
+
     return c.toObject();
+  }
+
+  private async notifySessionScheduled(tenantId: string, c: any) {
+    const session = c.sessions[c.sessions.length - 1];
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.businessName')
+      .lean();
+    const tenantBusinessName =
+      (tenant as any)?.tenantProfile?.businessName || 'Your Provider';
+
+    // Every party with an email gets notified directly — independent
+    // of any mandate link, same discipline as filing notifications.
+    for (const party of c.parties) {
+      if (!party.email) continue;
+      await this.emailService.sendSessionNotice({
+        to: party.email,
+        recipientName: party.name,
+        tenantBusinessName,
+        caseTitle: c.title,
+        caseRef: c.ref,
+        sessionDate: session.date,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        mode: session.mode,
+        venue: session.venue,
+      });
+    }
+
+    // The mandate's client, if this case has one — email + a real
+    // portal notification, matching how case filing already works.
+    if (c.mandateId) {
+      const mandate: any = await this.mandateService
+        .getById(tenantId, String(c.mandateId))
+        .catch(() => null);
+      if (mandate?.clientUserId) {
+        const client = await this.userModel
+          .findById(mandate.clientUserId)
+          .select('firstName email')
+          .lean();
+        if (client?.email) {
+          await this.emailService.sendSessionNotice({
+            to: client.email,
+            recipientName: client.firstName,
+            tenantBusinessName,
+            caseTitle: c.title,
+            caseRef: c.ref,
+            sessionDate: session.date,
+            startTime: session.startTime,
+            endTime: session.endTime,
+            mode: session.mode,
+            venue: session.venue,
+            loginUrl: `${process.env.CLIENT_APP_URL}/login`,
+          });
+        }
+        this.eventEmitter.emit('client.case.session_scheduled', {
+          tenantId,
+          clientUserId: String(mandate.clientUserId),
+          caseType: 'ADR',
+          caseTitle: c.title,
+          caseRef: c.ref,
+          sessionDate: session.date,
+        });
+      }
+    }
   }
 
   async updateSession(

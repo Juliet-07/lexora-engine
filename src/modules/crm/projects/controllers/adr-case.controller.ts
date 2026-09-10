@@ -55,6 +55,7 @@ import {
   CreateAdrDraftDto,
   SaveAdrDraftVersionDto,
   UpdateAdrDraftStatusDto,
+  CreateAdrFolderDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
@@ -307,6 +308,28 @@ export class AdrCaseController {
   }
 
   // ── Documents ─────────────────────────────────────────────────
+  // ── Folders ───────────────────────────────────────────────────
+  @Get(':id/folders')
+  @ApiOperation({ summary: 'Real, named folders on this case' })
+  getFolders(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getFolders(t || u, id);
+  }
+
+  @Post(':id/folders')
+  @ApiOperation({ summary: 'Create a new folder' })
+  createFolder(
+    @Param('id') id: string,
+    @Body() dto: CreateAdrFolderDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.createFolder(t || u, id, dto.name);
+  }
+
   @Get(':id/documents')
   @ApiOperation({ summary: 'All documents filed on this case' })
   getDocuments(

@@ -180,3 +180,7 @@ export class UpdateAdrDraftStatusDto {
   @IsEnum(['Draft', 'In review', 'Final'])
   status: 'Draft' | 'In review' | 'Final';
 }
+
+export class CreateAdrFolderDto {
+  @ApiProperty() @IsString() name: string;
+}

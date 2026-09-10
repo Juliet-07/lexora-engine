@@ -45,6 +45,10 @@ import {
   partyCommunicationTemplate,
 } from './templates/party-communication.template';
 import {
+  SessionNoticeEmailData,
+  sessionNoticeTemplate,
+} from './templates/session-notice.template';
+import {
   ClientApprovalData,
   clientApprovalTemplate,
 } from './templates/client-approval.template';
@@ -372,6 +376,16 @@ export class EmailService {
     data: PartyCommunicationEmailData,
   ): Promise<void> {
     const { subject, html } = partyCommunicationTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendSessionNotice(data: SessionNoticeEmailData): Promise<void> {
+    const { subject, html } = sessionNoticeTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

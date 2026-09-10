@@ -260,4 +260,24 @@ export class ClientNotificationService {
       '/cases',
     );
   }
+
+  @OnEvent('client.case.session_scheduled')
+  async onCaseSessionScheduled(e: {
+    tenantId: string;
+    clientUserId: string;
+    caseType: 'ADR' | 'Litigation';
+    caseTitle: string;
+    caseRef: string;
+    sessionDate: string;
+  }) {
+    const dateLabel = new Date(e.sessionDate).toLocaleDateString();
+    await this.create(
+      e.tenantId,
+      e.clientUserId,
+      ClientNotificationType.CASE,
+      `Session scheduled — ${e.caseRef}`,
+      `${e.caseTitle} · ${dateLabel}`,
+      '/cases',
+    );
+  }
 }
