@@ -257,3 +257,14 @@ export class RecordAdrClosureDto {
 export class LinkAdrSettlementDeedDto {
   @ApiProperty() @IsMongoId() documentId: string;
 }
+
+// ── Tenant time logging — the tenant records their own time on a
+// case and values it directly in the same action, since they have
+// no rate card of their own to fall back on. ──
+export class LogAdrTenantTimeDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() narrative?: string;
+  @ApiProperty() @IsDateString() date: string;
+  @ApiProperty() @IsNumber() @Min(0.01) hours: number;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() billable?: boolean;
+  @ApiProperty() @IsNumber() @Min(0) rate: number;
+}

@@ -59,10 +59,14 @@ export class TimeEntryService {
   }
 
   async create(tenantId: string, dto: CreateTimeEntryDto) {
-    const { rate, currency } = await this.rateCardService.getRateForEmployee(
-      tenantId,
-      dto.memberUserId,
-    );
+    const cardRate =
+      dto.rate !== undefined
+        ? { rate: dto.rate, currency: dto.currency ?? 'USD' }
+        : await this.rateCardService.getRateForEmployee(
+            tenantId,
+            dto.memberUserId,
+          );
+    const { rate, currency } = cardRate;
     const created = await this.model.create({
       tenantId: new Types.ObjectId(tenantId),
       memberUserId: new Types.ObjectId(dto.memberUserId),

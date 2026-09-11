@@ -32,6 +32,11 @@ export class CreateTimeEntryDto {
   @ApiProperty() @IsDateString() date: string;
   @ApiProperty() @IsNumber() @Min(0.01) hours: number;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() billable?: boolean;
+  // Direct rate override — when set, used instead of the rate-card
+  // lookup. For a caller (like a tenant logging their own time) who
+  // has no rate card of their own and is valuing the time directly.
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) rate?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
 }
 
 // What an employee logs for themselves — no memberUserId/member

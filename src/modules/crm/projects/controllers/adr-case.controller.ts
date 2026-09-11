@@ -60,6 +60,7 @@ import {
   UpdateAdrDeadlineRuleDto,
   RecordAdrClosureDto,
   LinkAdrSettlementDeedDto,
+  LogAdrTenantTimeDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
@@ -213,6 +214,19 @@ export class AdrCaseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.recordClosure(t || u, id, dto);
+  }
+
+  @Post(':id/time')
+  @ApiOperation({
+    summary: "Log the tenant's own time on this case, valued directly",
+  })
+  logTenantTime(
+    @Param('id') id: string,
+    @Body() dto: LogAdrTenantTimeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.logTenantTime(t || u, id, dto);
   }
 
   @Post(':id/outcome')

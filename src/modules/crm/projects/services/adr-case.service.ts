@@ -47,6 +47,7 @@ import {
   UpdateAdrDeadlineRuleDto,
   RecordAdrClosureDto,
   LinkAdrSettlementDeedDto,
+  LogAdrTenantTimeDto,
 } from '../dtos';
 import { MandateService } from './mandate.service';
 import { TimeEntryService } from './time-entry.service';
@@ -1146,6 +1147,50 @@ export class AdrCaseService {
     this.logTimeline(c, 'Closure details recorded', '');
     await c.save();
     return c.toObject();
+  }
+
+  // Tenant logging their own time on a case — same real linkage as
+  // the employee path (requires a mandate, since TimeEntry.mandateId
+  // is required on the schema), but the tenant values it directly
+  // since they have no rate card of their own.
+  async logTenantTime(
+    tenantId: string,
+    caseId: string,
+    dto: LogAdrTenantTimeDto,
+  ) {
+    const c = await this.getRawDoc(tenantId, caseId);
+    if (!c.mandateId) {
+      throw new NotFoundException(
+        "This case isn't linked to a mandate yet, so time can't be logged against it.",
+      );
+    }
+    const mandate: any = await this.mandateService
+      .getById(tenantId, String(c.mandateId))
+      .catch(() => null);
+    if (!mandate) {
+      throw new NotFoundException('The linked mandate no longer exists');
+    }
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('firstName lastName')
+      .lean();
+    const tenantName = tenant
+      ? `${(tenant as any).firstName} ${(tenant as any).lastName}`.trim()
+      : 'Tenant';
+
+    return this.timeEntryService.create(tenantId, {
+      memberUserId: tenantId,
+      member: tenantName,
+      mandateId: String(c.mandateId),
+      mandateName: (mandate as any).name,
+      adrCaseId: String(c._id),
+      narrative: dto.narrative,
+      date: dto.date,
+      hours: dto.hours,
+      billable: dto.billable,
+      rate: dto.billable === false ? 0 : dto.rate,
+      currency: c.currency,
+    });
   }
 
   async recordOutcome(tenantId: string, id: string, dto: RecordAdrOutcomeDto) {
