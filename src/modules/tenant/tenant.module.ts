@@ -32,6 +32,10 @@ import {
 } from '../grc/compliance/schemas/obligation.schema';
 import { Deal, DealSchema } from '../grc/deals/schemas/deal.schema';
 import { Mandate, MandateSchema } from '../crm/projects/schemas/mandate.schema';
+import {
+  ClientPipelineRecord,
+  ClientPipelineSchema,
+} from '../crm/crm/schemas/client-pipeline.schema';
 import { Task, TaskSchema } from '../crm/projects/schemas/task.schema';
 import { Ticket, TicketSchema } from '../crm/projects/schemas/ticket.schema';
 import {
@@ -79,6 +83,7 @@ import { TenantNotificationController } from './controllers';
       { name: ComplianceObligation.name, schema: ComplianceObligationSchema },
       { name: Deal.name, schema: DealSchema },
       { name: Mandate.name, schema: MandateSchema },
+      { name: ClientPipelineRecord.name, schema: ClientPipelineSchema },
       { name: Task.name, schema: TaskSchema },
       { name: Ticket.name, schema: TicketSchema },
       { name: Invoice.name, schema: InvoiceSchema },

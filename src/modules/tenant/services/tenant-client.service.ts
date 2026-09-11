@@ -54,6 +54,11 @@ import {
   ReportSection,
 } from '../../../common/utils/pdf/report-builder.util';
 import { ContractService } from '../../crm/tools/services/contract.service';
+import {
+  ClientPipelineRecord,
+  ClientPipelineDocument,
+  ClientPipelineStage,
+} from '../../crm/crm/schemas/client-pipeline.schema';
 
 @Injectable()
 export class TenantClientsService {
@@ -73,6 +78,8 @@ export class TenantClientsService {
     private readonly subscriptionModel: Model<any>,
     @InjectModel(Mandate.name)
     private readonly mandateModel: Model<MandateDocument_>,
+    @InjectModel(ClientPipelineRecord.name)
+    private readonly pipelineModel: Model<ClientPipelineDocument>,
     @InjectModel(Ticket.name)
     private readonly ticketModel: Model<TicketDocument>,
     @InjectModel(Invoice.name)
@@ -744,6 +751,23 @@ export class TenantClientsService {
       throw new NotFoundException('Client profile not found');
     }
 
+    // Keep the pipeline board in sync — an ex-client is a past
+    // client, and should show up on the Past column without a
+    // separate manual drag.
+    await this.pipelineModel.updateOne(
+      {
+        tenantId: new Types.ObjectId(tenantId),
+        clientUserId: new Types.ObjectId(clientId),
+      },
+      {
+        $set: {
+          stage: ClientPipelineStage.PAST,
+          churnedAt: new Date(),
+          churnReason: dto.reason || 'Marked as ex-client',
+        },
+      },
+    );
+
     return {
       success: true,
       message:
@@ -774,6 +798,22 @@ export class TenantClientsService {
     if (!profile) {
       throw new NotFoundException('Client is not currently an ex-client');
     }
+
+    // Mirror the reverse of markAsExClient — back onto the Active
+    // column, not left stranded on Past.
+    await this.pipelineModel.updateOne(
+      {
+        tenantId: new Types.ObjectId(tenantId),
+        clientUserId: new Types.ObjectId(clientId),
+      },
+      {
+        $set: {
+          stage: ClientPipelineStage.ACTIVE,
+          churnedAt: null,
+          churnReason: null,
+        },
+      },
+    );
 
     return {
       success: true,

@@ -82,7 +82,10 @@ export class SetTimeEntryRateDto {
 }
 
 export class UpsertRateCardDto {
-  @ApiProperty() @IsMongoId() employeeUserId: string;
+  // Supplied via the URL route param (PUT /rate-cards/:employeeUserId),
+  // not the request body — optional here so a body that correctly
+  // omits it doesn't fail validation before the controller merges it in.
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() employeeUserId?: string;
   @ApiProperty() @IsString() member: string;
   @ApiPropertyOptional() @IsOptional() @IsString() role?: string;
   @ApiProperty() @IsNumber() @Min(0) standardRate: number;

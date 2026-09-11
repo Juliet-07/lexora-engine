@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { RateCard, RateCardDocument } from '../schemas';
@@ -19,6 +19,9 @@ export class RateCardService {
   }
 
   async upsert(tenantId: string, dto: UpsertRateCardDto) {
+    if (!dto.employeeUserId) {
+      throw new BadRequestException('employeeUserId is required');
+    }
     const tId = new Types.ObjectId(tenantId);
     const employeeId = new Types.ObjectId(dto.employeeUserId);
     const saved = await this.model.findOneAndUpdate(
