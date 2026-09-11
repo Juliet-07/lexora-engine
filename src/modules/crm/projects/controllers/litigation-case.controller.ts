@@ -1,7 +1,29 @@
-import { Controller, Get, Post, Patch, Body, Param, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  Param,
+  Res,
+  Query,
+  UseInterceptors,
+  UploadedFile,
+} from '@nestjs/common';
 import { Response } from 'express';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { existsSync, mkdirSync } from 'fs';
+import { join, extname } from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiConsumes,
+} from '@nestjs/swagger';
 import { LitigationCaseService } from '../services';
+import { MessageDirection } from '../schemas';
 import {
   CreateLitigationCaseDto,
   UpdateLitigationDetailsDto,
@@ -12,7 +34,26 @@ import {
   AddLitigationDisbursementDto,
   AddLitigationTimelineEntryDto,
   RecordLitigationOutcomeDto,
+  SendLitigationPartyEmailDto,
+  CreateMessageDto,
+  CreateLitigationDraftDto,
+  SaveLitigationDraftVersionDto,
+  UpdateLitigationDraftStatusDto,
+  CreateLitigationFolderDto,
+  CreateLitigationDeadlineRuleDto,
+  UpdateLitigationDeadlineRuleDto,
+  LogLitigationTenantTimeDto,
 } from '../dtos';
+
+const litigationDocumentStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const p = join(process.cwd(), 'uploads', 'crm', 'litigation-cases');
+    if (!existsSync(p)) mkdirSync(p, { recursive: true });
+    cb(null, p);
+  },
+  filename: (_req, file, cb) =>
+    cb(null, `${uuidv4()}${extname(file.originalname)}`),
+});
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
   PlatformModuleKey,
@@ -165,6 +206,221 @@ export class LitigationCaseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.addTimelineEntry(t || u, id, dto);
+  }
+
+  // ── Communication ────────────────────────────────────────────
+  @Get(':id/messages')
+  @ApiOperation({ summary: 'The tenant↔client message thread for this case' })
+  getMessages(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getMessages(t || u, id);
+  }
+
+  @Post(':id/messages')
+  @ApiOperation({ summary: "Send a message to the case mandate's client" })
+  sendMessage(
+    @Param('id') id: string,
+    @Body() dto: CreateMessageDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addMessage(t || u, id, MessageDirection.TENANT, dto);
+  }
+
+  @Post(':id/party-email')
+  @ApiOperation({
+    summary: 'Send an ad-hoc email to one or more case parties',
+  })
+  sendPartyEmail(
+    @Param('id') id: string,
+    @Body() dto: SendLitigationPartyEmailDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.sendPartyEmail(t || u, id, dto);
+  }
+
+  // ── Drafting ──────────────────────────────────────────────────
+  @Get(':id/drafts')
+  @ApiOperation({ summary: 'All drafts for this case' })
+  getDrafts(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getDrafts(t || u, id);
+  }
+
+  @Post(':id/drafts')
+  @ApiOperation({
+    summary: 'Start a new draft — from a real platform template, or blank',
+  })
+  createDraft(
+    @Param('id') id: string,
+    @Body() dto: CreateLitigationDraftDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.createDraft(t || u, id, dto);
+  }
+
+  @Patch(':id/drafts/:draftId')
+  @ApiOperation({ summary: 'Save a new version of the draft content' })
+  saveDraftVersion(
+    @Param('id') id: string,
+    @Param('draftId') draftId: string,
+    @Body() dto: SaveLitigationDraftVersionDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.saveDraftVersion(t || u, id, draftId, 'You', dto);
+  }
+
+  @Patch(':id/drafts/:draftId/status')
+  @ApiOperation({
+    summary:
+      'Move a draft through Draft → In review → Final. Final files a real document.',
+  })
+  updateDraftStatus(
+    @Param('id') id: string,
+    @Param('draftId') draftId: string,
+    @Body() dto: UpdateLitigationDraftStatusDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateDraftStatus(t || u, id, draftId, dto);
+  }
+
+  // ── Folders ───────────────────────────────────────────────────
+  @Get(':id/folders')
+  @ApiOperation({ summary: 'Real, named folders on this case' })
+  getFolders(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getFolders(t || u, id);
+  }
+
+  @Post(':id/folders')
+  @ApiOperation({ summary: 'Create a new folder' })
+  createFolder(
+    @Param('id') id: string,
+    @Body() dto: CreateLitigationFolderDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.createFolder(t || u, id, dto.name);
+  }
+
+  // ── Documents ─────────────────────────────────────────────────
+  @Get(':id/documents')
+  @ApiOperation({ summary: 'All documents filed on this case' })
+  getDocuments(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getDocuments(t || u, id);
+  }
+
+  @Post(':id/documents')
+  @UseInterceptors(
+    FileInterceptor('file', { storage: litigationDocumentStorage }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload a document into a folder' })
+  uploadDocument(
+    @Param('id') id: string,
+    @Query('folder') folder: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.uploadDocument(t || u, id, folder, 'You', file);
+  }
+
+  // ── Deadline rules ───────────────────────────────────────────
+  @Get(':id/deadline-rules')
+  @ApiOperation({
+    summary: "This case's deadline rules, with live-computed due dates",
+  })
+  getDeadlineRules(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getDeadlineRules(t || u, id);
+  }
+
+  @Post(':id/deadline-rules')
+  @ApiOperation({ summary: 'Add a new deadline rule' })
+  createDeadlineRule(
+    @Param('id') id: string,
+    @Body() dto: CreateLitigationDeadlineRuleDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.createDeadlineRule(t || u, id, dto);
+  }
+
+  @Patch(':id/deadline-rules/:ruleId')
+  @ApiOperation({ summary: 'Edit a deadline rule' })
+  updateDeadlineRule(
+    @Param('id') id: string,
+    @Param('ruleId') ruleId: string,
+    @Body() dto: UpdateLitigationDeadlineRuleDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateDeadlineRule(t || u, id, ruleId, dto);
+  }
+
+  @Post(':id/deadline-rules/:ruleId/mark-met')
+  @ApiOperation({ summary: 'Mark a deadline rule as met, today' })
+  markDeadlineRuleMet(
+    @Param('id') id: string,
+    @Param('ruleId') ruleId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.markDeadlineRuleMet(t || u, id, ruleId);
+  }
+
+  // ── Audit trail ───────────────────────────────────────────────
+  @Get(':id/audit-trail/export')
+  @ApiOperation({
+    summary: "This case's full audit trail as a PDF, house style",
+  })
+  async exportAuditTrailPdf(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.service.exportAuditTrailPdf(t || u, id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="audit-trail-${id}-${new Date().toISOString().split('T')[0]}.pdf"`,
+    });
+    res.send(buffer);
+  }
+
+  // ── Tenant time logging ──────────────────────────────────────
+  @Post(':id/time')
+  @ApiOperation({
+    summary: "Log the tenant's own time on this case, valued directly",
+  })
+  logTenantTime(
+    @Param('id') id: string,
+    @Body() dto: LogLitigationTenantTimeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.logTenantTime(t || u, id, dto);
   }
 
   @Post(':id/outcome')

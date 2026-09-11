@@ -7,6 +7,8 @@ import {
   IsNumber,
   IsDateString,
   IsMongoId,
+  IsEmail,
+  IsBoolean,
   ValidateNested,
   Min,
 } from 'class-validator';
@@ -25,6 +27,9 @@ export class LitigationPartyDto {
   @IsEnum(LitigationPartyRole)
   role: LitigationPartyRole;
   @ApiPropertyOptional() @IsOptional() @IsString() organisation?: string;
+  // Required — litigation filing needs a real way to reach every
+  // party by email, unlike ADR where it's optional.
+  @ApiProperty() @IsEmail() email: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() userId?: string;
 }
 
@@ -49,6 +54,8 @@ export class CreateLitigationCaseDto {
   @ApiPropertyOptional() @IsOptional() @IsString() court?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() courtDivision?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() registry?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() teamId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() teamName?: string;
 }
 
 export class UpdateLitigationDetailsDto {
@@ -57,6 +64,8 @@ export class UpdateLitigationDetailsDto {
   @ApiPropertyOptional() @IsOptional() @IsString() courtCaseNumber?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() judge?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() registry?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() teamId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() teamName?: string;
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
@@ -135,4 +144,94 @@ export class EscalateToLitigationDto {
   @ApiPropertyOptional() @IsOptional() @IsString() courtDivision?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() registry?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() filedOn?: string;
+}
+
+// ── Communication ────────────────────────────────────────────────
+export class SendLitigationPartyEmailDto {
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  partyIds: string[];
+
+  @ApiProperty() @IsString() subject: string;
+  @ApiProperty() @IsString() body: string;
+}
+
+// ── Drafting ─────────────────────────────────────────────────────
+export class CreateLitigationDraftDto {
+  @ApiProperty() @IsString() title: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() templateId?: string;
+}
+
+export class SaveLitigationDraftVersionDto {
+  @ApiProperty() @IsString() content: string;
+}
+
+export class UpdateLitigationDraftStatusDto {
+  @ApiProperty({ enum: ['Draft', 'In review', 'Final'] })
+  @IsEnum(['Draft', 'In review', 'Final'])
+  status: 'Draft' | 'In review' | 'Final';
+}
+
+// ── Documents ────────────────────────────────────────────────────
+export class CreateLitigationFolderDto {
+  @ApiProperty() @IsString() name: string;
+}
+
+// ── Deadline rules ───────────────────────────────────────────────
+export class CreateLitigationDeadlineRuleDto {
+  @ApiProperty() @IsString() triggerLabel: string;
+  @ApiProperty({
+    enum: ['case_filed', 'court_date', 'outcome', 'cascade', 'custom'],
+  })
+  @IsEnum(['case_filed', 'court_date', 'outcome', 'cascade', 'custom'])
+  triggerSource: 'case_filed' | 'court_date' | 'outcome' | 'cascade' | 'custom';
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  triggerCourtDateIndex?: number;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() cascadeFromRuleId?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  customTriggerDate?: string;
+  @ApiProperty() @IsString() ruleLabel: string;
+  @ApiProperty() @IsNumber() @Min(1) windowDays: number;
+}
+
+export class UpdateLitigationDeadlineRuleDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() triggerLabel?: string;
+  @ApiPropertyOptional({
+    enum: ['case_filed', 'court_date', 'outcome', 'cascade', 'custom'],
+  })
+  @IsOptional()
+  @IsEnum(['case_filed', 'court_date', 'outcome', 'cascade', 'custom'])
+  triggerSource?:
+    | 'case_filed'
+    | 'court_date'
+    | 'outcome'
+    | 'cascade'
+    | 'custom';
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  triggerCourtDateIndex?: number;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() cascadeFromRuleId?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  customTriggerDate?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() ruleLabel?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(1) windowDays?: number;
+}
+
+// ── Tenant time logging ──────────────────────────────────────────
+export class LogLitigationTenantTimeDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() narrative?: string;
+  @ApiProperty() @IsDateString() date: string;
+  @ApiProperty() @IsNumber() @Min(0.01) hours: number;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() billable?: boolean;
+  @ApiProperty() @IsNumber() @Min(0) rate: number;
 }

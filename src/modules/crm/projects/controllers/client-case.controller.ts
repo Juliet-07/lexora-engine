@@ -37,34 +37,37 @@ export class ClientCaseController {
     return this.service.getMyCase(t || u, u, type, id);
   }
 
-  @Get('adr/:id/messages')
+  @Get(':type/:id/messages')
   @ApiOperation({ summary: "This case's message thread with the firm" })
   getMessages(
+    @Param('type') type: 'adr' | 'litigation',
     @Param('id') id: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.getMessages(t || u, u, id);
+    return this.service.getMessages(t || u, u, id, type);
   }
 
-  @Post('adr/:id/messages')
+  @Post(':type/:id/messages')
   @ApiOperation({ summary: 'Reply to the firm on this case' })
   sendMessage(
+    @Param('type') type: 'adr' | 'litigation',
     @Param('id') id: string,
     @Body() dto: { author: string; body: string },
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.sendMessage(t || u, u, id, dto);
+    return this.service.sendMessage(t || u, u, id, dto, type);
   }
 
-  @Post('adr/:id/messages/read')
+  @Post(':type/:id/messages/read')
   @ApiOperation({ summary: "Mark this case's messages as read" })
   markMessagesRead(
+    @Param('type') type: 'adr' | 'litigation',
     @Param('id') id: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.markMessagesRead(t || u, u, id);
+    return this.service.markMessagesRead(t || u, u, id, type);
   }
 }

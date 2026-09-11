@@ -1221,11 +1221,18 @@ export class AdrCaseService {
       })
       .select('disbursements')
       .lean();
-    const disbursementSpent = cases.reduce(
+    const adrDisbursementSpent = cases.reduce(
       (s, c: any) =>
         s + (c.disbursements ?? []).reduce((s2, d) => s2 + d.amount, 0),
       0,
     );
+    const litigationDisbursementSpent =
+      await this.litigationCaseService.getDisbursementSumForMandate(
+        tenantId,
+        mandateId,
+      );
+    const disbursementSpent =
+      adrDisbursementSpent + litigationDisbursementSpent;
 
     const totalSpent = timeSpent + disbursementSpent;
     const budget = mandate.budget ?? 0;
@@ -1376,6 +1383,7 @@ export class AdrCaseService {
         name: p.name,
         role: (roleMap[p.role] ?? 'Other') as any,
         organisation: p.organisation,
+        email: p.email ?? '',
         userId: p.userId ? String(p.userId) : undefined,
       }));
 

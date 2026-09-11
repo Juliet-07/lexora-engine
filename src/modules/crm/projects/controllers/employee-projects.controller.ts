@@ -184,7 +184,7 @@ export class MyProjectsController {
   @Get('my-cases')
   @ApiOperation({
     summary:
-      "ADR cases the caller is involved in — every case for a tenant-type caller, or the employee's own team's cases for a genuine employee",
+      "ADR and litigation cases the caller is involved in — every case for a tenant-type caller, or the employee's own team's cases for a genuine employee",
   })
   getMyCases(
     @CurrentUser('sub') u: string,
@@ -198,17 +198,19 @@ export class MyProjectsController {
   @ApiOperation({ summary: 'One case — team-gated for a genuine employee' })
   getMyCaseDetail(
     @Param('id') id: string,
+    @Query('caseType') caseType: 'adr' | 'litigation',
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
     @CurrentUser('userType') userType: string,
   ) {
-    return this.service.getMyCaseDetail(t || u, u, id, userType);
+    return this.service.getMyCaseDetail(t || u, u, id, userType, caseType);
   }
 
   @Post('my-cases/:id/time')
   @ApiOperation({ summary: 'Log billable time against this case' })
   logMyCaseTime(
     @Param('id') id: string,
+    @Query('caseType') caseType: 'adr' | 'litigation',
     @Body()
     dto: {
       narrative?: string;
@@ -219,7 +221,11 @@ export class MyProjectsController {
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.logMyCaseTime(t || u, u, { caseId: id, ...dto });
+    return this.service.logMyCaseTime(t || u, u, {
+      caseId: id,
+      caseType,
+      ...dto,
+    });
   }
 
   @Post('my-cases/:id/call')
@@ -228,11 +234,12 @@ export class MyProjectsController {
   })
   logMyCaseCall(
     @Param('id') id: string,
+    @Query('caseType') caseType: 'adr' | 'litigation',
     @Body() dto: { summary: string },
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.logMyCaseCall(t || u, u, id, dto);
+    return this.service.logMyCaseCall(t || u, u, id, dto, caseType);
   }
 
   @Post('my-cases/:id/notes')
@@ -241,11 +248,12 @@ export class MyProjectsController {
   })
   addMyCaseNote(
     @Param('id') id: string,
+    @Query('caseType') caseType: 'adr' | 'litigation',
     @Body() dto: { note: string },
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.addMyCaseNote(t || u, u, id, dto);
+    return this.service.addMyCaseNote(t || u, u, id, dto, caseType);
   }
 }
 

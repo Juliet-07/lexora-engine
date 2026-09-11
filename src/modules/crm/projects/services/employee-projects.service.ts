@@ -17,6 +17,9 @@ import {
   AdrCase,
   AdrCaseDocument,
   AdrTimelineSource,
+  LitigationCase,
+  LitigationCaseDocument,
+  LitigationTimelineSource,
 } from '../schemas';
 import { Employee, EmployeeDocument } from 'src/modules/hr/schemas';
 import {
@@ -43,6 +46,8 @@ export class MyProjectsService {
     private readonly employeeModel: Model<EmployeeDocument>,
     @InjectModel(AdrCase.name)
     private readonly adrCaseModel: Model<AdrCaseDocument>,
+    @InjectModel(LitigationCase.name)
+    private readonly litigationCaseModel: Model<LitigationCaseDocument>,
     private readonly workspaceService: MandateWorkspaceService,
     private readonly taskService: TaskService,
     private readonly timeEntryService: TimeEntryService,
@@ -345,18 +350,33 @@ export class MyProjectsService {
 
   async getMyCases(tenantId: string, userId: string, userType: string) {
     const tId = new Types.ObjectId(tenantId);
-    if (userType === 'tenant') {
-      return this.adrCaseModel
-        .find({ tenantId: tId })
+    const teamFilter =
+      userType === 'tenant'
+        ? {}
+        : { teamId: (await this.resolveEmployee(tenantId, userId)).teamId };
+    if (userType !== 'tenant' && !teamFilter.teamId) return [];
+
+    const [adrCases, litigationCases] = await Promise.all([
+      this.adrCaseModel
+        .find({ tenantId: tId, ...teamFilter })
         .sort({ createdAt: -1 })
-        .lean();
-    }
-    const employee = await this.resolveEmployee(tenantId, userId);
-    if (!employee.teamId) return [];
-    return this.adrCaseModel
-      .find({ tenantId: tId, teamId: employee.teamId })
-      .sort({ createdAt: -1 })
-      .lean();
+        .lean(),
+      this.litigationCaseModel
+        .find({ tenantId: tId, ...teamFilter })
+        .sort({ createdAt: -1 })
+        .lean(),
+    ]);
+
+    return [
+      ...adrCases.map((c) => ({ ...c, caseType: 'ADR' as const })),
+      ...litigationCases.map((c) => ({
+        ...c,
+        caseType: 'Litigation' as const,
+      })),
+    ].sort(
+      (a: any, b: any) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
   }
 
   private async getAuthorizedCase(
@@ -364,8 +384,11 @@ export class MyProjectsService {
     userId: string,
     caseId: string,
     userType: string,
+    caseType: 'adr' | 'litigation' = 'adr',
   ) {
-    const c = await this.adrCaseModel.findOne({
+    const model: Model<any> =
+      caseType === 'adr' ? this.adrCaseModel : this.litigationCaseModel;
+    const c = await model.findOne({
       _id: caseId,
       tenantId: new Types.ObjectId(tenantId),
     });
@@ -373,7 +396,10 @@ export class MyProjectsService {
     if (userType === 'tenant') return { case: c, employee: null };
 
     const employee = await this.resolveEmployee(tenantId, userId);
-    if (!employee.teamId || String(employee.teamId) !== String(c.teamId)) {
+    if (
+      !employee.teamId ||
+      String(employee.teamId) !== String((c as any).teamId)
+    ) {
       throw new ForbiddenException('This case is not assigned to your team');
     }
     return { case: c, employee };
@@ -384,12 +410,14 @@ export class MyProjectsService {
     userId: string,
     caseId: string,
     userType: string,
+    caseType: 'adr' | 'litigation' = 'adr',
   ) {
     const { case: c } = await this.getAuthorizedCase(
       tenantId,
       userId,
       caseId,
       userType,
+      caseType,
     );
     return c.toObject();
   }
@@ -399,33 +427,39 @@ export class MyProjectsService {
     userId: string,
     dto: {
       caseId: string;
+      caseType?: 'adr' | 'litigation';
       narrative?: string;
       date: string;
       hours: number;
       billable?: boolean;
     },
   ) {
+    const caseType = dto.caseType ?? 'adr';
     const { case: c, employee } = await this.getAuthorizedCase(
       tenantId,
       userId,
       dto.caseId,
       'employee',
+      caseType,
     );
-    if (!c.mandateId) {
+    if (!(c as any).mandateId) {
       throw new NotFoundException(
         "This case isn't linked to a mandate yet, so time can't be logged against it.",
       );
     }
-    const mandate = await this.mandateModel.findById(c.mandateId).lean();
+    const mandate = await this.mandateModel
+      .findById((c as any).mandateId)
+      .lean();
     if (!mandate) {
       throw new NotFoundException('The linked mandate no longer exists');
     }
     return this.timeEntryService.create(tenantId, {
       memberUserId: String(employee!._id),
       member: `${employee!.firstName} ${employee!.lastName}`,
-      mandateId: String(c.mandateId),
+      mandateId: String((c as any).mandateId),
       mandateName: (mandate as any).name,
-      adrCaseId: String(c._id),
+      adrCaseId: caseType === 'adr' ? String(c._id) : undefined,
+      litigationCaseId: caseType === 'litigation' ? String(c._id) : undefined,
       narrative: dto.narrative,
       date: dto.date,
       hours: dto.hours,
@@ -438,18 +472,24 @@ export class MyProjectsService {
     userId: string,
     caseId: string,
     dto: { summary: string },
+    caseType: 'adr' | 'litigation' = 'adr',
   ) {
     const { case: c, employee } = await this.getAuthorizedCase(
       tenantId,
       userId,
       caseId,
       'employee',
+      caseType,
     );
-    c.timeline.push({
+    const source =
+      caseType === 'adr'
+        ? AdrTimelineSource.MANUAL
+        : LitigationTimelineSource.MANUAL;
+    (c as any).timeline.push({
       at: new Date(),
       title: `Call logged by ${employee!.firstName} ${employee!.lastName}`,
       description: dto.summary,
-      source: AdrTimelineSource.MANUAL,
+      source,
     } as any);
     await c.save();
     return c.toObject();
@@ -460,18 +500,24 @@ export class MyProjectsService {
     userId: string,
     caseId: string,
     dto: { note: string },
+    caseType: 'adr' | 'litigation' = 'adr',
   ) {
     const { case: c, employee } = await this.getAuthorizedCase(
       tenantId,
       userId,
       caseId,
       'employee',
+      caseType,
     );
-    c.timeline.push({
+    const source =
+      caseType === 'adr'
+        ? AdrTimelineSource.MANUAL
+        : LitigationTimelineSource.MANUAL;
+    (c as any).timeline.push({
       at: new Date(),
       title: `Note from ${employee!.firstName} ${employee!.lastName}`,
       description: dto.note,
-      source: AdrTimelineSource.MANUAL,
+      source,
     } as any);
     await c.save();
     return c.toObject();

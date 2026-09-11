@@ -1,6 +1,11 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
-import { AdrDisbursementSchema, AdrDisbursement } from './adr-case.schema';
+import {
+  AdrDisbursementSchema,
+  AdrDisbursement,
+  AdrDraftStatus,
+} from './adr-case.schema';
+import { MessageDirection } from './mandate-workspace.schema';
 
 export type LitigationCaseDocument = LitigationCase & Document;
 
@@ -65,6 +70,12 @@ export class LitigationParty {
   @Prop({ enum: LitigationPartyRole, required: true })
   role: LitigationPartyRole;
   @Prop({ default: '' }) organisation: string;
+  // Required at the DTO/filing-form level (direct litigation
+  // filing genuinely needs a way to reach every party by email) —
+  // but not hard-required at the schema level, since escalation
+  // from an ADR case (where party email is optional) constructs
+  // these directly and shouldn't fail to save over a missing email.
+  @Prop({ default: '' }) email: string;
   @Prop({ type: Types.ObjectId, default: null })
   userId: Types.ObjectId | null;
 }
@@ -143,6 +154,12 @@ export class LitigationCase {
   mandateId: Types.ObjectId | null;
   @Prop({ default: '' }) mandateName: string;
 
+  // Same team-assignment pattern as ADR — the anchor for internal
+  // case communication.
+  @Prop({ type: Types.ObjectId, ref: 'HrTeam', default: null })
+  teamId: Types.ObjectId | null;
+  @Prop({ default: '' }) teamName: string;
+
   @Prop({ type: [LitigationPartySchema], default: [] })
   parties: LitigationParty[];
 
@@ -184,6 +201,160 @@ export class LitigationCase {
   disbursements: AdrDisbursement[];
 
   @Prop({ default: null }) outcome: string | null;
+
+  // Real, named folders for this case's document filing system.
+  @Prop({ type: [String], default: ['General'] })
+  folders: string[];
+
+  // Real read-tracking for the client's message thread.
+  @Prop({ default: null }) messagesLastReadByClientAt: Date | null;
 }
 export const LitigationCaseSchema =
   SchemaFactory.createForClass(LitigationCase);
+
+// ── Communication — same real tenant↔client thread shape as ADR. ──
+export type LitigationCaseMessageDocument = LitigationCaseMessage & Document;
+
+@Schema({ timestamps: true, collection: 'litigation_case_messages' })
+export class LitigationCaseMessage {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'LitigationCase',
+    required: true,
+    index: true,
+  })
+  caseId: Types.ObjectId;
+
+  @Prop({ enum: MessageDirection, required: true })
+  direction: MessageDirection;
+  @Prop({ required: true }) author: string;
+  @Prop({ required: true }) body: string;
+}
+export const LitigationCaseMessageSchema = SchemaFactory.createForClass(
+  LitigationCaseMessage,
+);
+
+// ── Drafting — same real templates/version-control shape as ADR. ──
+@Schema({ _id: true })
+export class LitigationDraftVersion {
+  @Prop({ required: true }) versionNumber: number;
+  @Prop({ required: true }) content: string;
+  @Prop({ required: true }) savedBy: string;
+  @Prop({ required: true, default: () => new Date() }) savedAt: Date;
+}
+export const LitigationDraftVersionSchema = SchemaFactory.createForClass(
+  LitigationDraftVersion,
+);
+
+export type LitigationCaseDraftDocument = LitigationCaseDraft & Document;
+
+@Schema({ timestamps: true, collection: 'litigation_case_drafts' })
+export class LitigationCaseDraft {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'LitigationCase',
+    required: true,
+    index: true,
+  })
+  caseId: Types.ObjectId;
+
+  @Prop({ required: true }) title: string;
+  @Prop({ required: true, default: '' }) content: string;
+  @Prop({ enum: AdrDraftStatus, default: AdrDraftStatus.DRAFT })
+  status: AdrDraftStatus;
+
+  @Prop({ default: '' }) sourceTemplateId: string;
+  @Prop({ default: '' }) sourceTemplateTitle: string;
+
+  @Prop({ type: [LitigationDraftVersionSchema], default: [] })
+  versions: LitigationDraftVersion[];
+  @Prop({ default: 1 }) currentVersion: number;
+
+  @Prop({ type: Types.ObjectId, ref: 'LitigationDocumentEntry', default: null })
+  documentId: Types.ObjectId | null;
+}
+export const LitigationCaseDraftSchema =
+  SchemaFactory.createForClass(LitigationCaseDraft);
+
+// ── Documents — same real folder-organised shape as ADR. ──
+export type LitigationDocumentEntryDocument = LitigationDocumentEntry &
+  Document;
+
+@Schema({ timestamps: true, collection: 'litigation_case_documents' })
+export class LitigationDocumentEntry {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'LitigationCase',
+    required: true,
+    index: true,
+  })
+  caseId: Types.ObjectId;
+
+  @Prop({ required: true }) folder: string;
+  @Prop({ required: true }) name: string;
+
+  @Prop({ default: '' }) content: string;
+  @Prop({ default: '' }) fileUrl: string;
+  @Prop({ default: 0 }) size: number;
+  @Prop({ default: '' }) mimeType: string;
+  @Prop({ default: '' }) uploadedBy: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'LitigationCaseDraft', default: null })
+  sourceDraftId: Types.ObjectId | null;
+}
+export const LitigationDocumentEntrySchema = SchemaFactory.createForClass(
+  LitigationDocumentEntry,
+);
+
+// ── Deadline rules — same real trigger-resolution shape as ADR,
+// with a court date in place of a session date. ──
+export enum LitigationDeadlineTriggerSource {
+  CASE_FILED = 'case_filed',
+  COURT_DATE = 'court_date',
+  OUTCOME = 'outcome',
+  CASCADE = 'cascade',
+  CUSTOM = 'custom',
+}
+
+export type LitigationDeadlineRuleDocument = LitigationDeadlineRule & Document;
+
+@Schema({ timestamps: true, collection: 'litigation_deadline_rules' })
+export class LitigationDeadlineRule {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'LitigationCase',
+    required: true,
+    index: true,
+  })
+  caseId: Types.ObjectId;
+
+  @Prop({ required: true }) triggerLabel: string;
+  @Prop({ enum: LitigationDeadlineTriggerSource, required: true })
+  triggerSource: LitigationDeadlineTriggerSource;
+  // Only set when triggerSource is COURT_DATE — which entry in
+  // LitigationCase.courtDates (0-indexed) this rule's trigger tracks.
+  @Prop({ default: null }) triggerCourtDateIndex: number | null;
+  @Prop({ type: Types.ObjectId, default: null })
+  cascadeFromRuleId: Types.ObjectId | null;
+  @Prop({ default: null }) customTriggerDate: Date | null;
+
+  @Prop({ required: true }) ruleLabel: string;
+  @Prop({ required: true, min: 1 }) windowDays: number;
+
+  @Prop({ default: null }) metAt: Date | null;
+}
+export const LitigationDeadlineRuleSchema = SchemaFactory.createForClass(
+  LitigationDeadlineRule,
+);
