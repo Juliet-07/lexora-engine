@@ -68,6 +68,14 @@ export class RejectTimeEntryDto {
   @ApiProperty() @IsString() reason: string;
 }
 
+// A direct, per-entry override — the tenant can allocate value to a
+// specific entry without needing a rate card set up first, or can
+// correct one that was stamped at $0 because no rate card existed
+// yet for that employee.
+export class SetTimeEntryRateDto {
+  @ApiProperty() @IsNumber() @Min(0) rate: number;
+}
+
 export class UpsertRateCardDto {
   @ApiProperty() @IsMongoId() employeeUserId: string;
   @ApiProperty() @IsString() member: string;

@@ -15,6 +15,7 @@ import {
   CreateTimeEntryDto,
   UpdateTimeEntryDto,
   RejectTimeEntryDto,
+  SetTimeEntryRateDto,
 } from '../dtos';
 import { RateCardService } from './rate-card.service';
 
@@ -114,6 +115,26 @@ export class TimeEntryService {
       e.status = TimesheetStatus.DRAFT;
       e.rejectReason = null;
     }
+    await e.save();
+    return e.toObject();
+  }
+
+  // Real, direct value allocation — independent of whether a rate
+  // card exists for this employee. Once an entry is invoiced its
+  // rate is locked (the client has already been billed at that
+  // number), so this only works up to that point.
+  async setRate(tenantId: string, id: string, dto: SetTimeEntryRateDto) {
+    const e = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!e) throw new NotFoundException('Time entry not found');
+    if (e.invoiceId) {
+      throw new BadRequestException(
+        'This entry has already been invoiced — its rate is locked',
+      );
+    }
+    e.rate = dto.rate;
     await e.save();
     return e.toObject();
   }

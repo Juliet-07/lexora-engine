@@ -19,6 +19,7 @@ import {
   CreateTimeEntryDto,
   UpdateTimeEntryDto,
   RejectTimeEntryDto,
+  SetTimeEntryRateDto,
 } from '../dtos';
 import { TimesheetStatus } from '../schemas';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
@@ -136,6 +137,19 @@ export class TimeEntryController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.reject(t || u, id, dto);
+  }
+
+  @Patch(':id/rate')
+  @ApiOperation({
+    summary: 'Directly allocate/override the value (rate) on an entry',
+  })
+  setRate(
+    @Param('id') id: string,
+    @Body() dto: SetTimeEntryRateDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.setRate(t || u, id, dto);
   }
 
   @Post(':id/approve-for-billing')
