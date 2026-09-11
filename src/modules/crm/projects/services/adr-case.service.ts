@@ -1193,6 +1193,54 @@ export class AdrCaseService {
     });
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // MANDATE BUDGET CONSUMPTION — real spend, computed from
+  // committed time (Approved or further along — draft/submitted
+  // work isn't confirmed yet) and real disbursements recorded on
+  // this mandate's ADR cases. Not a stored, driftable number.
+  // ═══════════════════════════════════════════════════════════
+
+  async getMandateSpend(tenantId: string, mandateId: string) {
+    const mandate: any = await this.mandateService.getById(tenantId, mandateId);
+
+    const entries = await this.timeEntryService.getAll(tenantId, {
+      mandateId,
+    });
+    const committed = entries.filter(
+      (e: any) => e.status !== 'Draft' && e.status !== 'Rejected',
+    );
+    const timeSpent = committed.reduce(
+      (s: number, e: any) => s + e.hours * e.rate,
+      0,
+    );
+
+    const cases = await this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+      })
+      .select('disbursements')
+      .lean();
+    const disbursementSpent = cases.reduce(
+      (s, c: any) =>
+        s + (c.disbursements ?? []).reduce((s2, d) => s2 + d.amount, 0),
+      0,
+    );
+
+    const totalSpent = timeSpent + disbursementSpent;
+    const budget = mandate.budget ?? 0;
+
+    return {
+      budget,
+      timeSpent,
+      disbursementSpent,
+      totalSpent,
+      remaining: budget - totalSpent,
+      percentUsed: budget > 0 ? (totalSpent / budget) * 100 : 0,
+      currency: mandate.currency ?? 'USD',
+    };
+  }
+
   async recordOutcome(tenantId: string, id: string, dto: RecordAdrOutcomeDto) {
     const c = await this.getRawDoc(tenantId, id);
     c.outcome = dto.outcome;

@@ -275,6 +275,12 @@ export class AdrCase {
 
   @Prop({ type: AdrClosureDetailsSchema, default: null })
   closure: AdrClosureDetails | null;
+
+  // Real read-tracking for the client's message thread — only one
+  // client can ever see a given case (the mandate's own client), so
+  // a single timestamp on the case is enough to compute a genuine
+  // unread count rather than guessing from "seen" flags per message.
+  @Prop({ default: null }) messagesLastReadByClientAt: Date | null;
 }
 export const AdrCaseSchema = SchemaFactory.createForClass(AdrCase);
 

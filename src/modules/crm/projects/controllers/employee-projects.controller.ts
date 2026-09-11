@@ -234,6 +234,19 @@ export class MyProjectsController {
   ) {
     return this.service.logMyCaseCall(t || u, u, id, dto);
   }
+
+  @Post('my-cases/:id/notes')
+  @ApiOperation({
+    summary: "Add a note to this case's timeline — visible to the tenant",
+  })
+  addMyCaseNote(
+    @Param('id') id: string,
+    @Body() dto: { note: string },
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addMyCaseNote(t || u, u, id, dto);
+  }
 }
 
 @ApiTags('CRM — Employee Projects Controllers')

@@ -57,4 +57,14 @@ export class ClientCaseController {
   ) {
     return this.service.sendMessage(t || u, u, id, dto);
   }
+
+  @Post('adr/:id/messages/read')
+  @ApiOperation({ summary: "Mark this case's messages as read" })
+  markMessagesRead(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.markMessagesRead(t || u, u, id);
+  }
 }

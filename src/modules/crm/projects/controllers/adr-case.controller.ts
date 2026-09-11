@@ -116,6 +116,19 @@ export class AdrCaseController {
     res.send(buffer);
   }
 
+  @Get('mandate-spend/:mandateId')
+  @ApiOperation({
+    summary:
+      'Real budget consumption for a mandate — committed time + disbursements',
+  })
+  getMandateSpend(
+    @Param('mandateId') mandateId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getMandateSpend(t || u, mandateId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'One case' })
   getOne(

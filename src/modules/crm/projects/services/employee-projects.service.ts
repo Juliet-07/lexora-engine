@@ -454,6 +454,28 @@ export class MyProjectsService {
     await c.save();
     return c.toObject();
   }
+
+  async addMyCaseNote(
+    tenantId: string,
+    userId: string,
+    caseId: string,
+    dto: { note: string },
+  ) {
+    const { case: c, employee } = await this.getAuthorizedCase(
+      tenantId,
+      userId,
+      caseId,
+      'employee',
+    );
+    c.timeline.push({
+      at: new Date(),
+      title: `Note from ${employee!.firstName} ${employee!.lastName}`,
+      description: dto.note,
+      source: AdrTimelineSource.MANUAL,
+    } as any);
+    await c.save();
+    return c.toObject();
+  }
 }
 
 @Injectable()
