@@ -3,3 +3,4 @@ export * from './client-pipeline.dto';
 export * from './contact.dto';
 export * from './lead.dto';
 export * from './sla-profile.dto';
+export * from './vendor.dto';

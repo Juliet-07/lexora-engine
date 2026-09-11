@@ -11,6 +11,8 @@ import {
   SlaProfileSchema,
   ClientCommercial,
   ClientCommercialSchema,
+  Vendor,
+  VendorSchema,
 } from './schemas';
 import {
   LeadService,
@@ -18,6 +20,7 @@ import {
   ContactService,
   SlaProfileService,
   ClientCommercialService,
+  VendorService,
 } from './services';
 import {
   LeadController,
@@ -25,6 +28,7 @@ import {
   ContactController,
   SlaProfileController,
   ClientCommercialController,
+  VendorController,
 } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
 import {
@@ -32,6 +36,10 @@ import {
   ClientProfileSchema,
 } from 'src/modules/tenant/schemas/client-profile.schema';
 import { TenantModule } from 'src/modules/tenant/tenant.module';
+import {
+  Employee,
+  EmployeeSchema,
+} from 'src/modules/hr/schemas/employee.schema';
 
 @Module({
   imports: [
@@ -43,6 +51,8 @@ import { TenantModule } from 'src/modules/tenant/tenant.module';
       { name: Contact.name, schema: ContactSchema },
       { name: ClientCommercial.name, schema: ClientCommercialSchema },
       { name: SlaProfile.name, schema: SlaProfileSchema },
+      { name: Vendor.name, schema: VendorSchema },
+      { name: Employee.name, schema: EmployeeSchema },
     ]),
     TenantModule,
   ],
@@ -52,6 +62,7 @@ import { TenantModule } from 'src/modules/tenant/tenant.module';
     ContactService,
     SlaProfileService,
     ClientCommercialService,
+    VendorService,
   ],
   controllers: [
     LeadController,
@@ -59,6 +70,7 @@ import { TenantModule } from 'src/modules/tenant/tenant.module';
     ContactController,
     SlaProfileController,
     ClientCommercialController,
+    VendorController,
   ],
   exports: [
     LeadService,
@@ -66,6 +78,7 @@ import { TenantModule } from 'src/modules/tenant/tenant.module';
     ContactService,
     SlaProfileService,
     ClientCommercialService,
+    VendorService,
   ],
 })
 export class CrmRelationsModule {}
