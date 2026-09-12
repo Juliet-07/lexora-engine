@@ -117,6 +117,28 @@ export class MyProjectsController {
     return this.service.sendMyMessage(t || u, u, id, userType, dto);
   }
 
+  @Get('my-mandates/:id/messages/unread-count')
+  @ApiOperation({ summary: 'My own unread count for this thread' })
+  getMyThreadUnreadCount(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    return this.service.getMyThreadUnreadCount(t || u, u, id, userType);
+  }
+
+  @Post('my-mandates/:id/messages/read')
+  @ApiOperation({ summary: 'Mark my own thread read' })
+  markMyThreadRead(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    return this.service.markMyThreadRead(t || u, u, id, userType);
+  }
+
   @Get('my-tasks')
   @ApiQuery({ name: 'mandateId', required: false })
   @ApiOperation({

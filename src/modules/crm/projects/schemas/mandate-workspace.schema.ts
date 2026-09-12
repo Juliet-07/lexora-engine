@@ -119,3 +119,28 @@ export class MandateDocumentEntry {
 }
 export const MandateDocumentSchema =
   SchemaFactory.createForClass(MandateDocumentEntry);
+
+// ── Read-tracking for the tenant↔employee message thread ─────────
+// One record per (mandate, employee) pair — the thread is scoped
+// that way, so read state is too. Both directions live on the same
+// record since they're never touched by the same party at once.
+export type MandateEmployeeThreadReadDocument = MandateEmployeeThreadRead &
+  Document;
+
+@Schema({ timestamps: true, collection: 'crm_mandate_employee_thread_reads' })
+export class MandateEmployeeThreadRead {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'Mandate', required: true, index: true })
+  mandateId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, required: true, index: true })
+  employeeUserId: Types.ObjectId;
+
+  @Prop({ default: null }) lastReadByEmployeeAt: Date | null;
+  @Prop({ default: null }) lastReadByTenantAt: Date | null;
+}
+export const MandateEmployeeThreadReadSchema = SchemaFactory.createForClass(
+  MandateEmployeeThreadRead,
+);

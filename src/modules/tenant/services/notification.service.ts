@@ -328,6 +328,44 @@ export class TenantNotificationService {
     );
   }
 
+  // ── Mandate collaboration — real notification in both
+  // directions, matching the same "whoever didn't send it gets
+  // notified" rule as every other thread in this service. ──
+  @OnEvent('employee.mandate_message.received')
+  async onEmployeeMandateMessageReceived(e: {
+    tenantId: string;
+    employeeUserId: string;
+    mandateId: string;
+    mandateName: string;
+    author: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.employeeUserId,
+      TenantNotificationType.GENERAL,
+      `New message from ${e.author}`,
+      `On "${e.mandateName}".`,
+      `/projects/${e.mandateId}`,
+    );
+  }
+
+  @OnEvent('tenant.mandate_message.received')
+  async onTenantMandateMessageReceived(e: {
+    tenantId: string;
+    mandateId: string;
+    mandateName: string;
+    author: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.tenantId,
+      TenantNotificationType.GENERAL,
+      `New message from ${e.author}`,
+      `On "${e.mandateName}".`,
+      `/crm/mandates`,
+    );
+  }
+
   @OnEvent('tenant.sla.threshold_crossed')
   async onSlaThresholdCrossed(e: {
     tenantId: string;

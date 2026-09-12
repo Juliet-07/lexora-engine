@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   MandateMessage,
   MandateMessageDocument,
@@ -14,6 +15,8 @@ import {
   MandateDocumentDocument,
   ClientDocStatus,
   DEFAULT_MANDATE_FOLDERS,
+  MandateEmployeeThreadRead,
+  MandateEmployeeThreadReadDocument,
 } from '../schemas';
 import { MandateService } from './mandate.service';
 import {
@@ -21,6 +24,10 @@ import {
   CreateEmployeeMessageDto,
   CreateNoteDto,
 } from '../dtos';
+import {
+  Employee,
+  EmployeeDocument,
+} from '../../../hr/schemas/employee.schema';
 
 @Injectable()
 export class MandateWorkspaceService {
@@ -33,7 +40,12 @@ export class MandateWorkspaceService {
     private readonly noteModel: Model<MandateNoteDocument>,
     @InjectModel(MandateDocumentEntry.name)
     private readonly documentModel: Model<MandateDocumentDocument>,
+    @InjectModel(MandateEmployeeThreadRead.name)
+    private readonly threadReadModel: Model<MandateEmployeeThreadReadDocument>,
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
     private readonly mandateService: MandateService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // ── Messages ─────────────────────────────────────────────────
@@ -100,7 +112,167 @@ export class MandateWorkspaceService {
       author: dto.author,
       body: dto.body,
     });
+
+    const mandate = await this.mandateService
+      .getById(tenantId, mandateId)
+      .catch(() => null);
+    const mandateName = (mandate as any)?.name ?? 'a mandate';
+
+    if (direction === EmployeeMessageDirection.TENANT) {
+      // employeeUserId here is the Employee record's own _id (how
+      // this thread has always been keyed), not their linked User
+      // account — resolve the real User._id before notifying, since
+      // TenantNotification.recipientUserId must be a real user.
+      const employee = await this.employeeModel
+        .findById(employeeUserId)
+        .select('userId')
+        .lean();
+      if (employee?.userId) {
+        this.eventEmitter.emit('employee.mandate_message.received', {
+          tenantId,
+          employeeUserId: String(employee.userId),
+          mandateId,
+          mandateName,
+          author: dto.author,
+        });
+      }
+    } else {
+      // Employee sent it — the tenant is notified.
+      this.eventEmitter.emit('tenant.mandate_message.received', {
+        tenantId,
+        mandateId,
+        mandateName,
+        author: dto.author,
+      });
+    }
+
     return created.toObject();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // READ-TRACKING — real unread state per (mandate, employee)
+  // thread, for both directions.
+  // ═══════════════════════════════════════════════════════════
+
+  private async unreadCountsFor(
+    tenantId: string,
+    mandateId: string,
+    direction: EmployeeMessageDirection,
+    cutoffByEmployeeId: Map<string, Date | null>,
+  ) {
+    const counts: Record<string, number> = {};
+    await Promise.all(
+      Array.from(cutoffByEmployeeId.entries()).map(
+        async ([employeeUserId, cutoff]) => {
+          counts[employeeUserId] =
+            await this.employeeMessageModel.countDocuments({
+              tenantId: new Types.ObjectId(tenantId),
+              mandateId: new Types.ObjectId(mandateId),
+              employeeUserId: new Types.ObjectId(employeeUserId),
+              direction,
+              createdAt: cutoff ? { $gt: cutoff } : { $exists: true },
+            });
+        },
+      ),
+    );
+    return counts;
+  }
+
+  // Tenant-side: unread count per employee thread on this mandate —
+  // one query per thread the tenant has actually messaged with, not
+  // a scan of every employee that ever existed.
+  async getEmployeeThreadUnreadSummary(tenantId: string, mandateId: string) {
+    const employeeIds = await this.employeeMessageModel.distinct(
+      'employeeUserId',
+      {
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+      },
+    );
+    if (!employeeIds.length) return {};
+
+    const reads = await this.threadReadModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+        employeeUserId: { $in: employeeIds },
+      })
+      .lean();
+    const readByEmployee = new Map(
+      reads.map((r) => [String(r.employeeUserId), r.lastReadByTenantAt]),
+    );
+    const cutoffByEmployeeId = new Map(
+      employeeIds.map((id) => [
+        String(id),
+        readByEmployee.get(String(id)) ?? null,
+      ]),
+    );
+
+    return this.unreadCountsFor(
+      tenantId,
+      mandateId,
+      EmployeeMessageDirection.EMPLOYEE,
+      cutoffByEmployeeId,
+    );
+  }
+
+  async markEmployeeThreadReadByTenant(
+    tenantId: string,
+    mandateId: string,
+    employeeUserId: string,
+  ) {
+    await this.threadReadModel.updateOne(
+      {
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+        employeeUserId: new Types.ObjectId(employeeUserId),
+      },
+      { $set: { lastReadByTenantAt: new Date() } },
+      { upsert: true },
+    );
+    return { success: true };
+  }
+
+  // Employee-side: unread count for their own thread on this
+  // mandate.
+  async getMyThreadUnreadCount(
+    tenantId: string,
+    mandateId: string,
+    employeeUserId: string,
+  ) {
+    const read = await this.threadReadModel
+      .findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+        employeeUserId: new Types.ObjectId(employeeUserId),
+      })
+      .lean();
+    return this.employeeMessageModel.countDocuments({
+      tenantId: new Types.ObjectId(tenantId),
+      mandateId: new Types.ObjectId(mandateId),
+      employeeUserId: new Types.ObjectId(employeeUserId),
+      direction: EmployeeMessageDirection.TENANT,
+      createdAt: read?.lastReadByEmployeeAt
+        ? { $gt: read.lastReadByEmployeeAt }
+        : { $exists: true },
+    });
+  }
+
+  async markMyThreadRead(
+    tenantId: string,
+    mandateId: string,
+    employeeUserId: string,
+  ) {
+    await this.threadReadModel.updateOne(
+      {
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+        employeeUserId: new Types.ObjectId(employeeUserId),
+      },
+      { $set: { lastReadByEmployeeAt: new Date() } },
+      { upsert: true },
+    );
+    return { success: true };
   }
 
   // ── Notes ────────────────────────────────────────────────────

@@ -259,6 +259,50 @@ export class MyProjectsService {
     );
   }
 
+  async getMyThreadUnreadCount(
+    tenantId: string,
+    userId: string,
+    mandateId: string,
+    userType: string,
+  ) {
+    const { employee } = await this.getAuthorizedMandate(
+      tenantId,
+      userId,
+      mandateId,
+      userType,
+    );
+    if (!employee) return 0;
+    return this.workspaceService.getMyThreadUnreadCount(
+      tenantId,
+      mandateId,
+      String(employee._id),
+    );
+  }
+
+  async markMyThreadRead(
+    tenantId: string,
+    userId: string,
+    mandateId: string,
+    userType: string,
+  ) {
+    const { employee } = await this.getAuthorizedMandate(
+      tenantId,
+      userId,
+      mandateId,
+      userType,
+    );
+    if (!employee) {
+      throw new NotFoundException(
+        'No employee record is linked to this account',
+      );
+    }
+    return this.workspaceService.markMyThreadRead(
+      tenantId,
+      mandateId,
+      String(employee._id),
+    );
+  }
+
   // Just this employee's own tasks — across every mandate, or one
   // mandate if given. The "My Tasks" view. Same delegation reason as
   // getMandateTasks above.

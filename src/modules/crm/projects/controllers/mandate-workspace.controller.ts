@@ -84,6 +84,18 @@ export class MandateWorkspaceController {
 
   // ── Messages (tenant ↔ a specific employee) ─────────────────────
 
+  @Get('employee-messages/unread-summary')
+  @ApiOperation({
+    summary: 'Unread count per employee thread on this mandate',
+  })
+  getEmployeeThreadUnreadSummary(
+    @Param('mandateId') mandateId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getEmployeeThreadUnreadSummary(t || u, mandateId);
+  }
+
   @Get('employee-messages/:employeeUserId')
   @ApiOperation({ summary: 'Message thread with one employee on this mandate' })
   getEmployeeMessages(
@@ -110,6 +122,21 @@ export class MandateWorkspaceController {
       employeeUserId,
       EmployeeMessageDirection.TENANT,
       dto,
+    );
+  }
+
+  @Post('employee-messages/:employeeUserId/read')
+  @ApiOperation({ summary: "Mark this employee's thread read (tenant side)" })
+  markEmployeeThreadReadByTenant(
+    @Param('mandateId') mandateId: string,
+    @Param('employeeUserId') employeeUserId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.markEmployeeThreadReadByTenant(
+      t || u,
+      mandateId,
+      employeeUserId,
     );
   }
 
