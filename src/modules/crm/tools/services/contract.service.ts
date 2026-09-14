@@ -10,6 +10,7 @@ import { Model, Types } from 'mongoose';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { Comment, CommentDocument, CommentSubjectType } from '../schemas';
+import { Vendor, VendorDocument } from '../../crm/schemas/vendor.schema';
 import { AddCommentDto, EditCommentDto, ToggleReactionDto } from '../dtos';
 import { EmployeeService } from 'src/modules/hr/services/employee.service';
 import {
@@ -279,6 +280,8 @@ export class ContractService {
     private readonly portfolioRiskModel: Model<PortfolioRiskDocument>,
     @InjectModel(Clause.name)
     private readonly clauseModel: Model<ClauseDocument>,
+    @InjectModel(Vendor.name)
+    private readonly vendorModel: Model<VendorDocument>,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -307,6 +310,19 @@ export class ContractService {
       .find({
         tenantId: new Types.ObjectId(tenantId),
         origin: 'kyc_onboarding',
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  // Real, filtered list for a single vendor's own Contracts tab —
+  // every contract actually issued to that vendor, by the real
+  // vendorId link set at generation time.
+  async getVendorContracts(tenantId: string, vendorId: string) {
+    return this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        vendorId: new Types.ObjectId(vendorId),
       })
       .sort({ createdAt: -1 })
       .lean();
@@ -370,6 +386,7 @@ export class ContractService {
     const { counterparty, counterpartyEmail } = await this.resolveCounterparty(
       tenantId,
       dto.clientId,
+      undefined,
       dto.counterparty,
       dto.counterpartyEmail,
     );
@@ -769,15 +786,37 @@ export class ContractService {
     return { name, email: client.email };
   }
 
-  // Two real, distinct paths for who a contract is with — a
+  private async resolveVendorDisplay(
+    tenantId: string,
+    vendorId: string | undefined,
+  ): Promise<{ name: string; email: string } | null> {
+    if (!vendorId) return null;
+    const vendor = await this.vendorModel
+      .findOne({ _id: vendorId, tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+    if (!vendor) throw new NotFoundException('Vendor not found');
+    if (!vendor.contactEmail) {
+      throw new BadRequestException(
+        'This vendor has no contact email on file — add one before generating a contract.',
+      );
+    }
+    return {
+      name: vendor.contactName || vendor.legalName,
+      email: vendor.contactEmail,
+    };
+  }
+
+  // Three real, distinct paths for who a contract is with — a
   // registered client (name/email derived from the real client
-  // record, authoritative, never trusted from the request body) or
-  // an external party (a vendor/consultant who isn't a platform
-  // user at all, whose name/email genuinely can only come from what
-  // the tenant typed in). Exactly one of these must be real.
+  // record, authoritative, never trusted from the request body), a
+  // registered vendor (same rule, from the real vendor record), or
+  // an external party (a consultant who isn't a platform record at
+  // all, whose name/email genuinely can only come from what the
+  // tenant typed in). Exactly one of these must be real.
   private async resolveCounterparty(
     tenantId: string,
     clientId: string | undefined,
+    vendorId: string | undefined,
     fallbackName: string | undefined,
     fallbackEmail: string | undefined,
   ): Promise<{ counterparty: string; counterpartyEmail: string }> {
@@ -785,9 +824,13 @@ export class ContractService {
     if (client) {
       return { counterparty: client.name, counterpartyEmail: client.email };
     }
+    const vendor = await this.resolveVendorDisplay(tenantId, vendorId);
+    if (vendor) {
+      return { counterparty: vendor.name, counterpartyEmail: vendor.email };
+    }
     if (!fallbackName || !fallbackEmail) {
       throw new BadRequestException(
-        'Pick a registered client, or provide both a name and email for an external party.',
+        'Pick a registered client or vendor, or provide both a name and email for an external party.',
       );
     }
     return { counterparty: fallbackName, counterpartyEmail: fallbackEmail };
@@ -824,6 +867,7 @@ export class ContractService {
     const { counterparty, counterpartyEmail } = await this.resolveCounterparty(
       tenantId,
       dto.clientId,
+      dto.vendorId,
       dto.counterparty,
       dto.counterpartyEmail,
     );
@@ -859,6 +903,7 @@ export class ContractService {
       autoRenew: dto.autoRenew ?? false,
       owner: dto.owner ?? '',
       clientId: dto.clientId ? new Types.ObjectId(dto.clientId) : null,
+      vendorId: dto.vendorId ? new Types.ObjectId(dto.vendorId) : null,
       mandateId: dto.mandateId ? new Types.ObjectId(dto.mandateId) : null,
       mandateName: dto.mandateName ?? '',
       templateId: dto.templateSource === 'tenant' ? template._id : null,
@@ -866,7 +911,7 @@ export class ContractService {
       renderedBody,
       requiresSignature: true,
       signatureStatus: SignatureStatus.NOT_SENT,
-      origin: dto.origin ?? 'crm',
+      origin: dto.vendorId ? 'vendor' : (dto.origin ?? 'crm'),
     });
     return created;
   }

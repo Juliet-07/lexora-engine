@@ -203,6 +203,16 @@ export class ContractController {
     return this.service.getClauseLibrary(t || u);
   }
 
+  @Get('vendor/:vendorId')
+  @ApiOperation({ summary: "One vendor's own contracts" })
+  getVendorContracts(
+    @Param('vendorId') vendorId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getVendorContracts(t || u, vendorId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'One contract' })
   getById(

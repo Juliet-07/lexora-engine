@@ -10,12 +10,7 @@ import {
   IsEmail,
   Min,
 } from 'class-validator';
-import {
-  VendorCategory,
-  VendorRisk,
-  VendorStatus,
-  ContractStatus,
-} from '../schemas';
+import { VendorCategory, VendorRisk, VendorStatus } from '../schemas';
 
 export class CreateVendorDto {
   @ApiProperty() @IsString() legalName: string;
@@ -100,28 +95,6 @@ export class SetVendorStatusDto {
 export class AddVendorNoteDto {
   @ApiProperty() @IsString() title: string;
   @ApiPropertyOptional() @IsOptional() @IsString() body?: string;
-}
-
-// ── Contracts ────────────────────────────────────────────────────
-export class SaveVendorContractDto {
-  @ApiPropertyOptional() @IsOptional() @IsMongoId() contractId?: string;
-  @ApiProperty() @IsString() title: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() templateId?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() templateName?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() body?: string;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) value?: number;
-  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
-  @ApiPropertyOptional() @IsOptional() @IsDateString() startDate?: string;
-  @ApiPropertyOptional() @IsOptional() @IsDateString() endDate?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() signerName?: string;
-  @ApiPropertyOptional() @IsOptional() @IsEmail() signerEmail?: string;
-}
-
-export class AdvanceContractDto {
-  @ApiProperty({ enum: ContractStatus })
-  @IsEnum(ContractStatus)
-  status: ContractStatus;
-  @ApiPropertyOptional() @IsOptional() @IsString() label?: string;
 }
 
 // ── Approval ─────────────────────────────────────────────────────

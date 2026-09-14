@@ -7,6 +7,10 @@ import { SuperAdminModule } from 'src/modules/super_admin/super_admin.module';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
 import {
+  Vendor,
+  VendorSchema,
+} from 'src/modules/crm/crm/schemas/vendor.schema';
+import {
   ClientProfileRecord,
   ClientProfileSchema,
 } from 'src/modules/tenant/schemas/client-profile.schema';
@@ -93,6 +97,7 @@ import {
         name: ToolContractSigningToken.name,
         schema: ToolContractSigningTokenSchema,
       },
+      { name: Vendor.name, schema: VendorSchema },
     ]),
   ],
   providers: [

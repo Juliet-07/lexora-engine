@@ -16,8 +16,6 @@ import {
   CreateVendorDto,
   UpdateVendorDto,
   AddVendorNoteDto,
-  SaveVendorContractDto,
-  AdvanceContractDto,
   RequestVendorApprovalDto,
   DecideVendorApprovalDto,
   AddVendorSpendDto,
@@ -168,6 +166,20 @@ export class VendorService {
     item.done = true;
 
     this.logActivity(v, `Evidence uploaded for "${item.label}"`);
+
+    // This is the point the status actually changes — the moment
+    // the last checklist item gets real evidence. Only fires while
+    // still Pending DD, so it never overrides a status a tenant
+    // has since moved on their own (e.g. Suspended).
+    const allDone = v.ddItems.every((d) => d.done);
+    if (allDone && v.status === VendorStatus.PENDING_DD) {
+      v.status = VendorStatus.PENDING_APPROVAL;
+      this.logActivity(
+        v,
+        'All due diligence items complete — ready for approval',
+      );
+    }
+
     await v.save();
     return v.toObject();
   }
@@ -210,88 +222,6 @@ export class VendorService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // CONTRACTS
-  // ═══════════════════════════════════════════════════════════
-
-  async saveContract(tenantId: string, id: string, dto: SaveVendorContractDto) {
-    const v = await this.getRawDoc(tenantId, id);
-
-    if (dto.contractId) {
-      const existing = v.contracts.find(
-        (c: any) => String(c._id) === dto.contractId,
-      );
-      if (!existing) throw new NotFoundException('Contract not found');
-      if (dto.title !== undefined) existing.title = dto.title;
-      if (dto.body !== undefined) existing.body = dto.body;
-      if (dto.value !== undefined) existing.value = dto.value;
-      if (dto.currency !== undefined) existing.currency = dto.currency;
-      if (dto.startDate !== undefined)
-        existing.startDate = new Date(dto.startDate);
-      if (dto.endDate !== undefined) existing.endDate = new Date(dto.endDate);
-      if (dto.signerName !== undefined) existing.signerName = dto.signerName;
-      if (dto.signerEmail !== undefined) existing.signerEmail = dto.signerEmail;
-      this.logActivity(v, `Contract "${existing.title}" updated`);
-      await v.save();
-      return v.toObject();
-    }
-
-    v.contracts.unshift({
-      title: dto.title,
-      templateId: dto.templateId ?? '',
-      templateName: dto.templateName ?? '',
-      body: dto.body ?? '',
-      value: dto.value ?? 0,
-      currency: dto.currency ?? v.currency,
-      startDate: dto.startDate ? new Date(dto.startDate) : null,
-      endDate: dto.endDate ? new Date(dto.endDate) : null,
-      signerName: dto.signerName ?? '',
-      signerEmail: dto.signerEmail ?? '',
-      history: [{ at: new Date(), label: 'Draft created from template' }],
-    } as any);
-    this.logActivity(
-      v,
-      `Contract "${dto.title}" drafted${dto.templateName ? ` from ${dto.templateName}` : ''}`,
-    );
-    await v.save();
-    return v.toObject();
-  }
-
-  async advanceContract(
-    tenantId: string,
-    id: string,
-    contractId: string,
-    dto: AdvanceContractDto,
-  ) {
-    const v = await this.getRawDoc(tenantId, id);
-    const c = v.contracts.find((c: any) => String(c._id) === contractId);
-    if (!c) throw new NotFoundException('Contract not found');
-
-    c.status = dto.status;
-    if (dto.status === 'sent') c.sentAt = new Date();
-    if (dto.status === 'signed') c.signedAt = new Date();
-    c.history.push({
-      at: new Date(),
-      label: dto.label ?? `Status set to ${dto.status}`,
-    } as any);
-
-    this.logActivity(v, dto.label ?? `Contract "${c.title}" → ${dto.status}`);
-    await v.save();
-    return v.toObject();
-  }
-
-  async deleteContract(tenantId: string, id: string, contractId: string) {
-    const v = await this.getRawDoc(tenantId, id);
-    const c = v.contracts.find((c: any) => String(c._id) === contractId);
-    if (!c) throw new NotFoundException('Contract not found');
-    v.contracts = v.contracts.filter(
-      (x: any) => String(x._id) !== contractId,
-    ) as any;
-    v.markModified('contracts');
-    await v.save();
-    return v.toObject();
-  }
-
-  // ═══════════════════════════════════════════════════════════
   // APPROVAL — real employee reference, restricted server-side to
   // Manager / Head of Department, exactly as requested.
   // ═══════════════════════════════════════════════════════════
@@ -310,6 +240,76 @@ export class VendorService {
       jobTitle: e.jobTitle,
       hierarchyRole: e.hierarchyRole,
     }));
+  }
+
+  // Employee-side view — vendors this HOD/Manager still needs to
+  // decide on, and ones they've already approved. Scoped to their
+  // own employee record as approver, never every vendor in the
+  // tenant. Returns empty lists (not an error) for an employee who
+  // isn't currently an eligible approver — the tab simply has
+  // nothing to show them, which is a legitimate, ordinary state.
+  async getMyApprovals(tenantId: string, employeeId: string) {
+    const [pending, approved] = await Promise.all([
+      this.model
+        .find({
+          tenantId: new Types.ObjectId(tenantId),
+          approverEmployeeId: new Types.ObjectId(employeeId),
+          approvalStatus: VendorApprovalStatus.PENDING,
+        })
+        .sort({ approvalRequestedAt: -1 })
+        .lean(),
+      this.model
+        .find({
+          tenantId: new Types.ObjectId(tenantId),
+          approverEmployeeId: new Types.ObjectId(employeeId),
+          approvalStatus: VendorApprovalStatus.APPROVED,
+        })
+        .sort({ approvalDecidedAt: -1 })
+        .lean(),
+    ]);
+    return { pending, approved };
+  }
+
+  async getMyApprovalsByUser(tenantId: string, userId: string) {
+    const employee = await this.employeeModel
+      .findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        userId: new Types.ObjectId(userId),
+      })
+      .select('_id')
+      .lean();
+    // No linked employee record, or not currently an approver on
+    // anything — an empty tab, not an error.
+    if (!employee) return { pending: [], approved: [] };
+    return this.getMyApprovals(tenantId, String(employee._id));
+  }
+
+  // Same detail an admin sees, but only reachable when the calling
+  // employee is genuinely the approver on this vendor — never a
+  // way for an employee to browse arbitrary vendor records.
+  async getVendorForApprover(
+    tenantId: string,
+    userId: string,
+    vendorId: string,
+  ) {
+    const employee = await this.employeeModel
+      .findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        userId: new Types.ObjectId(userId),
+      })
+      .select('_id')
+      .lean();
+    if (!employee) throw new NotFoundException('Vendor not found');
+
+    const v = await this.model
+      .findOne({
+        _id: vendorId,
+        tenantId: new Types.ObjectId(tenantId),
+        approverEmployeeId: employee._id,
+      })
+      .lean();
+    if (!v) throw new NotFoundException('Vendor not found');
+    return v;
   }
 
   async requestApproval(

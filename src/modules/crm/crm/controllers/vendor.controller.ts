@@ -26,8 +26,6 @@ import {
   UpdateVendorDto,
   SetVendorStatusDto,
   AddVendorNoteDto,
-  SaveVendorContractDto,
-  AdvanceContractDto,
   RequestVendorApprovalDto,
   DecideVendorApprovalDto,
   AddVendorSpendDto,
@@ -158,40 +156,10 @@ export class VendorController {
     return this.service.addNote(t || u, id, 'You', dto);
   }
 
-  // ── Contracts ──────────────────────────────────────────────
-  @Post(':id/contracts')
-  @ApiOperation({ summary: 'Create or update a contract' })
-  saveContract(
-    @Param('id') id: string,
-    @Body() dto: SaveVendorContractDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.saveContract(t || u, id, dto);
-  }
-
-  @Patch(':id/contracts/:contractId/status')
-  @ApiOperation({ summary: 'Advance a contract through its lifecycle' })
-  advanceContract(
-    @Param('id') id: string,
-    @Param('contractId') contractId: string,
-    @Body() dto: AdvanceContractDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.advanceContract(t || u, id, contractId, dto);
-  }
-
-  @Delete(':id/contracts/:contractId')
-  @ApiOperation({ summary: 'Delete a contract' })
-  deleteContract(
-    @Param('id') id: string,
-    @Param('contractId') contractId: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.deleteContract(t || u, id, contractId);
-  }
+  // Contracts for a vendor now go through the real contract
+  // lifecycle at /crm/contracts (generate-from-template, with a
+  // vendorId), not a duplicate system here — see
+  // ContractController.getVendorContracts for the per-vendor list.
 
   // ── Approval ───────────────────────────────────────────────
   @Post(':id/approval/request')
@@ -229,5 +197,38 @@ export class VendorController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.addSpendEntry(t || u, id, dto);
+  }
+}
+
+@ApiTags('CRM — My Vendor Approvals')
+@ApiBearerAuth()
+@UserTypes(UserType.EMPLOYEE, UserType.TENANT)
+@Controller('crm/my-vendor-approvals')
+export class EmployeeVendorController {
+  constructor(private readonly service: VendorService) {}
+
+  @Get()
+  @ApiOperation({
+    summary:
+      "Vendors this employee (if a Head of Department or Manager) needs to approve, and ones they've already approved",
+  })
+  getMyApprovals(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getMyApprovalsByUser(t || u, u);
+  }
+
+  @Get(':id')
+  @ApiOperation({
+    summary:
+      "One vendor's full details — only reachable when this employee is genuinely the approver on it",
+  })
+  getOne(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getVendorForApprover(t || u, u, id);
   }
 }

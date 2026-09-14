@@ -26,15 +26,6 @@ export enum VendorStatus {
   OFFBOARDED = 'Offboarded',
 }
 
-export enum ContractStatus {
-  DRAFT = 'draft',
-  SENT = 'sent',
-  SIGNED = 'signed',
-  ACTIVE = 'active',
-  EXPIRED = 'expired',
-  TERMINATED = 'terminated',
-}
-
 export enum VendorApprovalStatus {
   NOT_REQUESTED = 'not_requested',
   PENDING = 'pending',
@@ -88,37 +79,6 @@ export class DdChecklistItem {
 }
 export const DdChecklistItemSchema =
   SchemaFactory.createForClass(DdChecklistItem);
-
-@Schema({ _id: true })
-export class VendorContractHistoryEntry {
-  @Prop({ required: true, default: () => new Date() }) at: Date;
-  @Prop({ required: true }) label: string;
-}
-export const VendorContractHistorySchema = SchemaFactory.createForClass(
-  VendorContractHistoryEntry,
-);
-
-@Schema({ _id: true })
-export class VendorContract {
-  @Prop({ required: true }) title: string;
-  @Prop({ default: '' }) templateId: string;
-  @Prop({ default: '' }) templateName: string;
-  @Prop({ default: '' }) body: string;
-  @Prop({ enum: ContractStatus, default: ContractStatus.DRAFT })
-  status: ContractStatus;
-  @Prop({ default: 0 }) value: number;
-  @Prop({ default: 'USD' }) currency: string;
-  @Prop({ default: null }) startDate: Date | null;
-  @Prop({ default: null }) endDate: Date | null;
-  @Prop({ default: null }) sentAt: Date | null;
-  @Prop({ default: null }) signedAt: Date | null;
-  @Prop({ default: '' }) signerName: string;
-  @Prop({ default: '' }) signerEmail: string;
-  @Prop({ type: [VendorContractHistorySchema], default: [] })
-  history: VendorContractHistoryEntry[];
-}
-export const VendorContractSchema =
-  SchemaFactory.createForClass(VendorContract);
 
 @Schema({ _id: true })
 export class VendorNote {
@@ -198,8 +158,6 @@ export class Vendor {
 
   @Prop({ type: [DdChecklistItemSchema], default: [] })
   ddItems: DdChecklistItem[];
-  @Prop({ type: [VendorContractSchema], default: [] })
-  contracts: VendorContract[];
   @Prop({ type: [VendorNoteSchema], default: [] }) notes: VendorNote[];
   @Prop({ type: [VendorActivitySchema], default: [] })
   activity: VendorActivity[];

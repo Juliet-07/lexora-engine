@@ -29,6 +29,7 @@ import {
   SlaProfileController,
   ClientCommercialController,
   VendorController,
+  EmployeeVendorController,
 } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
 import {
@@ -71,6 +72,7 @@ import {
     SlaProfileController,
     ClientCommercialController,
     VendorController,
+    EmployeeVendorController,
   ],
   exports: [
     LeadService,

@@ -274,8 +274,20 @@ export class ToolContract {
   // fields like clientId or template moduleKey, either of which can
   // also be true for an ordinary CRM contract sent to an existing
   // client.
-  @Prop({ enum: ['crm', 'kyc_onboarding'], default: 'crm', index: true })
-  origin: 'crm' | 'kyc_onboarding';
+  @Prop({
+    enum: ['crm', 'kyc_onboarding', 'vendor'],
+    default: 'crm',
+    index: true,
+  })
+  origin: 'crm' | 'kyc_onboarding' | 'vendor';
+
+  // Real link back to the vendor this contract is with, set only
+  // by the vendor-management flow — parallels mandateId below.
+  // Vendors are almost never a registered platform client, so this
+  // is the real relationship a vendor contract hangs off, distinct
+  // from clientId.
+  @Prop({ type: Types.ObjectId, ref: 'Vendor', default: null, index: true })
+  vendorId: Types.ObjectId | null;
 
   @Prop({ type: Types.ObjectId, ref: 'Mandate', default: null })
   mandateId: Types.ObjectId | null;

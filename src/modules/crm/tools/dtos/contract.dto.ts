@@ -196,12 +196,17 @@ export class GenerateFromTemplateDto {
   @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() mandateName?: string;
-  // Set only by the KYC onboarding flow — every other caller leaves
-  // this unset and gets the real default ('crm').
-  @ApiPropertyOptional({ enum: ['crm', 'kyc_onboarding'] })
+  // Set only by the KYC onboarding or vendor-management flows —
+  // every other caller leaves this unset and gets the real
+  // default ('crm').
+  @ApiPropertyOptional({ enum: ['crm', 'kyc_onboarding', 'vendor'] })
   @IsOptional()
-  @IsEnum(['crm', 'kyc_onboarding'])
-  origin?: 'crm' | 'kyc_onboarding';
+  @IsEnum(['crm', 'kyc_onboarding', 'vendor'])
+  origin?: 'crm' | 'kyc_onboarding' | 'vendor';
+  // Real link to the vendor this contract is with — when set,
+  // counterparty name/email are derived from the real vendor
+  // record server-side, same rule as clientId.
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() vendorId?: string;
 }
 
 export class SendForSignatureDto {
