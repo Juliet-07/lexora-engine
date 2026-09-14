@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { Comment, CommentDocument, CommentSubjectType } from '../schemas';
 import { Vendor, VendorDocument } from '../../crm/schemas/vendor.schema';
+import { REVIEW_MONTHS as VENDOR_REVIEW_MONTHS } from '../../crm/services/vendor.service';
 import { AddCommentDto, EditCommentDto, ToggleReactionDto } from '../dtos';
 import { EmployeeService } from 'src/modules/hr/services/employee.service';
 import {
@@ -795,6 +796,11 @@ export class ContractService {
       .findOne({ _id: vendorId, tenantId: new Types.ObjectId(tenantId) })
       .lean();
     if (!vendor) throw new NotFoundException('Vendor not found');
+    if (vendor.approvalStatus !== 'approved') {
+      throw new BadRequestException(
+        'This vendor has not been approved yet — contracting can only begin once approval is completed.',
+      );
+    }
     if (!vendor.contactEmail) {
       throw new BadRequestException(
         'This vendor has no contact email on file — add one before generating a contract.',
@@ -1183,6 +1189,31 @@ export class ContractService {
         contractId: String(contract._id),
         title: contract.title,
       });
+    }
+
+    // The vendor becomes genuinely Active only here — once the
+    // contract is fully executed by both sides, not merely
+    // approved. Only ever advances a vendor still in "Approved"
+    // (awaiting its first contract); never touches one that's
+    // already Active, Suspended, or Offboarded.
+    if (contract.vendorId) {
+      const vendor = await this.vendorModel.findOne({
+        _id: contract.vendorId,
+        tenantId: new Types.ObjectId(tenantId),
+      });
+      if (vendor && vendor.status === 'Approved') {
+        vendor.status = 'Active' as any;
+        if (!vendor.onboardedAt) vendor.onboardedAt = signedAt;
+        const months = VENDOR_REVIEW_MONTHS[vendor.reviewFrequency] ?? 12;
+        const next = new Date(signedAt);
+        next.setMonth(next.getMonth() + months);
+        vendor.nextReview = next;
+        vendor.activity.unshift({
+          at: signedAt,
+          text: `Contract "${contract.title}" fully executed — vendor activated`,
+        } as any);
+        await vendor.save();
+      }
     }
 
     return contract;

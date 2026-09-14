@@ -21,6 +21,10 @@ export enum VendorRisk {
 export enum VendorStatus {
   PENDING_DD = 'Pending DD',
   PENDING_APPROVAL = 'Pending approval',
+  // Approval decided, contracting can now begin — not yet Active,
+  // since Active means the contract is fully executed (signed by
+  // the vendor and countersigned by the tenant), not just approved.
+  APPROVED = 'Approved',
   ACTIVE = 'Active',
   SUSPENDED = 'Suspended',
   OFFBOARDED = 'Offboarded',

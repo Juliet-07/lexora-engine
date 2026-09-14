@@ -366,6 +366,42 @@ export class TenantNotificationService {
     );
   }
 
+  // ── Vendor approval — real notification in both directions. ──
+  @OnEvent('employee.vendor_approval.assigned')
+  async onVendorApprovalAssigned(e: {
+    tenantId: string;
+    employeeUserId: string;
+    vendorId: string;
+    vendorName: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.employeeUserId,
+      TenantNotificationType.GENERAL,
+      `Vendor approval needed — ${e.vendorName}`,
+      `You've been assigned to approve or reject this vendor.`,
+      `/clients`,
+    );
+  }
+
+  @OnEvent('tenant.vendor_approval.decided')
+  async onVendorApprovalDecided(e: {
+    tenantId: string;
+    vendorId: string;
+    vendorName: string;
+    decision: 'approved' | 'rejected';
+    decidedBy: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.tenantId,
+      TenantNotificationType.GENERAL,
+      `Vendor ${e.decision} — ${e.vendorName}`,
+      `${e.decidedBy} has ${e.decision} this vendor.`,
+      `/crm/vendors`,
+    );
+  }
+
   @OnEvent('tenant.sla.threshold_crossed')
   async onSlaThresholdCrossed(e: {
     tenantId: string;

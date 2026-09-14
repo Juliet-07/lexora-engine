@@ -2,9 +2,11 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Vendor,
   VendorDocument,
@@ -34,7 +36,7 @@ const ELIGIBLE_APPROVER_ROLES = [
   EmployeeHierarchyRole.HEAD_OF_DEPARTMENT,
 ];
 
-const REVIEW_MONTHS: Record<string, number> = {
+export const REVIEW_MONTHS: Record<string, number> = {
   Quarterly: 3,
   'Semi-annual': 6,
   Annual: 12,
@@ -47,6 +49,7 @@ export class VendorService {
     @InjectModel(Vendor.name) private readonly model: Model<VendorDocument>,
     @InjectModel(Employee.name)
     private readonly employeeModel: Model<EmployeeDocument>,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private async getRawDoc(tenantId: string, id: string) {
@@ -312,6 +315,43 @@ export class VendorService {
     return v;
   }
 
+  private assertDueDiligenceComplete(v: VendorDocument) {
+    if (!v.ddItems.every((d) => d.done)) {
+      throw new BadRequestException(
+        'Complete due diligence — every checklist item needs its evidence uploaded — before requesting or giving approval.',
+      );
+    }
+  }
+
+  // Shared state transition for both the tenant-direct and
+  // assigned-employee decision paths, so the actual rules can never
+  // drift between them. Approval lands the vendor on "Approved" —
+  // not "Active" — since contracting still has to happen and be
+  // fully executed before the vendor is genuinely active.
+  private applyApprovalDecision(
+    v: VendorDocument,
+    decision: 'approved' | 'rejected',
+    note: string | undefined,
+  ) {
+    v.approvalStatus =
+      decision === 'approved'
+        ? VendorApprovalStatus.APPROVED
+        : VendorApprovalStatus.REJECTED;
+    v.approvalDecidedAt = new Date();
+    v.approvalDecisionNote = note ?? '';
+
+    if (decision === 'approved') {
+      v.status = VendorStatus.APPROVED;
+      this.logActivity(
+        v,
+        `Approved by ${v.approverName} — contracting can now begin`,
+      );
+    } else {
+      v.status = VendorStatus.PENDING_DD;
+      this.logActivity(v, `Rejected by ${v.approverName}`);
+    }
+  }
+
   async requestApproval(
     tenantId: string,
     id: string,
@@ -329,6 +369,8 @@ export class VendorService {
     }
 
     const v = await this.getRawDoc(tenantId, id);
+    this.assertDueDiligenceComplete(v);
+
     v.approverEmployeeId = employee._id as any;
     v.approverName = `${employee.firstName} ${employee.lastName}`.trim();
     v.approvalStatus = VendorApprovalStatus.PENDING;
@@ -339,49 +381,51 @@ export class VendorService {
 
     this.logActivity(v, `Approval requested from ${v.approverName}`);
     await v.save();
+
+    // Real notification, both channels — once assigned, the
+    // decision genuinely belongs to this person, not the tenant.
+    if (employee.userId) {
+      this.eventEmitter.emit('employee.vendor_approval.assigned', {
+        tenantId,
+        employeeUserId: String(employee.userId),
+        vendorId: String(v._id),
+        vendorName: v.legalName,
+      });
+    }
+
     return v.toObject();
   }
 
+  // Tenant deciding directly — only reachable when nobody has been
+  // assigned. Once a vendor is assigned to an employee, the
+  // decision is genuinely theirs; the tenant route below refuses to
+  // record one on their behalf.
   async decideApproval(
     tenantId: string,
     id: string,
     dto: DecideVendorApprovalDto,
   ) {
     const v = await this.getRawDoc(tenantId, id);
-    if (v.approvalStatus !== VendorApprovalStatus.PENDING) {
-      throw new BadRequestException(
-        'This vendor has no pending approval request.',
+
+    if (v.approverEmployeeId) {
+      throw new ForbiddenException(
+        `This vendor's approval was assigned to ${v.approverName} — only they can decide. Wait for their decision, or reassign it.`,
       );
     }
-
-    v.approvalStatus =
-      dto.decision === 'approved'
-        ? VendorApprovalStatus.APPROVED
-        : VendorApprovalStatus.REJECTED;
-    v.approvalDecidedAt = new Date();
-    v.approvalDecisionNote = dto.note ?? '';
-
-    if (dto.decision === 'approved') {
-      v.status = VendorStatus.ACTIVE;
-      if (!v.onboardedAt) v.onboardedAt = new Date();
-      const months = REVIEW_MONTHS[v.reviewFrequency] ?? 12;
-      const next = new Date();
-      next.setMonth(next.getMonth() + months);
-      v.nextReview = next;
-      this.logActivity(v, `Approved by ${v.approverName} — vendor activated`);
-    } else {
-      v.status = VendorStatus.PENDING_DD;
-      this.logActivity(v, `Rejected by ${v.approverName}`);
+    if (v.approvalStatus !== VendorApprovalStatus.NOT_REQUESTED) {
+      throw new BadRequestException('This vendor has already been decided on.');
     }
+    this.assertDueDiligenceComplete(v);
 
+    v.approverName = 'Tenant';
+    this.applyApprovalDecision(v, dto.decision, dto.note);
     await v.save();
     return v.toObject();
   }
 
   // Same decision, but reachable by the assigned approver
   // themselves — verified as the actual approverEmployeeId on this
-  // vendor, never trusted from the request, before delegating to
-  // the real decideApproval logic above.
+  // vendor, never trusted from the request.
   async decideApprovalAsEmployee(
     tenantId: string,
     userId: string,
@@ -403,8 +447,27 @@ export class VendorService {
       approverEmployeeId: employee._id,
     });
     if (!v) throw new NotFoundException('Vendor not found');
+    if (v.approvalStatus !== VendorApprovalStatus.PENDING) {
+      throw new BadRequestException(
+        'This vendor has no pending approval request.',
+      );
+    }
 
-    return this.decideApproval(tenantId, vendorId, dto);
+    this.applyApprovalDecision(v, dto.decision, dto.note);
+    await v.save();
+
+    // Real notification back to the tenant — they assigned this
+    // out, so they need to be told what was decided, not left to
+    // notice it themselves.
+    this.eventEmitter.emit('tenant.vendor_approval.decided', {
+      tenantId,
+      vendorId: String(v._id),
+      vendorName: v.legalName,
+      decision: dto.decision,
+      decidedBy: v.approverName,
+    });
+
+    return v.toObject();
   }
 
   // ═══════════════════════════════════════════════════════════
