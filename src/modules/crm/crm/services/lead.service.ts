@@ -63,10 +63,23 @@ export class LeadService {
   }
 
   async getAll(tenantId: string) {
-    return this.leadModel
+    const leads = await this.leadModel
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
+    // .lean() returns the raw stored document, so a lead created
+    // before temperature/qualification/meetings/documents existed
+    // on this schema comes back genuinely missing those keys —
+    // schema defaults only apply to hydrated documents, never to
+    // lean() results. Normalize here rather than assume every
+    // stored lead already has the current shape.
+    return leads.map((l: any) => ({
+      ...l,
+      temperature: l.temperature ?? 'warm',
+      qualification: l.qualification ?? 'unqualified',
+      meetings: l.meetings ?? [],
+      documents: l.documents ?? [],
+    }));
   }
 
   async getById(tenantId: string, id: string): Promise<LeadDocument> {
