@@ -231,4 +231,18 @@ export class EmployeeVendorController {
   ) {
     return this.service.getVendorForApprover(t || u, u, id);
   }
+
+  @Post(':id/decide')
+  @ApiOperation({
+    summary:
+      'Approve or reject — only reachable when this employee is genuinely the assigned approver',
+  })
+  decide(
+    @Param('id') id: string,
+    @Body() dto: DecideVendorApprovalDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.decideApprovalAsEmployee(t || u, u, id, dto);
+  }
 }

@@ -378,6 +378,35 @@ export class VendorService {
     return v.toObject();
   }
 
+  // Same decision, but reachable by the assigned approver
+  // themselves — verified as the actual approverEmployeeId on this
+  // vendor, never trusted from the request, before delegating to
+  // the real decideApproval logic above.
+  async decideApprovalAsEmployee(
+    tenantId: string,
+    userId: string,
+    vendorId: string,
+    dto: DecideVendorApprovalDto,
+  ) {
+    const employee = await this.employeeModel
+      .findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        userId: new Types.ObjectId(userId),
+      })
+      .select('_id')
+      .lean();
+    if (!employee) throw new NotFoundException('Vendor not found');
+
+    const v = await this.model.findOne({
+      _id: vendorId,
+      tenantId: new Types.ObjectId(tenantId),
+      approverEmployeeId: employee._id,
+    });
+    if (!v) throw new NotFoundException('Vendor not found');
+
+    return this.decideApproval(tenantId, vendorId, dto);
+  }
+
   // ═══════════════════════════════════════════════════════════
   // SPEND — manual tracking for now; a natural future hook for
   // real Finance-sourced figures once that connection is built.
