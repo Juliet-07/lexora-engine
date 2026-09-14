@@ -32,6 +32,7 @@ import {
   MoveClientStageDto,
   ScheduleLeadMeetingDto,
   CompleteLeadMeetingDto,
+  AssignLeadDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
@@ -106,6 +107,20 @@ export class LeadController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.leadService.update(t || u, id, dto);
+  }
+
+  @Patch(':id/assign')
+  @ApiOperation({
+    summary:
+      'Assign this lead to an employee — they manage it through to conversion, and are emailed and notified',
+  })
+  assign(
+    @Param('id') id: string,
+    @Body() dto: AssignLeadDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.leadService.assignLead(t || u, id, dto.assignedToUserId);
   }
 
   @Patch(':id/stage')

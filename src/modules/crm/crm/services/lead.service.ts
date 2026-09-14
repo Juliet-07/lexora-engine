@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Lead,
   LeadDocument,
@@ -27,15 +28,22 @@ import { TenantClientsService } from 'src/modules/tenant/services/tenant-client.
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+import {
+  Employee,
+  EmployeeDocument,
+} from 'src/modules/hr/schemas/employee.schema';
 
 @Injectable()
 export class LeadService {
   constructor(
     @InjectModel(Lead.name) private readonly leadModel: Model<LeadDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
     private readonly clientPipelineService: ClientPipelineService,
     private readonly tenantClientsService: TenantClientsService,
     private readonly emailService: EmailService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async create(tenantId: string, dto: CreateLeadDto): Promise<LeadDocument> {
@@ -54,9 +62,6 @@ export class LeadService {
       source: dto.source,
       sourceNote: dto.sourceNote?.trim() || null,
       notes: dto.notes?.trim() || null,
-      assignedToUserId: dto.assignedToUserId
-        ? new Types.ObjectId(dto.assignedToUserId)
-        : null,
       stage: LeadStage.LEAD,
       status: LeadStatus.OPEN,
     });
@@ -73,13 +78,7 @@ export class LeadService {
     // schema defaults only apply to hydrated documents, never to
     // lean() results. Normalize here rather than assume every
     // stored lead already has the current shape.
-    return leads.map((l: any) => ({
-      ...l,
-      temperature: l.temperature ?? 'warm',
-      qualification: l.qualification ?? 'unqualified',
-      meetings: l.meetings ?? [],
-      documents: l.documents ?? [],
-    }));
+    return leads.map((l: any) => this.normalizeLeanLead(l));
   }
 
   async getById(tenantId: string, id: string): Promise<LeadDocument> {
@@ -111,11 +110,16 @@ export class LeadService {
       lead.sourceNote = dto.sourceNote.trim() || null;
     if (dto.notes !== undefined) lead.notes = dto.notes.trim() || null;
     if (dto.temperature !== undefined) lead.temperature = dto.temperature;
-    if (dto.qualification !== undefined) lead.qualification = dto.qualification;
-    if (dto.assignedToUserId !== undefined)
-      lead.assignedToUserId = dto.assignedToUserId
-        ? new Types.ObjectId(dto.assignedToUserId)
-        : null;
+    if (dto.qualificationScore !== undefined)
+      lead.qualificationScore = dto.qualificationScore;
+    if (dto.qualificationNotes !== undefined)
+      lead.qualificationNotes = dto.qualificationNotes.trim() || null;
+    if (dto.serviceInterest !== undefined)
+      lead.serviceInterest = dto.serviceInterest.trim() || null;
+    if (dto.estimatedDealValue !== undefined)
+      lead.estimatedDealValue = dto.estimatedDealValue;
+    if (dto.dealValuePeriod !== undefined)
+      lead.dealValuePeriod = dto.dealValuePeriod;
     await lead.save();
     return lead;
   }
@@ -131,6 +135,31 @@ export class LeadService {
   // Drag-and-drop between the two pre-conversion board columns —
   // Active/Retained/Past live on the real Client Pipeline instead,
   // handled by ClientPipelineService.
+  private logActivity(lead: LeadDocument, text: string) {
+    lead.activity.unshift({ at: new Date(), text } as any);
+  }
+
+  // .lean() returns the raw stored document, so a lead created
+  // before any of these fields existed on the schema comes back
+  // genuinely missing those keys — schema defaults only apply to
+  // hydrated documents, never to lean() results. Every lean lead
+  // list goes through this rather than assuming the current shape.
+  private normalizeLeanLead(l: any) {
+    return {
+      ...l,
+      temperature: l.temperature ?? 'warm',
+      qualificationScore: l.qualificationScore ?? null,
+      qualificationNotes: l.qualificationNotes ?? null,
+      serviceInterest: l.serviceInterest ?? null,
+      estimatedDealValue: l.estimatedDealValue ?? null,
+      dealValuePeriod: l.dealValuePeriod ?? null,
+      assignedToName: l.assignedToName ?? '',
+      meetings: l.meetings ?? [],
+      documents: l.documents ?? [],
+      activity: l.activity ?? [],
+    };
+  }
+
   async moveStage(
     tenantId: string,
     id: string,
@@ -142,9 +171,13 @@ export class LeadService {
         'This lead is no longer open — it has already converted or been marked lost.',
       );
     }
+    const fromStage = lead.stage;
     lead.stage = dto.stage;
     if (dto.stage === LeadStage.PROSPECT && !lead.reachedProspectAt) {
       lead.reachedProspectAt = new Date();
+    }
+    if (fromStage !== dto.stage) {
+      this.logActivity(lead, `Moved from ${fromStage} to ${dto.stage}`);
     }
     await lead.save();
     return lead;
@@ -162,6 +195,10 @@ export class LeadService {
     lead.status = LeadStatus.LOST;
     lead.lostAt = new Date();
     lead.lostReason = dto.reason?.trim() || null;
+    this.logActivity(
+      lead,
+      `Marked lost${dto.reason ? ` — ${dto.reason.trim()}` : ''}`,
+    );
     await lead.save();
     return lead;
   }
@@ -233,6 +270,7 @@ export class LeadService {
     lead.status = LeadStatus.CONVERTED;
     lead.convertedAt = new Date();
     lead.convertedClientId = newClientId;
+    this.logActivity(lead, 'Converted to client');
     await lead.save();
 
     return {
@@ -240,6 +278,84 @@ export class LeadService {
       client: result.data,
       message: result.message,
     };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // ASSIGNMENT — real notification (email + portal) to the
+  // employee, and a logged activity entry so the tenant has an
+  // actual record of the handoff, not just a silent field change.
+  // ═══════════════════════════════════════════════════════════
+
+  async assignLead(tenantId: string, id: string, employeeUserId: string) {
+    const employee = await this.employeeModel
+      .findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        userId: new Types.ObjectId(employeeUserId),
+      })
+      .select('firstName lastName')
+      .lean();
+    if (!employee) {
+      throw new NotFoundException(
+        'No employee record is linked to that account',
+      );
+    }
+
+    const lead = await this.getById(tenantId, id);
+    const name = `${employee.firstName} ${employee.lastName}`.trim();
+    lead.assignedToUserId = new Types.ObjectId(employeeUserId);
+    lead.assignedToName = name;
+    this.logActivity(lead, `Assigned to ${name}`);
+    await lead.save();
+
+    this.eventEmitter.emit('employee.lead_assigned', {
+      tenantId,
+      employeeUserId,
+      leadId: String(lead._id),
+      leadName: lead.contactName || lead.companyName || 'a lead',
+    });
+
+    return lead;
+  }
+
+  // Employee-side — leads assigned to them, and one lead's detail,
+  // scoped so an employee can never see or act on a lead that isn't
+  // genuinely theirs.
+  async getMyLeads(tenantId: string, userId: string) {
+    const leads = await this.leadModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        assignedToUserId: new Types.ObjectId(userId),
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+    return leads.map((l: any) => this.normalizeLeanLead(l));
+  }
+
+  async getLeadForAssignee(tenantId: string, userId: string, id: string) {
+    const lead = await this.leadModel.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+      assignedToUserId: new Types.ObjectId(userId),
+    });
+    if (!lead) throw new NotFoundException('Lead not found');
+    return lead;
+  }
+
+  // Every employee-facing mutation goes through this first — it's
+  // the single place that decides whether this employee is allowed
+  // to touch this lead at all, so that rule can never drift between
+  // the different actions (update, stage move, meetings, etc.).
+  async assertOwnedByEmployee(
+    tenantId: string,
+    userId: string,
+    id: string,
+  ): Promise<void> {
+    const owned = await this.leadModel.exists({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+      assignedToUserId: new Types.ObjectId(userId),
+    });
+    if (!owned) throw new NotFoundException('Lead not found');
   }
 
   async getStats(tenantId: string) {

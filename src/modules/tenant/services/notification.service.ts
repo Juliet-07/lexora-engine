@@ -384,6 +384,23 @@ export class TenantNotificationService {
     );
   }
 
+  @OnEvent('employee.lead_assigned')
+  async onLeadAssigned(e: {
+    tenantId: string;
+    employeeUserId: string;
+    leadId: string;
+    leadName: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.employeeUserId,
+      TenantNotificationType.GENERAL,
+      `Lead assigned to you — ${e.leadName}`,
+      `You now manage this lead through to conversion.`,
+      `/clients`,
+    );
+  }
+
   @OnEvent('tenant.vendor_approval.decided')
   async onVendorApprovalDecided(e: {
     tenantId: string;

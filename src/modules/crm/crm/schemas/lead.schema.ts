@@ -29,10 +29,10 @@ export enum LeadTemperature {
   COLD = 'cold',
 }
 
-export enum LeadQualification {
-  UNQUALIFIED = 'unqualified',
-  MQL = 'mql',
-  SQL = 'sql',
+export enum LeadDealValuePeriod {
+  YEAR = 'year',
+  MONTH = 'month',
+  ONE_TIME = 'one_time',
 }
 
 export enum LeadMeetingMode {
@@ -76,6 +76,17 @@ export class LeadDocumentEntry {
 export const LeadDocumentEntrySchema =
   SchemaFactory.createForClass(LeadDocumentEntry);
 
+// A real record of progression — assignment, stage moves, and
+// conversion — so the tenant can see exactly what happened to a
+// lead once it's handed to an employee to manage.
+@Schema({ _id: true })
+export class LeadActivityEntry {
+  @Prop({ required: true, default: () => new Date() }) at: Date;
+  @Prop({ required: true }) text: string;
+}
+export const LeadActivityEntrySchema =
+  SchemaFactory.createForClass(LeadActivityEntry);
+
 @Schema({ timestamps: true, collection: 'crm_leads' })
 export class Lead {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -114,8 +125,23 @@ export class Lead {
   @Prop({ enum: LeadTemperature, default: LeadTemperature.WARM })
   temperature: LeadTemperature;
 
-  @Prop({ enum: LeadQualification, default: LeadQualification.UNQUALIFIED })
-  qualification: LeadQualification;
+  // Qualification is a real score plus the tenant's own free-text
+  // reasoning — not a fixed enum — since what "qualified" means
+  // varies lead to lead and the tenant needs to say why.
+  @Prop({ default: null, min: 0, max: 100 })
+  qualificationScore: number | null;
+
+  @Prop({ default: null })
+  qualificationNotes: string | null;
+
+  @Prop({ default: null })
+  serviceInterest: string | null;
+
+  @Prop({ default: null })
+  estimatedDealValue: number | null;
+
+  @Prop({ enum: LeadDealValuePeriod, default: null })
+  dealValuePeriod: LeadDealValuePeriod | null;
 
   @Prop({ type: [LeadMeetingSchema], default: [] })
   meetings: LeadMeeting[];
@@ -123,8 +149,17 @@ export class Lead {
   @Prop({ type: [LeadDocumentEntrySchema], default: [] })
   documents: LeadDocumentEntry[];
 
+  @Prop({ type: [LeadActivityEntrySchema], default: [] })
+  activity: LeadActivityEntry[];
+
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   assignedToUserId: Types.ObjectId | null;
+
+  // Denormalized display name for the assignee — same pattern as
+  // Vendor's approverName, so the UI never has to cross-reference
+  // a separate employee list just to show who owns a lead.
+  @Prop({ default: '' })
+  assignedToName: string;
 
   // Milestone timestamps, not just current stage/status — a lead
   // that reached "prospect" and later converted must still count

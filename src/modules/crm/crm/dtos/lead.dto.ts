@@ -5,12 +5,15 @@ import {
   IsEnum,
   IsEmail,
   IsMongoId,
+  IsNumber,
+  Min,
+  Max,
 } from 'class-validator';
 import {
   LeadSource,
   LeadStage,
   LeadTemperature,
-  LeadQualification,
+  LeadDealValuePeriod,
   LeadMeetingMode,
 } from '../schemas';
 import { ClientClassification } from 'src/common/interfaces/user-role.enum';
@@ -24,7 +27,6 @@ export class CreateLeadDto {
   @ApiProperty({ enum: LeadSource }) @IsEnum(LeadSource) source: LeadSource;
   @ApiPropertyOptional() @IsOptional() @IsString() sourceNote?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
-  @ApiPropertyOptional() @IsOptional() @IsMongoId() assignedToUserId?: string;
 }
 
 export class UpdateLeadDto {
@@ -43,11 +45,27 @@ export class UpdateLeadDto {
   @IsOptional()
   @IsEnum(LeadTemperature)
   temperature?: LeadTemperature;
-  @ApiPropertyOptional({ enum: LeadQualification })
+  @ApiPropertyOptional({ minimum: 0, maximum: 100 })
   @IsOptional()
-  @IsEnum(LeadQualification)
-  qualification?: LeadQualification;
-  @ApiPropertyOptional() @IsOptional() @IsMongoId() assignedToUserId?: string;
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  qualificationScore?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() qualificationNotes?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() serviceInterest?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  estimatedDealValue?: number;
+  @ApiPropertyOptional({ enum: LeadDealValuePeriod })
+  @IsOptional()
+  @IsEnum(LeadDealValuePeriod)
+  dealValuePeriod?: LeadDealValuePeriod;
+}
+
+export class AssignLeadDto {
+  @ApiProperty() @IsMongoId() assignedToUserId: string;
 }
 
 export class MoveLeadStageDto {
