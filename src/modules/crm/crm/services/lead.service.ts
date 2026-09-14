@@ -6,23 +6,36 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Lead, LeadDocument, LeadStage, LeadStatus } from '../schemas';
+import {
+  Lead,
+  LeadDocument,
+  LeadStage,
+  LeadStatus,
+  LeadMeetingStatus,
+} from '../schemas';
 import {
   CreateLeadDto,
   UpdateLeadDto,
   MoveLeadStageDto,
   MarkLeadLostDto,
   ConvertLeadDto,
+  ScheduleLeadMeetingDto,
+  CompleteLeadMeetingDto,
 } from '../dtos';
 import { ClientPipelineService } from './client-pipeline.service';
 import { TenantClientsService } from 'src/modules/tenant/services/tenant-client.service';
+import { EmailService } from 'src/common/utils/mailing/email.service';
+import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 
 @Injectable()
 export class LeadService {
   constructor(
     @InjectModel(Lead.name) private readonly leadModel: Model<LeadDocument>,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly clientPipelineService: ClientPipelineService,
     private readonly tenantClientsService: TenantClientsService,
+    private readonly emailService: EmailService,
   ) {}
 
   async create(tenantId: string, dto: CreateLeadDto): Promise<LeadDocument> {
@@ -84,6 +97,8 @@ export class LeadService {
     if (dto.sourceNote !== undefined)
       lead.sourceNote = dto.sourceNote.trim() || null;
     if (dto.notes !== undefined) lead.notes = dto.notes.trim() || null;
+    if (dto.temperature !== undefined) lead.temperature = dto.temperature;
+    if (dto.qualification !== undefined) lead.qualification = dto.qualification;
     if (dto.assignedToUserId !== undefined)
       lead.assignedToUserId = dto.assignedToUserId
         ? new Types.ObjectId(dto.assignedToUserId)
@@ -265,5 +280,133 @@ export class LeadService {
           ? Math.round((clientCounts.retained / clientTotal) * 100)
           : 0,
     };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // MEETINGS — scheduling genuinely emails the lead, not just a
+  // local record of intent.
+  // ═══════════════════════════════════════════════════════════
+
+  async scheduleMeeting(
+    tenantId: string,
+    id: string,
+    dto: ScheduleLeadMeetingDto,
+  ) {
+    const lead = await this.getById(tenantId, id);
+    lead.meetings.unshift({
+      title: dto.title,
+      date: dto.date,
+      time: dto.time ?? '',
+      mode: dto.mode ?? undefined,
+      location: dto.location ?? '',
+      attendees: dto.attendees ?? '',
+      agenda: dto.agenda ?? '',
+      outcome: '',
+      status: LeadMeetingStatus.SCHEDULED,
+    } as any);
+    await lead.save();
+
+    if (lead.contactEmail) {
+      const tenantBusinessName = await resolveBusinessName(
+        this.userModel,
+        tenantId,
+      );
+      await this.emailService.sendLeadMeetingInvite({
+        to: lead.contactEmail,
+        recipientName: lead.contactName || 'there',
+        tenantBusinessName,
+        meetingTitle: dto.title,
+        date: dto.date,
+        time: dto.time,
+        mode: dto.mode ?? 'virtual',
+        location: dto.location,
+        agenda: dto.agenda,
+      });
+    }
+
+    return lead;
+  }
+
+  async completeMeeting(
+    tenantId: string,
+    id: string,
+    meetingId: string,
+    dto: CompleteLeadMeetingDto,
+  ) {
+    const lead = await this.getById(tenantId, id);
+    const meeting = lead.meetings.find((m: any) => String(m._id) === meetingId);
+    if (!meeting) throw new NotFoundException('Meeting not found');
+    meeting.status = LeadMeetingStatus.COMPLETED;
+    meeting.outcome = dto.outcome ?? '';
+    await lead.save();
+    return lead;
+  }
+
+  async cancelMeeting(tenantId: string, id: string, meetingId: string) {
+    const lead = await this.getById(tenantId, id);
+    const meeting = lead.meetings.find((m: any) => String(m._id) === meetingId);
+    if (!meeting) throw new NotFoundException('Meeting not found');
+    meeting.status = LeadMeetingStatus.CANCELLED;
+    await lead.save();
+    return lead;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // DOCUMENTS — a real file sent by real email, not just a
+  // reference dropped in a list.
+  // ═══════════════════════════════════════════════════════════
+
+  async getDocuments(tenantId: string, id: string) {
+    const lead = await this.getById(tenantId, id);
+    return lead.documents;
+  }
+
+  async sendDocument(
+    tenantId: string,
+    id: string,
+    sentBy: string,
+    message: string | undefined,
+    file: Express.Multer.File,
+  ) {
+    const lead = await this.getById(tenantId, id);
+    if (!lead.contactEmail) {
+      throw new BadRequestException(
+        'This lead has no contact email on file — add one before sending a document.',
+      );
+    }
+
+    const fs = await import('fs');
+    const fileBuffer = fs.readFileSync(file.path);
+
+    const tenantBusinessName = await resolveBusinessName(
+      this.userModel,
+      tenantId,
+    );
+    await this.emailService.sendLeadDocument(
+      {
+        to: lead.contactEmail,
+        recipientName: lead.contactName || 'there',
+        tenantBusinessName,
+        documentName: file.originalname,
+        message,
+      },
+      fileBuffer,
+      file.originalname,
+      file.mimetype,
+    );
+
+    lead.documents.unshift({
+      name: file.originalname,
+      fileUrl: `/uploads/crm/leads/${file.filename}`,
+      size: file.size,
+      mimeType: file.mimetype,
+      message: message ?? '',
+      sentTo: lead.contactEmail,
+      sentAt: new Date(),
+      sentBy,
+    } as any);
+    await lead.save();
+
+    return lead;
   }
 }

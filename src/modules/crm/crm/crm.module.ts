@@ -32,6 +32,7 @@ import {
   EmployeeVendorController,
 } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
+import { EmailService } from 'src/common/utils/mailing/email.service';
 import {
   ClientProfileRecord,
   ClientProfileSchema,
@@ -64,6 +65,7 @@ import {
     SlaProfileService,
     ClientCommercialService,
     VendorService,
+    EmailService,
   ],
   controllers: [
     LeadController,

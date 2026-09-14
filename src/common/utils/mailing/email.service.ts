@@ -49,6 +49,14 @@ import {
   sessionNoticeTemplate,
 } from './templates/session-notice.template';
 import {
+  LeadMeetingInviteEmailData,
+  leadMeetingInviteTemplate,
+} from './templates/lead-meeting-invite.template';
+import {
+  LeadDocumentEmailData,
+  leadDocumentTemplate,
+} from './templates/lead-document.template';
+import {
   ClientApprovalData,
   clientApprovalTemplate,
 } from './templates/client-approval.template';
@@ -391,6 +399,38 @@ export class EmailService {
       to: data.to,
       subject,
       html,
+    });
+  }
+
+  async sendLeadMeetingInvite(data: LeadMeetingInviteEmailData): Promise<void> {
+    const { subject, html } = leadMeetingInviteTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendLeadDocument(
+    data: LeadDocumentEmailData,
+    fileBuffer: Buffer,
+    fileName: string,
+    mimeType: string,
+  ): Promise<void> {
+    const { subject, html } = leadDocumentTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+      attachments: [
+        {
+          filename: fileName,
+          content: fileBuffer,
+          contentType: mimeType || 'application/octet-stream',
+        },
+      ],
     });
   }
 

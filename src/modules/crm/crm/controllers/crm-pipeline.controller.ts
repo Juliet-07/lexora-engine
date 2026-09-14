@@ -7,13 +7,21 @@ import {
   Body,
   Param,
   Query,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
 import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
   ApiQuery,
+  ApiConsumes,
 } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { existsSync, mkdirSync } from 'fs';
+import { join, extname } from 'path';
+import { v4 as uuidv4 } from 'uuid';
 import { ClientPipelineService, LeadService } from '../services';
 import {
   CreateLeadDto,
@@ -22,6 +30,8 @@ import {
   MarkLeadLostDto,
   ConvertLeadDto,
   MoveClientStageDto,
+  ScheduleLeadMeetingDto,
+  CompleteLeadMeetingDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
@@ -30,6 +40,16 @@ import {
 } from 'src/common/interfaces/user-role.enum';
 import { ClientPipelineStage } from '../schemas';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
+
+const leadDocumentStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const p = join(process.cwd(), 'uploads', 'crm', 'leads');
+    if (!existsSync(p)) mkdirSync(p, { recursive: true });
+    cb(null, p);
+  },
+  filename: (_req, file, cb) =>
+    cb(null, `${uuidv4()}${extname(file.originalname)}`),
+});
 
 @ApiTags('CRM — Pipeline (Tenant)')
 @ApiBearerAuth()
@@ -133,6 +153,69 @@ export class LeadController {
   ) {
     await this.leadService.delete(t || u, id);
     return { success: true };
+  }
+
+  // ── Meetings ─────────────────────────────────────────────────
+  @Post(':id/meetings')
+  @ApiOperation({ summary: 'Schedule a meeting — emails the lead' })
+  scheduleMeeting(
+    @Param('id') id: string,
+    @Body() dto: ScheduleLeadMeetingDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.leadService.scheduleMeeting(t || u, id, dto);
+  }
+
+  @Patch(':id/meetings/:meetingId/complete')
+  @ApiOperation({ summary: 'Mark a meeting completed, with an outcome' })
+  completeMeeting(
+    @Param('id') id: string,
+    @Param('meetingId') meetingId: string,
+    @Body() dto: CompleteLeadMeetingDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.leadService.completeMeeting(t || u, id, meetingId, dto);
+  }
+
+  @Patch(':id/meetings/:meetingId/cancel')
+  @ApiOperation({ summary: 'Cancel a meeting' })
+  cancelMeeting(
+    @Param('id') id: string,
+    @Param('meetingId') meetingId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.leadService.cancelMeeting(t || u, id, meetingId);
+  }
+
+  // ── Documents ────────────────────────────────────────────────
+  @Get(':id/documents')
+  @ApiOperation({ summary: 'Documents sent to this lead' })
+  getDocuments(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.leadService.getDocuments(t || u, id);
+  }
+
+  @Post(':id/documents')
+  @UseInterceptors(FileInterceptor('file', { storage: leadDocumentStorage }))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary:
+      'Send a document to the lead by email, with a real attachment (proposal, company profile, etc.)',
+  })
+  sendDocument(
+    @Param('id') id: string,
+    @Query('message') message: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.leadService.sendDocument(t || u, id, 'You', message, file);
   }
 }
 

@@ -23,6 +23,59 @@ export enum LeadSource {
   OTHER = 'other',
 }
 
+export enum LeadTemperature {
+  HOT = 'hot',
+  WARM = 'warm',
+  COLD = 'cold',
+}
+
+export enum LeadQualification {
+  UNQUALIFIED = 'unqualified',
+  MQL = 'mql',
+  SQL = 'sql',
+}
+
+export enum LeadMeetingMode {
+  VIRTUAL = 'virtual',
+  PHYSICAL = 'physical',
+}
+
+export enum LeadMeetingStatus {
+  SCHEDULED = 'scheduled',
+  COMPLETED = 'completed',
+  CANCELLED = 'cancelled',
+}
+
+@Schema({ _id: true })
+export class LeadMeeting {
+  @Prop({ required: true }) title: string;
+  @Prop({ required: true }) date: string;
+  @Prop({ default: '' }) time: string;
+  @Prop({ enum: LeadMeetingMode, default: LeadMeetingMode.VIRTUAL })
+  mode: LeadMeetingMode;
+  @Prop({ default: '' }) location: string;
+  @Prop({ default: '' }) attendees: string;
+  @Prop({ default: '' }) agenda: string;
+  @Prop({ default: '' }) outcome: string;
+  @Prop({ enum: LeadMeetingStatus, default: LeadMeetingStatus.SCHEDULED })
+  status: LeadMeetingStatus;
+}
+export const LeadMeetingSchema = SchemaFactory.createForClass(LeadMeeting);
+
+@Schema({ _id: true })
+export class LeadDocumentEntry {
+  @Prop({ required: true }) name: string;
+  @Prop({ required: true }) fileUrl: string;
+  @Prop({ default: 0 }) size: number;
+  @Prop({ default: '' }) mimeType: string;
+  @Prop({ default: '' }) message: string;
+  @Prop({ required: true }) sentTo: string;
+  @Prop({ required: true, default: () => new Date() }) sentAt: Date;
+  @Prop({ default: '' }) sentBy: string;
+}
+export const LeadDocumentEntrySchema =
+  SchemaFactory.createForClass(LeadDocumentEntry);
+
 @Schema({ timestamps: true, collection: 'crm_leads' })
 export class Lead {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -57,6 +110,18 @@ export class Lead {
 
   @Prop({ default: null })
   notes: string | null;
+
+  @Prop({ enum: LeadTemperature, default: LeadTemperature.WARM })
+  temperature: LeadTemperature;
+
+  @Prop({ enum: LeadQualification, default: LeadQualification.UNQUALIFIED })
+  qualification: LeadQualification;
+
+  @Prop({ type: [LeadMeetingSchema], default: [] })
+  meetings: LeadMeeting[];
+
+  @Prop({ type: [LeadDocumentEntrySchema], default: [] })
+  documents: LeadDocumentEntry[];
 
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   assignedToUserId: Types.ObjectId | null;

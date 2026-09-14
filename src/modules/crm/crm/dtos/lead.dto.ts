@@ -6,7 +6,13 @@ import {
   IsEmail,
   IsMongoId,
 } from 'class-validator';
-import { LeadSource, LeadStage } from '../schemas';
+import {
+  LeadSource,
+  LeadStage,
+  LeadTemperature,
+  LeadQualification,
+  LeadMeetingMode,
+} from '../schemas';
 import { ClientClassification } from 'src/common/interfaces/user-role.enum';
 
 export class CreateLeadDto {
@@ -33,6 +39,14 @@ export class UpdateLeadDto {
   source?: LeadSource;
   @ApiPropertyOptional() @IsOptional() @IsString() sourceNote?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+  @ApiPropertyOptional({ enum: LeadTemperature })
+  @IsOptional()
+  @IsEnum(LeadTemperature)
+  temperature?: LeadTemperature;
+  @ApiPropertyOptional({ enum: LeadQualification })
+  @IsOptional()
+  @IsEnum(LeadQualification)
+  qualification?: LeadQualification;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() assignedToUserId?: string;
 }
 
@@ -74,4 +88,22 @@ export class ConvertLeadDto {
   templateSource: 'platform' | 'tenant';
   @ApiProperty() @IsString() contractTitle: string;
   @ApiPropertyOptional() @IsOptional() @IsString() contractType?: string;
+}
+
+// ── Meetings ─────────────────────────────────────────────────────
+export class ScheduleLeadMeetingDto {
+  @ApiProperty() @IsString() title: string;
+  @ApiProperty() @IsString() date: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() time?: string;
+  @ApiPropertyOptional({ enum: LeadMeetingMode })
+  @IsOptional()
+  @IsEnum(LeadMeetingMode)
+  mode?: LeadMeetingMode;
+  @ApiPropertyOptional() @IsOptional() @IsString() location?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() attendees?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() agenda?: string;
+}
+
+export class CompleteLeadMeetingDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() outcome?: string;
 }
