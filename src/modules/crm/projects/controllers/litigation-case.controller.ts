@@ -473,4 +473,23 @@ export class LitigationCaseController {
   ) {
     return this.service.recordClosure(t || u, id, dto);
   }
+
+  @Get(':id/closure/pdf')
+  @ApiOperation({
+    summary:
+      'Download the closure report as a PDF — structured for sharing with management',
+  })
+  async downloadClosureReport(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.service.downloadClosureReport(t || u, id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="closure-report-${id}.pdf"`,
+    });
+    res.send(buffer);
+  }
 }

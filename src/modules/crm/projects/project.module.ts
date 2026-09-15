@@ -71,6 +71,7 @@ import {
   AdrCaseService,
   ClientCaseService,
   LitigationCaseService,
+  CaseClosurePdfService,
   PortfolioRiskService,
 } from './services';
 import {
@@ -169,6 +170,7 @@ import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
     AdrCaseService,
     ClientCaseService,
     LitigationCaseService,
+    CaseClosurePdfService,
     PortfolioRiskService,
     MandateService,
     MandateWorkspaceService,

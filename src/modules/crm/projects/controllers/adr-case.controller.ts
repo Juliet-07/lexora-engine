@@ -218,7 +218,7 @@ export class AdrCaseController {
   @Post(':id/closure')
   @ApiOperation({
     summary:
-      'Record real closure details — client satisfaction, lessons learned, precedent value',
+      'Record real closure details in FIRAC format — Facts, Issues, Rules, Application, Conclusion',
   })
   recordClosure(
     @Param('id') id: string,
@@ -227,6 +227,25 @@ export class AdrCaseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.recordClosure(t || u, id, dto);
+  }
+
+  @Get(':id/closure/pdf')
+  @ApiOperation({
+    summary:
+      'Download the closure report as a PDF — structured for sharing with management',
+  })
+  async downloadClosureReport(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.service.downloadClosureReport(t || u, id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="closure-report-${id}.pdf"`,
+    });
+    res.send(buffer);
   }
 
   @Post(':id/time')

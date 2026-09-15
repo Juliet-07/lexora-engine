@@ -53,4 +53,15 @@ export class RateCardService {
       .lean();
     return { rate: card?.standardRate ?? 0, currency: card?.currency ?? 'USD' };
   }
+
+  // Distinct from getRateForEmployee, which silently defaults to a
+  // 0 rate when none exists — approval needs to know the difference
+  // between "no rate card" and "a rate card that happens to be 0".
+  async exists(tenantId: string, employeeUserId: string): Promise<boolean> {
+    const count = await this.model.countDocuments({
+      tenantId: new Types.ObjectId(tenantId),
+      employeeUserId: new Types.ObjectId(employeeUserId),
+    });
+    return count > 0;
+  }
 }

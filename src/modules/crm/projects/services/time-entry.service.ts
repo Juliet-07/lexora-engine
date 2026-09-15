@@ -196,6 +196,20 @@ export class TimeEntryService {
   }
 
   async approve(tenantId: string, id: string) {
+    const e = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!e) throw new NotFoundException('Time entry not found');
+    const hasRateCard = await this.rateCardService.exists(
+      tenantId,
+      String(e.memberUserId),
+    );
+    if (!hasRateCard) {
+      throw new BadRequestException(
+        `${e.member} has no rate card on file — set one up before approving their time.`,
+      );
+    }
     return this.transition(
       tenantId,
       id,
