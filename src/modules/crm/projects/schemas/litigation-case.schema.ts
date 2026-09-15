@@ -35,6 +35,32 @@ export enum LitigationCaseStatus {
   ENFORCED = 'Enforced',
 }
 
+// Real closure fields — recorded once the case actually ends,
+// following the same FIRAC structure (Facts, Issues, Rules,
+// Application, Conclusion) as ADR's closure record, plus the same
+// operational metadata (satisfaction, lessons learned, precedent).
+// Litigation had no closure concept at all before this.
+@Schema({ _id: false })
+export class LitigationClosureDetails {
+  @Prop({ default: '' }) facts: string;
+  @Prop({ default: '' }) issues: string;
+  @Prop({ default: '' }) rules: string;
+  @Prop({ default: '' }) application: string;
+  @Prop({ default: '' }) conclusion: string;
+
+  @Prop({ enum: ['', 'Excellent', 'Good', 'Fair', 'Poor'], default: '' })
+  clientSatisfaction: string;
+  @Prop({ default: '' }) clientSatisfactionNotes: string;
+  @Prop({ default: '' }) lessonsLearned: string;
+  @Prop({ default: false }) precedentValue: boolean;
+  @Prop({ default: '' }) precedentNotes: string;
+  @Prop({ default: '' }) recordedBy: string;
+  @Prop({ default: null }) recordedAt: Date | null;
+}
+export const LitigationClosureDetailsSchema = SchemaFactory.createForClass(
+  LitigationClosureDetails,
+);
+
 // Different real-world vocabulary from ADR's parties (plaintiff vs
 // claimant, judge vs mediator) — matches how the product owner's
 // litigation view actually labels them, not a reuse of ADR's roles.
@@ -208,6 +234,9 @@ export class LitigationCase {
 
   // Real read-tracking for the client's message thread.
   @Prop({ default: null }) messagesLastReadByClientAt: Date | null;
+
+  @Prop({ type: LitigationClosureDetailsSchema, default: null })
+  closure: LitigationClosureDetails | null;
 }
 export const LitigationCaseSchema =
   SchemaFactory.createForClass(LitigationCase);

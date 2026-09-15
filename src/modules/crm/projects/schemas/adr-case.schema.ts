@@ -128,6 +128,14 @@ export const AdrSettlementSchema = SchemaFactory.createForClass(AdrSettlement);
 // settlement, escalation, or withdrawal and these apply regardless.
 @Schema({ _id: false })
 export class AdrClosureDetails {
+  // FIRAC — the structured legal-analysis format the closure record
+  // now follows: Facts, Issues, Rules, Application, Conclusion.
+  @Prop({ default: '' }) facts: string;
+  @Prop({ default: '' }) issues: string;
+  @Prop({ default: '' }) rules: string;
+  @Prop({ default: '' }) application: string;
+  @Prop({ default: '' }) conclusion: string;
+
   @Prop({ enum: ['', 'Excellent', 'Good', 'Fair', 'Poor'], default: '' })
   clientSatisfaction: string;
   @Prop({ default: '' }) clientSatisfactionNotes: string;

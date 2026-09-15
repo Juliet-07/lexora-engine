@@ -43,6 +43,7 @@ import {
   CreateLitigationDeadlineRuleDto,
   UpdateLitigationDeadlineRuleDto,
   LogLitigationTenantTimeDto,
+  RecordLitigationClosureDto,
 } from '../dtos';
 
 const litigationDocumentStorage = diskStorage({
@@ -457,5 +458,19 @@ export class LitigationCaseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.withdraw(t || u, id, reason);
+  }
+
+  @Post(':id/closure')
+  @ApiOperation({
+    summary:
+      'Record real closure details in FIRAC format — Facts, Issues, Rules, Application, Conclusion',
+  })
+  recordClosure(
+    @Param('id') id: string,
+    @Body() dto: RecordLitigationClosureDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.recordClosure(t || u, id, dto);
   }
 }

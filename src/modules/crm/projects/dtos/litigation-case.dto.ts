@@ -235,3 +235,24 @@ export class LogLitigationTenantTimeDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() billable?: boolean;
   @ApiProperty() @IsNumber() @Min(0) rate: number;
 }
+
+// ── Closure — FIRAC ──────────────────────────────────────────────
+export class RecordLitigationClosureDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() facts?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() issues?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() rules?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() application?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() conclusion?: string;
+
+  @ApiPropertyOptional({ enum: ['', 'Excellent', 'Good', 'Fair', 'Poor'] })
+  @IsOptional()
+  @IsEnum(['', 'Excellent', 'Good', 'Fair', 'Poor'])
+  clientSatisfaction?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  clientSatisfactionNotes?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() lessonsLearned?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() precedentValue?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() precedentNotes?: string;
+}

@@ -42,6 +42,7 @@ import {
   CreateLitigationDeadlineRuleDto,
   UpdateLitigationDeadlineRuleDto,
   LogLitigationTenantTimeDto,
+  RecordLitigationClosureDto,
 } from '../dtos';
 import { TimeEntryService } from './time-entry.service';
 import { MandateService } from './mandate.service';
@@ -53,6 +54,8 @@ import {
   PlatformContractTemplate,
   PlatformContractTemplateDocument,
 } from '../../../super_admin/schemas/contract-template.schema';
+import { CaseClosurePdfService } from './case-closure-pdf.service';
+import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 
 @Injectable()
 export class LitigationCaseService {
@@ -82,6 +85,7 @@ export class LitigationCaseService {
     private readonly mandateService: MandateService,
     private readonly emailService: EmailService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly closurePdfService: CaseClosurePdfService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -1176,5 +1180,69 @@ export class LitigationCaseService {
     this.logTimeline(c, 'Case withdrawn', reason || '');
     await c.save();
     return c.toObject();
+  }
+
+  // Real closure fields, following the same FIRAC structure and
+  // gate as ADR's — closure can only be recorded once the case is
+  // no longer Active.
+  async recordClosure(
+    tenantId: string,
+    id: string,
+    dto: RecordLitigationClosureDto,
+  ) {
+    const c = await this.getRawDoc(tenantId, id);
+    if (c.status === LitigationCaseStatus.ACTIVE) {
+      throw new NotFoundException(
+        'Closure details can only be recorded once the case has ended',
+      );
+    }
+    c.closure = {
+      facts: dto.facts ?? c.closure?.facts ?? '',
+      issues: dto.issues ?? c.closure?.issues ?? '',
+      rules: dto.rules ?? c.closure?.rules ?? '',
+      application: dto.application ?? c.closure?.application ?? '',
+      conclusion: dto.conclusion ?? c.closure?.conclusion ?? '',
+      clientSatisfaction:
+        dto.clientSatisfaction ?? c.closure?.clientSatisfaction ?? '',
+      clientSatisfactionNotes:
+        dto.clientSatisfactionNotes ?? c.closure?.clientSatisfactionNotes ?? '',
+      lessonsLearned: dto.lessonsLearned ?? c.closure?.lessonsLearned ?? '',
+      precedentValue: dto.precedentValue ?? c.closure?.precedentValue ?? false,
+      precedentNotes: dto.precedentNotes ?? c.closure?.precedentNotes ?? '',
+      recordedBy: 'You',
+      recordedAt: new Date(),
+    } as any;
+    this.logTimeline(c, 'Closure details recorded', '');
+    await c.save();
+    return c.toObject();
+  }
+
+  // Real, downloadable PDF of the closure report — structured for
+  // sharing with management, same format as ADR's.
+  async downloadClosureReport(tenantId: string, id: string): Promise<Buffer> {
+    const c: any = await this.getById(tenantId, id);
+    const firmName = await resolveBusinessName(this.userModel, tenantId);
+    const parties = (c.parties ?? [])
+      .map((p: any) => `${p.name} (${p.role})`)
+      .join(' v. ');
+
+    return this.closurePdfService.buildClosureReportPdf(
+      {
+        caseType: 'Litigation',
+        ref: c.ref,
+        title: c.title,
+        clientOrParties: parties || '—',
+        filedOn: c.filedOn,
+        closedOn: c.closure?.recordedAt ?? null,
+        durationDays: c.totals?.totalAgeDays ?? 0,
+        status: c.status,
+        outcome: c.outcome ?? null,
+        totalFees: c.totals?.combinedFees ?? 0,
+        totalDisbursements: c.totals?.combinedDisbursed ?? 0,
+        currency: c.currency,
+        closure: c.closure ?? null,
+      },
+      firmName,
+    );
   }
 }

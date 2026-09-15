@@ -60,6 +60,8 @@ import {
   PlatformContractTemplate,
   PlatformContractTemplateDocument,
 } from '../../../super_admin/schemas/contract-template.schema';
+import { CaseClosurePdfService } from './case-closure-pdf.service';
+import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 
 @Injectable()
 export class AdrCaseService {
@@ -83,6 +85,7 @@ export class AdrCaseService {
     private readonly litigationCaseService: LitigationCaseService,
     private readonly emailService: EmailService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly closurePdfService: CaseClosurePdfService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -1134,6 +1137,11 @@ export class AdrCaseService {
       );
     }
     c.closure = {
+      facts: dto.facts ?? c.closure?.facts ?? '',
+      issues: dto.issues ?? c.closure?.issues ?? '',
+      rules: dto.rules ?? c.closure?.rules ?? '',
+      application: dto.application ?? c.closure?.application ?? '',
+      conclusion: dto.conclusion ?? c.closure?.conclusion ?? '',
       clientSatisfaction:
         dto.clientSatisfaction ?? c.closure?.clientSatisfaction ?? '',
       clientSatisfactionNotes:
@@ -1147,6 +1155,35 @@ export class AdrCaseService {
     this.logTimeline(c, 'Closure details recorded', '');
     await c.save();
     return c.toObject();
+  }
+
+  // Real, downloadable PDF of the closure report — structured for
+  // sharing with management, not a dump of every field on the case.
+  async downloadClosureReport(tenantId: string, id: string): Promise<Buffer> {
+    const c: any = await this.getById(tenantId, id);
+    const firmName = await resolveBusinessName(this.userModel, tenantId);
+    const parties = (c.parties ?? [])
+      .map((p: any) => `${p.name} (${p.role})`)
+      .join(' v. ');
+
+    return this.closurePdfService.buildClosureReportPdf(
+      {
+        caseType: 'ADR',
+        ref: c.ref,
+        title: c.title,
+        clientOrParties: parties || '—',
+        filedOn: c.filedOn,
+        closedOn: c.closure?.recordedAt ?? null,
+        durationDays: c.totals?.ageDays ?? 0,
+        status: c.status,
+        outcome: c.outcome ?? null,
+        totalFees: c.totals?.fees ?? 0,
+        totalDisbursements: c.totals?.disbursed ?? 0,
+        currency: c.currency,
+        closure: c.closure ?? null,
+      },
+      firmName,
+    );
   }
 
   // Tenant logging their own time on a case — same real linkage as

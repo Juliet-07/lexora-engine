@@ -241,6 +241,13 @@ export class UpdateAdrDeadlineRuleDto {
 
 // ── Closure ──────────────────────────────────────────────────────
 export class RecordAdrClosureDto {
+  // FIRAC
+  @ApiPropertyOptional() @IsOptional() @IsString() facts?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() issues?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() rules?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() application?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() conclusion?: string;
+
   @ApiPropertyOptional({ enum: ['', 'Excellent', 'Good', 'Fair', 'Poor'] })
   @IsOptional()
   @IsEnum(['', 'Excellent', 'Good', 'Fair', 'Poor'])
