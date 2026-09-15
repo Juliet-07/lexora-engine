@@ -116,8 +116,11 @@ export class Vendor {
 
   @Prop({ required: true, trim: true }) legalName: string;
   @Prop({ default: '' }) tradingName: string;
-  @Prop({ enum: VendorCategory, default: VendorCategory.OTHER })
-  category: VendorCategory;
+  // Free text, not an enum-constrained field — VendorCategory below
+  // remains as the frontend's suggested quick-picks, but a tenant
+  // can type their own category (e.g. picking "Other") and that
+  // becomes the real stored value, same pattern as jurisdiction.
+  @Prop({ default: 'Other', trim: true }) category: string;
   @Prop({ default: '' }) serviceSummary: string;
   @Prop({ default: '' }) jurisdiction: string;
   @Prop({ default: '' }) registrationNumber: string;

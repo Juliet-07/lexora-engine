@@ -10,14 +10,17 @@ import {
   IsEmail,
   Min,
 } from 'class-validator';
-import { VendorCategory, VendorRisk, VendorStatus } from '../schemas';
+import { VendorRisk, VendorStatus } from '../schemas';
 
 export class CreateVendorDto {
   @ApiProperty() @IsString() legalName: string;
   @ApiPropertyOptional() @IsOptional() @IsString() tradingName?: string;
-  @ApiProperty({ enum: VendorCategory })
-  @IsEnum(VendorCategory)
-  category: VendorCategory;
+  @ApiProperty({
+    description:
+      'Free text — the frontend offers VendorCategory values as suggestions, but any value is accepted (e.g. a custom category typed after picking "Other").',
+  })
+  @IsString()
+  category: string;
   @ApiPropertyOptional() @IsOptional() @IsString() serviceSummary?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() jurisdiction?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() registrationNumber?: string;
@@ -51,10 +54,7 @@ export class CreateVendorDto {
 export class UpdateVendorDto {
   @ApiPropertyOptional() @IsOptional() @IsString() legalName?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() tradingName?: string;
-  @ApiPropertyOptional({ enum: VendorCategory })
-  @IsOptional()
-  @IsEnum(VendorCategory)
-  category?: VendorCategory;
+  @ApiPropertyOptional() @IsOptional() @IsString() category?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() serviceSummary?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() jurisdiction?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() registrationNumber?: string;
