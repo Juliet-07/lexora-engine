@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { GlEntry, GlEntryDocument, GlSource } from '../schemas';
+import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+import { ExchangeRateService } from 'src/modules/hr/services/exchange-rate.service';
 
 // A leaf, deliberately — InvoiceService, BillService,
 // ExpenseClaimService, BankTransactionService and JournalService
@@ -13,14 +15,27 @@ export class GlPostingService {
   constructor(
     @InjectModel(GlEntry.name)
     private readonly model: Model<GlEntryDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
+    private readonly exchangeRateService: ExchangeRateService,
   ) {}
 
+  async getBaseCurrency(tenantId: string): Promise<string> {
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.baseCurrency')
+      .lean();
+    return (tenant as any)?.tenantProfile?.baseCurrency || 'USD';
+  }
+
   // Caller is responsible for the set of lines it passes balancing
-  // (debits = credits) — this just writes them, it doesn't enforce
-  // double-entry correctness itself. sourceId accepts a real
-  // ObjectId directly (a Mongoose document's own _id) as well as a
-  // string, since every caller here is passing a document's _id
-  // straight through.
+  // (debits = credits) in their own original currency — this
+  // converts every line into the tenant's base currency before
+  // writing it, and always in that same currency, since a general
+  // ledger only means anything if every line shares one currency.
+  // sourceCurrency applies to the whole batch: every line in one
+  // posting call comes from the same source document, so it's
+  // always a single currency, never mixed per-line.
   async post(
     tenantId: string,
     entries: {
@@ -34,21 +49,38 @@ export class GlPostingService {
       credit?: number;
       sourceId?: Types.ObjectId | string | null;
     }[],
+    sourceCurrency: string = 'USD',
   ) {
     const tId = new Types.ObjectId(tenantId);
+    const baseCurrency = await this.getBaseCurrency(tenantId);
+    const currency = (sourceCurrency || 'USD').toUpperCase();
+
+    const { rate } =
+      currency === baseCurrency
+        ? { rate: 1 }
+        : await this.exchangeRateService.getRate(currency, baseCurrency);
+
     await this.model.insertMany(
-      entries.map((e) => ({
-        tenantId: tId,
-        date: e.date,
-        ref: e.ref,
-        description: e.description,
-        accountCode: e.accountCode,
-        accountName: e.accountName,
-        source: e.source,
-        debit: e.debit ?? 0,
-        credit: e.credit ?? 0,
-        sourceId: e.sourceId ? new Types.ObjectId(String(e.sourceId)) : null,
-      })),
+      entries.map((e) => {
+        const originalDebit = e.debit ?? 0;
+        const originalCredit = e.credit ?? 0;
+        return {
+          tenantId: tId,
+          date: e.date,
+          ref: e.ref,
+          description: e.description,
+          accountCode: e.accountCode,
+          accountName: e.accountName,
+          source: e.source,
+          debit: Number((originalDebit * rate).toFixed(2)),
+          credit: Number((originalCredit * rate).toFixed(2)),
+          originalCurrency: currency,
+          originalDebit,
+          originalCredit,
+          fxRateToBase: rate,
+          sourceId: e.sourceId ? new Types.ObjectId(String(e.sourceId)) : null,
+        };
+      }),
     );
   }
 }

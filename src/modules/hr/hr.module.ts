@@ -285,6 +285,7 @@ import {
     PerformanceReviewService,
     ProbationService,
     DisputeService,
+    ExchangeRateService,
   ],
 })
 export class HrModule {}

@@ -26,6 +26,8 @@ import {
   MaintenanceLogEntryDocument,
 } from '../schemas';
 import { BankTransaction, BankTransactionDocument } from '../schemas';
+import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+import { ExchangeRateService } from 'src/modules/hr/services/exchange-rate.service';
 import {
   CreateAccountDto,
   CreateJournalDto,
@@ -328,6 +330,7 @@ export class JournalService {
       date: new Date(dto.date),
       type: dto.type,
       narration: dto.narration,
+      currency: dto.currency ?? 'USD',
       lines: dto.lines.map((l) => ({
         accountCode: l.accountCode,
         accountName: l.accountName,
@@ -362,6 +365,7 @@ export class JournalService {
         credit: l.credit,
         sourceId: String(j._id),
       })),
+      j.currency,
     );
     j.status = JournalStatus.POSTED;
     j.postedBy = postedBy;
@@ -421,8 +425,15 @@ export class GeneralLedgerService {
   constructor(
     @InjectModel(GlEntry.name)
     private readonly model: Model<GlEntryDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
+    private readonly exchangeRateService: ExchangeRateService,
   ) {}
 
+  // displayCurrency lets a tenant view the ledger (already stored
+  // consistently in their base currency) converted into any other
+  // currency on the fly — never mutates what's stored, just the
+  // figures returned for this one read.
   async getEntries(
     tenantId: string,
     filters: {
@@ -430,6 +441,7 @@ export class GeneralLedgerService {
       from?: string;
       to?: string;
       search?: string;
+      displayCurrency?: string;
     } = {},
   ) {
     const query: any = { tenantId: new Types.ObjectId(tenantId) };
@@ -445,12 +457,32 @@ export class GeneralLedgerService {
     }
     const rows = await this.model.find(query).sort({ date: 1, _id: 1 }).lean();
 
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.baseCurrency')
+      .lean();
+    const baseCurrency = (tenant as any)?.tenantProfile?.baseCurrency || 'USD';
+    const displayCurrency = (
+      filters.displayCurrency || baseCurrency
+    ).toUpperCase();
+    const { rate: displayRate } =
+      displayCurrency === baseCurrency
+        ? { rate: 1 }
+        : await this.exchangeRateService.getRate(baseCurrency, displayCurrency);
+
     const runningByAccount = new Map<string, number>();
     const withBalance = rows.map((r) => {
       const prior = runningByAccount.get(r.accountCode) ?? 0;
       const next = prior + r.debit - r.credit;
       runningByAccount.set(r.accountCode, next);
-      return { ...r, balance: next };
+      return {
+        ...r,
+        debit: Number((r.debit * displayRate).toFixed(2)),
+        credit: Number((r.credit * displayRate).toFixed(2)),
+        balance: Number((next * displayRate).toFixed(2)),
+        displayCurrency,
+        baseCurrency,
+      };
     });
     return withBalance.reverse();
   }

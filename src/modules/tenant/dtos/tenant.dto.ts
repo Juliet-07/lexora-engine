@@ -26,6 +26,15 @@ export class UpdateTenantProfileDto {
   @IsString()
   registrationNumber?: string;
 
+  @ApiPropertyOptional({
+    example: 'RWF',
+    description:
+      'The currency every financial record is kept and reported in — GL postings, reports, and balances all convert into this one.',
+  })
+  @IsOptional()
+  @IsString()
+  baseCurrency?: string;
+
   @ApiPropertyOptional({ example: 'TIN-987654' })
   @IsOptional()
   @IsString()

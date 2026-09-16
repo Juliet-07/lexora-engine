@@ -317,6 +317,7 @@ export class CreateJournalDto {
   @ApiProperty({ enum: JournalType }) @IsEnum(JournalType) type: JournalType;
   @ApiProperty() @IsString() narration: string;
   @ApiProperty() @IsString() preparedBy: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiProperty({ type: [JournalLineDto] })
   @IsArray()
   @ValidateNested({ each: true })

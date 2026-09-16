@@ -215,28 +215,32 @@ export class TrustMovementService {
     // Real double-entry — money arriving in the ring-fenced trust
     // bank account, matched by an equal increase in what the firm
     // owes this client. Dr Bank-trust, Cr Client trust liability.
-    await this.glPostingService.post(tenantId, [
-      {
-        date: new Date(dto.date),
-        ref,
-        description: `${ledger.clientName} — trust deposit`,
-        accountCode: GL_ACCOUNTS.BANK_TRUST.code,
-        accountName: GL_ACCOUNTS.BANK_TRUST.name,
-        source: GlSource.TRUST,
-        debit: dto.amount,
-        sourceId: created._id,
-      },
-      {
-        date: new Date(dto.date),
-        ref,
-        description: `${ledger.clientName} — trust deposit`,
-        accountCode: GL_ACCOUNTS.CLIENT_TRUST_LIABILITY.code,
-        accountName: GL_ACCOUNTS.CLIENT_TRUST_LIABILITY.name,
-        source: GlSource.TRUST,
-        credit: dto.amount,
-        sourceId: created._id,
-      },
-    ]);
+    await this.glPostingService.post(
+      tenantId,
+      [
+        {
+          date: new Date(dto.date),
+          ref,
+          description: `${ledger.clientName} — trust deposit`,
+          accountCode: GL_ACCOUNTS.BANK_TRUST.code,
+          accountName: GL_ACCOUNTS.BANK_TRUST.name,
+          source: GlSource.TRUST,
+          debit: dto.amount,
+          sourceId: created._id,
+        },
+        {
+          date: new Date(dto.date),
+          ref,
+          description: `${ledger.clientName} — trust deposit`,
+          accountCode: GL_ACCOUNTS.CLIENT_TRUST_LIABILITY.code,
+          accountName: GL_ACCOUNTS.CLIENT_TRUST_LIABILITY.name,
+          source: GlSource.TRUST,
+          credit: dto.amount,
+          sourceId: created._id,
+        },
+      ],
+      ledger.currency,
+    );
 
     return created.toObject();
   }
@@ -314,28 +318,32 @@ export class TrustMovementService {
     // Real double-entry — money genuinely leaving the trust
     // account, matched by an equal decrease in what the firm owes
     // this client. Dr Client trust liability, Cr Bank-trust.
-    await this.glPostingService.post(tenantId, [
-      {
-        date: new Date(),
-        ref: m.ref,
-        description: `${ledger.clientName} — trust drawdown`,
-        accountCode: GL_ACCOUNTS.CLIENT_TRUST_LIABILITY.code,
-        accountName: GL_ACCOUNTS.CLIENT_TRUST_LIABILITY.name,
-        source: GlSource.TRUST,
-        debit: m.amount,
-        sourceId: m._id,
-      },
-      {
-        date: new Date(),
-        ref: m.ref,
-        description: `${ledger.clientName} — trust drawdown`,
-        accountCode: GL_ACCOUNTS.BANK_TRUST.code,
-        accountName: GL_ACCOUNTS.BANK_TRUST.name,
-        source: GlSource.TRUST,
-        credit: m.amount,
-        sourceId: m._id,
-      },
-    ]);
+    await this.glPostingService.post(
+      tenantId,
+      [
+        {
+          date: new Date(),
+          ref: m.ref,
+          description: `${ledger.clientName} — trust drawdown`,
+          accountCode: GL_ACCOUNTS.CLIENT_TRUST_LIABILITY.code,
+          accountName: GL_ACCOUNTS.CLIENT_TRUST_LIABILITY.name,
+          source: GlSource.TRUST,
+          debit: m.amount,
+          sourceId: m._id,
+        },
+        {
+          date: new Date(),
+          ref: m.ref,
+          description: `${ledger.clientName} — trust drawdown`,
+          accountCode: GL_ACCOUNTS.BANK_TRUST.code,
+          accountName: GL_ACCOUNTS.BANK_TRUST.name,
+          source: GlSource.TRUST,
+          credit: m.amount,
+          sourceId: m._id,
+        },
+      ],
+      ledger.currency,
+    );
 
     return m.toObject();
   }

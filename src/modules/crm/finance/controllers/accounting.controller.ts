@@ -157,6 +157,12 @@ export class GeneralLedgerController {
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
   @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({
+    name: 'displayCurrency',
+    required: false,
+    description:
+      'View figures converted to this currency instead of the tenant base currency',
+  })
   @ApiOperation({
     summary: 'Every posted GL line, with a real running balance per account',
   })
@@ -165,10 +171,17 @@ export class GeneralLedgerController {
     @Query('from') from: string | undefined,
     @Query('to') to: string | undefined,
     @Query('search') search: string | undefined,
+    @Query('displayCurrency') displayCurrency: string | undefined,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.getEntries(t || u, { source, from, to, search });
+    return this.service.getEntries(t || u, {
+      source,
+      from,
+      to,
+      search,
+      displayCurrency,
+    });
   }
 }
 

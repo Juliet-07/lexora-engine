@@ -73,8 +73,23 @@ export class GlEntry {
   @Prop({ required: true }) accountName: string;
 
   @Prop({ enum: GlSource, required: true, index: true }) source: GlSource;
+  // Always in the tenant's base currency — a general ledger only
+  // means anything if every line is in one consistent currency.
   @Prop({ default: 0 }) debit: number;
   @Prop({ default: 0 }) credit: number;
+
+  // The source transaction's own currency and amounts, preserved
+  // exactly as recorded — never recomputed — so the original entry
+  // (e.g. a bill genuinely raised in RWF) stays visible even though
+  // debit/credit above are the base-currency-converted figures.
+  @Prop({ default: 'USD', uppercase: true, trim: true })
+  originalCurrency: string;
+  @Prop({ default: 0 }) originalDebit: number;
+  @Prop({ default: 0 }) originalCredit: number;
+  // The rate used to convert originalDebit/originalCredit into
+  // debit/credit, locked in at posting time — 1 whenever
+  // originalCurrency already equals the base currency.
+  @Prop({ default: 1 }) fxRateToBase: number;
 
   // For drill-through back to the real source record — optional,
   // since a manual journal's lines don't always point at another
@@ -126,6 +141,7 @@ export class Journal {
   @Prop({ enum: JournalType, required: true }) type: JournalType;
   @Prop({ required: true }) narration: string;
   @Prop({ type: [JournalLineSchema], default: [] }) lines: JournalLine[];
+  @Prop({ default: 'USD', uppercase: true, trim: true }) currency: string;
 
   @Prop({ enum: JournalStatus, default: JournalStatus.UNPOSTED, index: true })
   status: JournalStatus;

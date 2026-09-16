@@ -357,28 +357,32 @@ export class BillService {
     b.approvedBy = approvedBy;
     await b.save();
 
-    await this.glPostingService.post(tenantId, [
-      {
-        date: new Date(),
-        ref: b.ref,
-        description: `${b.vendorName} — ${b.description}`,
-        accountCode: GL_ACCOUNTS.GENERAL_EXPENSE.code,
-        accountName: GL_ACCOUNTS.GENERAL_EXPENSE.name,
-        source: GlSource.PURCHASES,
-        debit: b.amount,
-        sourceId: b._id,
-      },
-      {
-        date: new Date(),
-        ref: b.ref,
-        description: `${b.vendorName} — AP`,
-        accountCode: GL_ACCOUNTS.ACCOUNTS_PAYABLE.code,
-        accountName: GL_ACCOUNTS.ACCOUNTS_PAYABLE.name,
-        source: GlSource.PURCHASES,
-        credit: b.amount,
-        sourceId: b._id,
-      },
-    ]);
+    await this.glPostingService.post(
+      tenantId,
+      [
+        {
+          date: new Date(),
+          ref: b.ref,
+          description: `${b.vendorName} — ${b.description}`,
+          accountCode: GL_ACCOUNTS.GENERAL_EXPENSE.code,
+          accountName: GL_ACCOUNTS.GENERAL_EXPENSE.name,
+          source: GlSource.PURCHASES,
+          debit: b.amount,
+          sourceId: b._id,
+        },
+        {
+          date: new Date(),
+          ref: b.ref,
+          description: `${b.vendorName} — AP`,
+          accountCode: GL_ACCOUNTS.ACCOUNTS_PAYABLE.code,
+          accountName: GL_ACCOUNTS.ACCOUNTS_PAYABLE.name,
+          source: GlSource.PURCHASES,
+          credit: b.amount,
+          sourceId: b._id,
+        },
+      ],
+      b.currency,
+    );
 
     return b.toObject();
   }
@@ -460,7 +464,7 @@ export class BillService {
         sourceId: b._id,
       });
     }
-    await this.glPostingService.post(tenantId, glLines);
+    await this.glPostingService.post(tenantId, glLines, b.currency);
 
     return b.toObject();
   }
@@ -545,28 +549,32 @@ export class ExpenseClaimService {
     const debitAccount = c.rechargeable
       ? GL_ACCOUNTS.UNBILLED_DISBURSEMENTS
       : GL_ACCOUNTS.GENERAL_EXPENSE;
-    await this.glPostingService.post(tenantId, [
-      {
-        date: new Date(),
-        ref: c.ref,
-        description: `${c.employee} — ${c.description}`,
-        accountCode: debitAccount.code,
-        accountName: debitAccount.name,
-        source: GlSource.PURCHASES,
-        debit: c.amount,
-        sourceId: c._id,
-      },
-      {
-        date: new Date(),
-        ref: c.ref,
-        description: `${c.employee} — reimbursement payable`,
-        accountCode: GL_ACCOUNTS.STAFF_REIMBURSEMENTS_PAYABLE.code,
-        accountName: GL_ACCOUNTS.STAFF_REIMBURSEMENTS_PAYABLE.name,
-        source: GlSource.PURCHASES,
-        credit: c.amount,
-        sourceId: c._id,
-      },
-    ]);
+    await this.glPostingService.post(
+      tenantId,
+      [
+        {
+          date: new Date(),
+          ref: c.ref,
+          description: `${c.employee} — ${c.description}`,
+          accountCode: debitAccount.code,
+          accountName: debitAccount.name,
+          source: GlSource.PURCHASES,
+          debit: c.amount,
+          sourceId: c._id,
+        },
+        {
+          date: new Date(),
+          ref: c.ref,
+          description: `${c.employee} — reimbursement payable`,
+          accountCode: GL_ACCOUNTS.STAFF_REIMBURSEMENTS_PAYABLE.code,
+          accountName: GL_ACCOUNTS.STAFF_REIMBURSEMENTS_PAYABLE.name,
+          source: GlSource.PURCHASES,
+          credit: c.amount,
+          sourceId: c._id,
+        },
+      ],
+      c.currency,
+    );
 
     return c.toObject();
   }
@@ -583,28 +591,32 @@ export class ExpenseClaimService {
     c.status = ClaimStatus.PAID;
     await c.save();
 
-    await this.glPostingService.post(tenantId, [
-      {
-        date: new Date(),
-        ref: c.ref,
-        description: `${c.employee} — reimbursement settled`,
-        accountCode: GL_ACCOUNTS.STAFF_REIMBURSEMENTS_PAYABLE.code,
-        accountName: GL_ACCOUNTS.STAFF_REIMBURSEMENTS_PAYABLE.name,
-        source: GlSource.PURCHASES,
-        debit: c.amount,
-        sourceId: c._id,
-      },
-      {
-        date: new Date(),
-        ref: c.ref,
-        description: `${c.employee} — reimbursement payment`,
-        accountCode: GL_ACCOUNTS.BANK_OPERATING.code,
-        accountName: GL_ACCOUNTS.BANK_OPERATING.name,
-        source: GlSource.BANKING,
-        credit: c.amount,
-        sourceId: c._id,
-      },
-    ]);
+    await this.glPostingService.post(
+      tenantId,
+      [
+        {
+          date: new Date(),
+          ref: c.ref,
+          description: `${c.employee} — reimbursement settled`,
+          accountCode: GL_ACCOUNTS.STAFF_REIMBURSEMENTS_PAYABLE.code,
+          accountName: GL_ACCOUNTS.STAFF_REIMBURSEMENTS_PAYABLE.name,
+          source: GlSource.PURCHASES,
+          debit: c.amount,
+          sourceId: c._id,
+        },
+        {
+          date: new Date(),
+          ref: c.ref,
+          description: `${c.employee} — reimbursement payment`,
+          accountCode: GL_ACCOUNTS.BANK_OPERATING.code,
+          accountName: GL_ACCOUNTS.BANK_OPERATING.name,
+          source: GlSource.BANKING,
+          credit: c.amount,
+          sourceId: c._id,
+        },
+      ],
+      c.currency,
+    );
 
     return c.toObject();
   }

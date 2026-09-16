@@ -219,30 +219,34 @@ export class BankTransactionService {
     const magnitude = Math.abs(dto.amount);
     const isInflow = dto.amount >= 0;
 
-    await this.glPostingService.post(tenantId, [
-      {
-        date: new Date(dto.date),
-        ref: String(created._id),
-        description: dto.description,
-        accountCode: bankGlAccount.code,
-        accountName: bankGlAccount.name,
-        source: GlSource.BANKING,
-        debit: isInflow ? magnitude : 0,
-        credit: isInflow ? 0 : magnitude,
-        sourceId: String(created._id),
-      },
-      {
-        date: new Date(dto.date),
-        ref: String(created._id),
-        description: dto.description,
-        accountCode: contra.code,
-        accountName: contra.name,
-        source: GlSource.BANKING,
-        debit: isInflow ? 0 : magnitude,
-        credit: isInflow ? magnitude : 0,
-        sourceId: String(created._id),
-      },
-    ]);
+    await this.glPostingService.post(
+      tenantId,
+      [
+        {
+          date: new Date(dto.date),
+          ref: String(created._id),
+          description: dto.description,
+          accountCode: bankGlAccount.code,
+          accountName: bankGlAccount.name,
+          source: GlSource.BANKING,
+          debit: isInflow ? magnitude : 0,
+          credit: isInflow ? 0 : magnitude,
+          sourceId: String(created._id),
+        },
+        {
+          date: new Date(dto.date),
+          ref: String(created._id),
+          description: dto.description,
+          accountCode: contra.code,
+          accountName: contra.name,
+          source: GlSource.BANKING,
+          debit: isInflow ? 0 : magnitude,
+          credit: isInflow ? magnitude : 0,
+          sourceId: String(created._id),
+        },
+      ],
+      account?.currency ?? 'USD',
+    );
 
     return created.toObject();
   }

@@ -30,6 +30,13 @@ export class TenantProfile {
   };
   @Prop({ default: null }) logoUrl: string;
   @Prop({ default: null }) taxId: string;
+  // The currency every financial record is actually kept in — GL
+  // postings, reports, and balances are always in this currency.
+  // A transaction entered in a different currency is converted to
+  // this one at posting time using the real rate on that day, with
+  // the original currency/amount preserved alongside it.
+  @Prop({ default: 'USD', uppercase: true, trim: true })
+  baseCurrency: string;
 }
 
 // ── Embedded: Client profile ──────────────────────────────────

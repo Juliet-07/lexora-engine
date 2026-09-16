@@ -608,6 +608,7 @@ export class TenantService {
       'taxId',
       'address',
       'contactPerson',
+      'baseCurrency',
     ];
     for (const field of profileFields) {
       if (dto[field] !== undefined) {

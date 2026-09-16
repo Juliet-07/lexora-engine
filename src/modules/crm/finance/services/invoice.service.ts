@@ -414,7 +414,7 @@ export class InvoiceService {
         sourceId: invoice._id,
       });
     }
-    await this.glPostingService.post(tenantId, glLines);
+    await this.glPostingService.post(tenantId, glLines, invoice.currency);
 
     // The client-receipt side of the single WHT source of truth —
     // this invoice doesn't compute its own separate WHT figure
@@ -614,28 +614,32 @@ export class InvoiceService {
     }
     await i.save();
 
-    await this.glPostingService.post(tenantId, [
-      {
-        date: new Date(),
-        ref: i.ref,
-        description: `${i.clientName} — payment received`,
-        accountCode: GL_ACCOUNTS.BANK_OPERATING.code,
-        accountName: GL_ACCOUNTS.BANK_OPERATING.name,
-        source: GlSource.BANKING,
-        debit: amount,
-        sourceId: i._id,
-      },
-      {
-        date: new Date(),
-        ref: i.ref,
-        description: `${i.clientName} — AR cleared`,
-        accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.code,
-        accountName: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.name,
-        source: GlSource.BANKING,
-        credit: amount,
-        sourceId: i._id,
-      },
-    ]);
+    await this.glPostingService.post(
+      tenantId,
+      [
+        {
+          date: new Date(),
+          ref: i.ref,
+          description: `${i.clientName} — payment received`,
+          accountCode: GL_ACCOUNTS.BANK_OPERATING.code,
+          accountName: GL_ACCOUNTS.BANK_OPERATING.name,
+          source: GlSource.BANKING,
+          debit: amount,
+          sourceId: i._id,
+        },
+        {
+          date: new Date(),
+          ref: i.ref,
+          description: `${i.clientName} — AR cleared`,
+          accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.code,
+          accountName: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.name,
+          source: GlSource.BANKING,
+          credit: amount,
+          sourceId: i._id,
+        },
+      ],
+      i.currency,
+    );
 
     this.eventEmitter.emit('client.invoice.paid', {
       tenantId,

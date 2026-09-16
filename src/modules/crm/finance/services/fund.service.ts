@@ -664,28 +664,32 @@ export class CapitalCallService {
       .lean();
 
     if (fund?.bankAccountId) {
-      await this.glPostingService.post(tenantId, [
-        {
-          date: new Date(),
-          ref: call.ref,
-          description: `${allocation.lpName} — capital call funding`,
-          accountCode: GL_ACCOUNTS.BANK_FUND.code,
-          accountName: GL_ACCOUNTS.BANK_FUND.name,
-          source: GlSource.FUND,
-          debit: dto.amount,
-          sourceId: call._id,
-        },
-        {
-          date: new Date(),
-          ref: call.ref,
-          description: `${allocation.lpName} — capital call funding`,
-          accountCode: GL_ACCOUNTS.LP_PAID_IN_CAPITAL.code,
-          accountName: GL_ACCOUNTS.LP_PAID_IN_CAPITAL.name,
-          source: GlSource.FUND,
-          credit: dto.amount,
-          sourceId: call._id,
-        },
-      ]);
+      await this.glPostingService.post(
+        tenantId,
+        [
+          {
+            date: new Date(),
+            ref: call.ref,
+            description: `${allocation.lpName} — capital call funding`,
+            accountCode: GL_ACCOUNTS.BANK_FUND.code,
+            accountName: GL_ACCOUNTS.BANK_FUND.name,
+            source: GlSource.FUND,
+            debit: dto.amount,
+            sourceId: call._id,
+          },
+          {
+            date: new Date(),
+            ref: call.ref,
+            description: `${allocation.lpName} — capital call funding`,
+            accountCode: GL_ACCOUNTS.LP_PAID_IN_CAPITAL.code,
+            accountName: GL_ACCOUNTS.LP_PAID_IN_CAPITAL.name,
+            source: GlSource.FUND,
+            credit: dto.amount,
+            sourceId: call._id,
+          },
+        ],
+        fund.currency,
+      );
     }
 
     await this.capitalAccountService.postEntry(
@@ -1367,28 +1371,32 @@ export class DistributionService {
     }
 
     if (fund.bankAccountId) {
-      await this.glPostingService.post(tenantId, [
-        {
-          date: distributionDate,
-          ref,
-          description: `Distribution ${ref} — ${dto.source ?? DistributionSource.EXIT}`,
-          accountCode: GL_ACCOUNTS.LP_PAID_IN_CAPITAL.code,
-          accountName: GL_ACCOUNTS.LP_PAID_IN_CAPITAL.name,
-          source: GlSource.FUND,
-          debit: dto.totalAmount,
-          sourceId: created._id,
-        },
-        {
-          date: distributionDate,
-          ref,
-          description: `Distribution ${ref} — ${dto.source ?? DistributionSource.EXIT}`,
-          accountCode: GL_ACCOUNTS.BANK_FUND.code,
-          accountName: GL_ACCOUNTS.BANK_FUND.name,
-          source: GlSource.FUND,
-          credit: dto.totalAmount,
-          sourceId: created._id,
-        },
-      ]);
+      await this.glPostingService.post(
+        tenantId,
+        [
+          {
+            date: distributionDate,
+            ref,
+            description: `Distribution ${ref} — ${dto.source ?? DistributionSource.EXIT}`,
+            accountCode: GL_ACCOUNTS.LP_PAID_IN_CAPITAL.code,
+            accountName: GL_ACCOUNTS.LP_PAID_IN_CAPITAL.name,
+            source: GlSource.FUND,
+            debit: dto.totalAmount,
+            sourceId: created._id,
+          },
+          {
+            date: distributionDate,
+            ref,
+            description: `Distribution ${ref} — ${dto.source ?? DistributionSource.EXIT}`,
+            accountCode: GL_ACCOUNTS.BANK_FUND.code,
+            accountName: GL_ACCOUNTS.BANK_FUND.name,
+            source: GlSource.FUND,
+            credit: dto.totalAmount,
+            sourceId: created._id,
+          },
+        ],
+        fund.currency,
+      );
     }
 
     return created.toObject();
@@ -1597,28 +1605,32 @@ export class FundExpenseService {
 
       if (fund.bankAccountId) {
         const ref = `EXP-${String(created._id).slice(-6)}`;
-        await this.glPostingService.post(tenantId, [
-          {
-            date: new Date(dto.date),
-            ref,
-            description: dto.category,
-            accountCode: GL_ACCOUNTS.GENERAL_EXPENSE.code,
-            accountName: GL_ACCOUNTS.GENERAL_EXPENSE.name,
-            source: GlSource.FUND,
-            debit: fundBorneAmount,
-            sourceId: created._id,
-          },
-          {
-            date: new Date(dto.date),
-            ref,
-            description: dto.category,
-            accountCode: GL_ACCOUNTS.BANK_FUND.code,
-            accountName: GL_ACCOUNTS.BANK_FUND.name,
-            source: GlSource.FUND,
-            credit: fundBorneAmount,
-            sourceId: created._id,
-          },
-        ]);
+        await this.glPostingService.post(
+          tenantId,
+          [
+            {
+              date: new Date(dto.date),
+              ref,
+              description: dto.category,
+              accountCode: GL_ACCOUNTS.GENERAL_EXPENSE.code,
+              accountName: GL_ACCOUNTS.GENERAL_EXPENSE.name,
+              source: GlSource.FUND,
+              debit: fundBorneAmount,
+              sourceId: created._id,
+            },
+            {
+              date: new Date(dto.date),
+              ref,
+              description: dto.category,
+              accountCode: GL_ACCOUNTS.BANK_FUND.code,
+              accountName: GL_ACCOUNTS.BANK_FUND.name,
+              source: GlSource.FUND,
+              credit: fundBorneAmount,
+              sourceId: created._id,
+            },
+          ],
+          fund.currency,
+        );
       }
     }
 
@@ -1790,28 +1802,32 @@ export class ManagementFeeService {
       .lean();
     if (fund?.bankAccountId && charge.totalFeeAmount > 0) {
       const ref = `MF-${charge.period}`;
-      await this.glPostingService.post(tenantId, [
-        {
-          date: new Date(),
-          ref,
-          description: `Management fee ${charge.period} paid`,
-          accountCode: GL_ACCOUNTS.GENERAL_EXPENSE.code,
-          accountName: GL_ACCOUNTS.GENERAL_EXPENSE.name,
-          source: GlSource.FUND,
-          debit: charge.totalFeeAmount,
-          sourceId: charge._id,
-        },
-        {
-          date: new Date(),
-          ref,
-          description: `Management fee ${charge.period} paid`,
-          accountCode: GL_ACCOUNTS.BANK_FUND.code,
-          accountName: GL_ACCOUNTS.BANK_FUND.name,
-          source: GlSource.FUND,
-          credit: charge.totalFeeAmount,
-          sourceId: charge._id,
-        },
-      ]);
+      await this.glPostingService.post(
+        tenantId,
+        [
+          {
+            date: new Date(),
+            ref,
+            description: `Management fee ${charge.period} paid`,
+            accountCode: GL_ACCOUNTS.GENERAL_EXPENSE.code,
+            accountName: GL_ACCOUNTS.GENERAL_EXPENSE.name,
+            source: GlSource.FUND,
+            debit: charge.totalFeeAmount,
+            sourceId: charge._id,
+          },
+          {
+            date: new Date(),
+            ref,
+            description: `Management fee ${charge.period} paid`,
+            accountCode: GL_ACCOUNTS.BANK_FUND.code,
+            accountName: GL_ACCOUNTS.BANK_FUND.name,
+            source: GlSource.FUND,
+            credit: charge.totalFeeAmount,
+            sourceId: charge._id,
+          },
+        ],
+        fund.currency,
+      );
     }
 
     charge.status = FeeChargeStatus.PAID;
