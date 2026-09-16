@@ -11,6 +11,7 @@ import {
   ValidateNested,
   IsEmail,
   Min,
+  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { BillingModel } from '../schemas';
@@ -111,9 +112,19 @@ export class CreateQuoteDto {
   // registered client. clientName is required either way.
   @ApiPropertyOptional() @IsOptional() @IsMongoId() clientUserId?: string;
   @ApiProperty() @IsString() clientName: string;
+  // Required whenever clientUserId isn't set — validated in the
+  // service, since it depends on that other field.
+  @ApiPropertyOptional() @IsOptional() @IsEmail() clientEmail?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
   @ApiProperty() @IsString() title: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
   @ApiProperty() @IsNumber() @Min(0) amount: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  vatPercent?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiProperty() @IsDateString() expires: string;
   @ApiProperty({ enum: QuoteKind }) @IsEnum(QuoteKind) kind: QuoteKind;

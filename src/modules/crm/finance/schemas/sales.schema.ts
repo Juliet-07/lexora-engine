@@ -69,6 +69,11 @@ export class Quote {
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   clientUserId: Types.ObjectId | null;
   @Prop({ required: true }) clientName: string;
+  // Required at creation whenever there's no clientUserId — it's
+  // the only address a prospect quote can actually be sent to.
+  // Still captured even for a real client, so a resend never has
+  // to fall back on a stale account email.
+  @Prop({ default: null }) clientEmail: string | null;
 
   // A proforma is usually tied to a real mandate already underway;
   // a Quote often precedes one existing at all, so this stays optional.
@@ -79,7 +84,14 @@ export class Quote {
   mandateId: Types.ObjectId | null;
 
   @Prop({ required: true }) title: string;
+  // A real breakdown for the client to read — what's actually
+  // included, not just a single line-item title.
+  @Prop({ default: '' }) description: string;
   @Prop({ required: true }) amount: number;
+  @Prop({ default: 0, min: 0, max: 100 }) vatPercent: number;
+  @Prop({ default: 0 }) vatAmount: number;
+  // amount + vatAmount — the actual package total a client sees.
+  @Prop({ required: true }) totalAmount: number;
   @Prop({ default: 'USD' }) currency: string;
   @Prop({ required: true }) issued: Date;
   @Prop({ required: true }) expires: Date;

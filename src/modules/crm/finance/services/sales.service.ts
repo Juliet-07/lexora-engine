@@ -217,8 +217,19 @@ export class QuoteService {
   }
 
   async create(tenantId: string, dto: CreateQuoteDto) {
+    // A quote for a prospect (no clientUserId) can only ever be
+    // sent to an address captured right here — there's no client
+    // account to look an email up on later.
+    if (!dto.clientUserId && !dto.clientEmail) {
+      throw new BadRequestException(
+        'An email is required for a quote written for a prospect who is not yet a client',
+      );
+    }
     const tId = new Types.ObjectId(tenantId);
     const ref = await this.nextRef(tId, dto.kind);
+    const vatPercent = dto.vatPercent ?? 0;
+    const vatAmount = Number(((dto.amount * vatPercent) / 100).toFixed(2));
+    const totalAmount = Number((dto.amount + vatAmount).toFixed(2));
     const created = await this.model.create({
       tenantId: tId,
       ref,
@@ -226,9 +237,14 @@ export class QuoteService {
         ? new Types.ObjectId(dto.clientUserId)
         : null,
       clientName: dto.clientName,
+      clientEmail: dto.clientEmail ?? null,
       mandateId: dto.mandateId ? new Types.ObjectId(dto.mandateId) : null,
       title: dto.title,
+      description: dto.description ?? '',
       amount: dto.amount,
+      vatPercent,
+      vatAmount,
+      totalAmount,
       currency: dto.currency ?? 'USD',
       issued: new Date(),
       expires: new Date(dto.expires),
@@ -254,28 +270,41 @@ export class QuoteService {
   async setStatus(tenantId: string, id: string, status: QuoteStatus) {
     const q = await this.getRawDoc(tenantId, id);
     const wasNotSent = q.status !== QuoteStatus.SENT;
-    q.status = status;
-    await q.save();
 
-    if (status === QuoteStatus.SENT && wasNotSent && q.clientUserId) {
-      const client = await this.userModel.findById(q.clientUserId).lean();
-      if (client?.email) {
-        await this.emailService
-          .sendQuoteEmail({
-            to: client.email,
-            clientName: q.clientName,
-            ref: q.ref,
-            kind: q.kind as 'Quote' | 'Proforma',
-            title: q.title,
-            amount: q.amount,
-            currency: q.currency,
-            issued: q.issued,
-            expires: q.expires,
-          })
-          .catch(() => undefined);
+    if (status === QuoteStatus.SENT && wasNotSent) {
+      // Nowhere to actually send this — refuse the status change
+      // outright rather than silently marking it Sent with nothing
+      // having gone anywhere.
+      let destinationEmail = q.clientEmail;
+      if (!destinationEmail && q.clientUserId) {
+        const client = await this.userModel.findById(q.clientUserId).lean();
+        destinationEmail = client?.email ?? null;
       }
+      if (!destinationEmail) {
+        throw new BadRequestException(
+          'This quote has no email on file to send it to — add one before marking it Sent',
+        );
+      }
+      q.status = status;
+      await q.save();
+      await this.emailService
+        .sendQuoteEmail({
+          to: destinationEmail,
+          clientName: q.clientName,
+          ref: q.ref,
+          kind: q.kind as 'Quote' | 'Proforma',
+          title: q.title,
+          amount: q.totalAmount,
+          currency: q.currency,
+          issued: q.issued,
+          expires: q.expires,
+        })
+        .catch(() => undefined);
+      return q.toObject();
     }
 
+    q.status = status;
+    await q.save();
     return q.toObject();
   }
 
@@ -311,7 +340,11 @@ export class QuoteService {
       kind: q.kind as 'Quote' | 'Proforma',
       clientName: q.clientName,
       title: q.title,
+      description: q.description,
       amount: q.amount,
+      vatPercent: q.vatPercent,
+      vatAmount: q.vatAmount,
+      totalAmount: q.totalAmount,
       currency: q.currency,
       issued: q.issued,
       expires: q.expires,

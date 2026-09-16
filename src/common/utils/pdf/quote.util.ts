@@ -25,7 +25,11 @@ export interface QuotePdfData {
   kind: 'Quote' | 'Proforma';
   clientName: string;
   title: string;
+  description?: string;
   amount: number;
+  vatPercent?: number;
+  vatAmount?: number;
+  totalAmount?: number;
   currency: string;
   issued: Date;
   expires: Date;
@@ -165,6 +169,17 @@ export function buildQuotePdf(data: QuotePdfData): Promise<Buffer> {
     });
     doc.y = Math.max(doc.y, rowY) + 20;
 
+    if (data.description?.trim()) {
+      doc
+        .font('Helvetica')
+        .fontSize(9)
+        .fillColor(MUTED)
+        .text(data.description.trim(), 50, doc.y, {
+          width: contentWidth - 120,
+        });
+      doc.moveDown(0.8);
+    }
+
     doc
       .moveTo(50, doc.y)
       .lineTo(50 + contentWidth, doc.y)
@@ -172,13 +187,31 @@ export function buildQuotePdf(data: QuotePdfData): Promise<Buffer> {
       .strokeColor(GOLD)
       .stroke();
     doc.moveDown(0.6);
+
+    if (data.vatPercent) {
+      doc
+        .font('Helvetica')
+        .fontSize(10)
+        .fillColor(INK)
+        .text(`VAT (${data.vatPercent}%)`, 50, doc.y, {
+          width: contentWidth - 120,
+        });
+      doc.text(
+        fmtNumber(data.vatAmount ?? 0),
+        50 + contentWidth - 120,
+        doc.y - doc.currentLineHeight(),
+        { width: 120, align: 'right' },
+      );
+      doc.moveDown(0.6);
+    }
+
     doc
       .font('Helvetica-Bold')
       .fontSize(11)
       .fillColor(PURPLE)
       .text(`TOTAL ${data.currency}`, 50, doc.y, { width: contentWidth - 120 });
     doc.text(
-      fmtNumber(data.amount),
+      fmtNumber(data.totalAmount ?? data.amount),
       50 + contentWidth - 120,
       doc.y - doc.currentLineHeight(),
       {
