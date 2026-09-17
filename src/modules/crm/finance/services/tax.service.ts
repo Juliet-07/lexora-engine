@@ -13,6 +13,7 @@ import { BillService } from './purchases.service';
 import { PayrollRunService } from 'src/modules/hr/services/payroll-run.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+import { ExchangeRateService } from 'src/modules/hr/services/exchange-rate.service';
 
 // ── VAT — real output VAT from invoices, real input VAT from bills ──
 
@@ -21,6 +22,8 @@ export class VatService {
   constructor(
     private readonly invoiceService: InvoiceService,
     private readonly billService: BillService,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    private readonly exchangeRateService: ExchangeRateService,
   ) {}
 
   // period is "YYYY-MM"; defaults to the current month.
@@ -31,31 +34,60 @@ export class VatService {
       this.billService.getAll(tenantId),
     ]);
 
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.baseCurrency')
+      .lean();
+    const baseCurrency = (tenant as any)?.tenantProfile?.baseCurrency || 'USD';
+    const rateCache = new Map<string, number>();
+    const rateTo = async (currency: string): Promise<number> => {
+      const cur = (currency || 'USD').toUpperCase();
+      if (cur === baseCurrency) return 1;
+      if (rateCache.has(cur)) return rateCache.get(cur)!;
+      const { rate } = await this.exchangeRateService.getRate(
+        cur,
+        baseCurrency,
+      );
+      rateCache.set(cur, rate);
+      return rate;
+    };
+
     const inPeriod = (d: string | Date) =>
       new Date(d).toISOString().slice(0, 7) === targetPeriod;
 
-    const outputLines = invoices
-      .filter((i: any) => inPeriod(i.issuedOn) && i.stage !== 'Draft')
-      .map((i: any) => ({
-        category: `Sales — ${i.ref}`,
-        type: 'Output' as const,
-        base: i.net,
-        vat: i.vat,
-      }));
-    const inputLines = bills
-      .filter((b: any) => inPeriod(b.dueOn) && b.vatAmount > 0)
-      .map((b: any) => ({
-        category: `Purchases — ${b.ref}`,
-        type: 'Input' as const,
-        base: b.amount - b.vatAmount,
-        vat: b.vatAmount,
-      }));
+    const outputLines = await Promise.all(
+      invoices
+        .filter((i: any) => inPeriod(i.issuedOn) && i.stage !== 'Draft')
+        .map(async (i: any) => {
+          const rate = await rateTo(i.currency);
+          return {
+            category: `Sales — ${i.ref}`,
+            type: 'Output' as const,
+            base: Number((i.net * rate).toFixed(2)),
+            vat: Number((i.vat * rate).toFixed(2)),
+          };
+        }),
+    );
+    const inputLines = await Promise.all(
+      bills
+        .filter((b: any) => inPeriod(b.dueOn) && b.vatAmount > 0)
+        .map(async (b: any) => {
+          const rate = await rateTo(b.currency);
+          return {
+            category: `Purchases — ${b.ref}`,
+            type: 'Input' as const,
+            base: Number(((b.amount - b.vatAmount) * rate).toFixed(2)),
+            vat: Number((b.vatAmount * rate).toFixed(2)),
+          };
+        }),
+    );
 
     const outputVat = outputLines.reduce((s, l) => s + l.vat, 0);
     const inputVat = inputLines.reduce((s, l) => s + l.vat, 0);
 
     return {
       period: targetPeriod,
+      currency: baseCurrency,
       outputVat,
       inputVat,
       netPayable: outputVat - inputVat,
@@ -118,6 +150,8 @@ export class CitService {
     private readonly invoiceService: InvoiceService,
     private readonly billService: BillService,
     private readonly payrollRunService: PayrollRunService,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    private readonly exchangeRateService: ExchangeRateService,
   ) {}
 
   async getProvision(tenantId: string) {
@@ -127,12 +161,44 @@ export class CitService {
       this.payrollRunService.getAllRuns(tenantId),
     ]);
 
-    const revenue = invoices
-      .filter((i: any) => i.stage === 'Paid' || i.stage === 'Part Paid')
-      .reduce((s: number, i: any) => s + i.paidAmount, 0);
-    const billExpenses = bills
-      .filter((b: any) => b.status === 'Paid')
-      .reduce((s: number, b: any) => s + b.amount, 0);
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.baseCurrency')
+      .lean();
+    const baseCurrency = (tenant as any)?.tenantProfile?.baseCurrency || 'USD';
+    const rateCache = new Map<string, number>();
+    const rateTo = async (currency: string): Promise<number> => {
+      const cur = (currency || 'USD').toUpperCase();
+      if (cur === baseCurrency) return 1;
+      if (rateCache.has(cur)) return rateCache.get(cur)!;
+      const { rate } = await this.exchangeRateService.getRate(
+        cur,
+        baseCurrency,
+      );
+      rateCache.set(cur, rate);
+      return rate;
+    };
+
+    const paidInvoices = invoices.filter(
+      (i: any) => i.stage === 'Paid' || i.stage === 'Part Paid',
+    );
+    const revenue = (
+      await Promise.all(
+        paidInvoices.map(
+          async (i: any) => i.paidAmount * (await rateTo(i.currency)),
+        ),
+      )
+    ).reduce((s, v) => s + v, 0);
+    const paidBills = bills.filter((b: any) => b.status === 'Paid');
+    const billExpenses = (
+      await Promise.all(
+        paidBills.map(async (b: any) => b.amount * (await rateTo(b.currency))),
+      )
+    ).reduce((s, v) => s + v, 0);
+    // Payroll expenses aren't converted here — payroll runs carry
+    // their own currency (via PayrollPolicy), a separate concern
+    // from Sales/Purchases currency handling that this fix doesn't
+    // touch.
     const payrollExpenses = (runs as any[])
       .filter((r) => r.status === 'paid')
       .reduce((s, r) => s + r.totalGross + r.totalEmployerContributions, 0);
@@ -142,6 +208,7 @@ export class CitService {
     const citAtRate = Math.max(0, profitBeforeTax * (citRate / 100));
 
     return {
+      currency: baseCurrency,
       revenue,
       expenses: billExpenses + payrollExpenses,
       profitBeforeTax,

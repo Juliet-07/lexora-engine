@@ -256,7 +256,10 @@ export class CreateBankTransactionDto {
 
 export class MatchTransactionDto {
   @ApiProperty({ enum: TxLinkType }) @IsEnum(TxLinkType) linkType: TxLinkType;
-  @ApiProperty() @IsString() linkId: string;
+  // Required for every link type except Manual, where there's no
+  // real record to reference — validated in the service, since
+  // that depends on linkType.
+  @ApiPropertyOptional() @IsOptional() @IsString() linkId?: string;
   @ApiProperty() @IsString() linkLabel: string;
 }
 

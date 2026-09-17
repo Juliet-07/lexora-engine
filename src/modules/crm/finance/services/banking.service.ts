@@ -17,6 +17,7 @@ import {
   Reconciliation,
   ReconciliationDocument,
   TxStatus,
+  TxLinkType,
 } from '../schemas';
 import {
   CreateBankAccountDto,
@@ -257,9 +258,21 @@ export class BankTransactionService {
       tenantId: new Types.ObjectId(tenantId),
     });
     if (!tx) throw new NotFoundException('Transaction not found');
+
+    if (dto.linkType === TxLinkType.MANUAL) {
+      // A manual match is a free-text note, not a real record —
+      // there's nothing to hold an ObjectId reference to.
+      tx.linkId = null;
+    } else {
+      if (!dto.linkId) {
+        throw new BadRequestException(
+          `Select a real ${dto.linkType.toLowerCase()} to match to`,
+        );
+      }
+      tx.linkId = new Types.ObjectId(dto.linkId);
+    }
     tx.status = TxStatus.MATCHED;
     tx.linkType = dto.linkType;
-    tx.linkId = new Types.ObjectId(dto.linkId);
     tx.linkLabel = dto.linkLabel;
     await tx.save();
     return tx.toObject();
