@@ -195,6 +195,7 @@ export class BankTransactionService {
       date: new Date(dto.date),
       description: dto.description,
       amount: dto.amount,
+      currency: account?.currency ?? 'USD',
       suggestedAccount: rule?.account ?? '',
     });
 

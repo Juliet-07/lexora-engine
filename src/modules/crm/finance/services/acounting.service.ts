@@ -46,6 +46,7 @@ import {
 import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
 import { InvoiceService } from './invoice.service';
 import { BillService, ExpenseClaimService } from './purchases.service';
+import { BankAccountService } from './banking.service';
 import {
   MandateService,
   TimeEntryService,
@@ -982,6 +983,9 @@ export class AccountingOverviewService {
     private readonly billService: BillService,
     private readonly trustLedgerService: TrustLedgerService,
     private readonly fundService: FundService,
+    private readonly bankAccountService: BankAccountService,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    private readonly exchangeRateService: ExchangeRateService,
   ) {}
 
   // Real cross-module summary. Trust and Fund now contribute real
@@ -992,39 +996,86 @@ export class AccountingOverviewService {
   // Fund's own totals — no confirmed waterfall to compute them from
   // honestly yet.
   async getOverview(tenantId: string) {
-    const [invoices, bills, trustLedgers, funds] = await Promise.all([
-      this.invoiceService.getAll(tenantId),
-      this.billService.getAll(tenantId),
-      this.trustLedgerService.getAll(tenantId),
-      this.fundService.getAll(tenantId),
-    ]);
+    const [invoices, bills, trustLedgers, funds, bankAccounts, tenant] =
+      await Promise.all([
+        this.invoiceService.getAll(tenantId),
+        this.billService.getAll(tenantId),
+        this.trustLedgerService.getAll(tenantId),
+        this.fundService.getAll(tenantId),
+        this.bankAccountService.getAll(tenantId),
+        this.userModel
+          .findById(tenantId)
+          .select('tenantProfile.baseCurrency')
+          .lean(),
+      ]);
 
-    const salesRevenueYtd = invoices
-      .filter((i: any) => i.stage !== 'Draft')
-      .reduce((s: number, i: any) => s + i.net, 0);
-    const outstandingReceivables = invoices
-      .filter((i: any) => !['Paid', 'Draft', 'Written Off'].includes(i.stage))
-      .reduce((s: number, i: any) => s + (i.payable - i.paidAmount), 0);
-    const purchasesExpensesYtd = bills.reduce(
-      (s: number, b: any) => s + b.amount,
-      0,
-    );
+    const baseCurrency = (tenant as any)?.tenantProfile?.baseCurrency || 'USD';
+    const rateCache = new Map<string, number>();
+    const rateTo = async (currency: string): Promise<number> => {
+      const cur = (currency || 'USD').toUpperCase();
+      if (cur === baseCurrency) return 1;
+      if (rateCache.has(cur)) return rateCache.get(cur)!;
+      const { rate } = await this.exchangeRateService.getRate(
+        cur,
+        baseCurrency,
+      );
+      rateCache.set(cur, rate);
+      return rate;
+    };
+    const sumConverted = async (
+      rows: any[],
+      currencyOf: (r: any) => string,
+      valueOf: (r: any) => number,
+    ) =>
+      (
+        await Promise.all(
+          rows.map(async (r) => valueOf(r) * (await rateTo(currencyOf(r)))),
+        )
+      ).reduce((s, v) => s + v, 0);
 
-    const trustBalance = trustLedgers.reduce(
-      (s: number, l: any) => s + l.balance,
-      0,
+    const salesRevenueYtd = await sumConverted(
+      invoices.filter((i: any) => i.stage !== 'Draft'),
+      (i) => i.currency,
+      (i) => i.net,
     );
-    const fundCommitted = funds.reduce(
-      (s: number, f: any) => s + f.committed,
-      0,
+    const outstandingReceivables = await sumConverted(
+      invoices.filter(
+        (i: any) => !['Paid', 'Draft', 'Written Off'].includes(i.stage),
+      ),
+      (i) => i.currency,
+      (i) => i.payable - i.paidAmount,
+    );
+    const purchasesExpensesYtd = await sumConverted(
+      bills,
+      (b) => b.currency,
+      (b) => b.amount,
+    );
+    const trustBalance = await sumConverted(
+      trustLedgers,
+      (l: any) => l.currency,
+      (l: any) => l.balance,
+    );
+    const fundCommitted = await sumConverted(
+      funds,
+      (f: any) => f.currency,
+      (f: any) => f.committed,
+    );
+    // Only office accounts — same scope Cash Forecast already uses,
+    // since Trust/Fund balances are ring-fenced and reported above.
+    const cashBalance = await sumConverted(
+      bankAccounts.filter((a: any) => a.type === 'Office'),
+      (a: any) => a.currency,
+      (a: any) => a.balance,
     );
 
     return {
+      currency: baseCurrency,
       salesRevenueYtd,
       outstandingReceivables,
       purchasesExpensesYtd,
       trustBalance,
       fundCommitted,
+      cashBalance,
     };
   }
 }

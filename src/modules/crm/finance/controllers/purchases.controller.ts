@@ -30,6 +30,7 @@ import {
   BillService,
   ExpenseClaimService,
   ExpensePolicyService,
+  PurchasesOverviewService,
 } from '../services';
 import {
   CreatePurchaseOrderDto,
@@ -395,5 +396,26 @@ export class ExpensePolicyController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.upsert(t || u, dto);
+  }
+}
+
+@ApiTags('CRM — Finance — Purchases')
+@ApiBearerAuth()
+@UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.CRM)
+@Controller('finance/purchases-overview')
+export class PurchasesOverviewController {
+  constructor(private readonly service: PurchasesOverviewService) {}
+
+  @Get()
+  @ApiOperation({
+    summary:
+      'Total payables and claims awaiting payment — real figures direct from bills and claims, converted to base currency',
+  })
+  getOverview(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getOverview(t || u);
   }
 }

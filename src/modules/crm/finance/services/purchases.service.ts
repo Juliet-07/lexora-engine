@@ -31,6 +31,7 @@ import {
 import { buildPurchaseOrderPdf } from 'src/common/utils/pdf/purchase-order.util';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+import { ExchangeRateService } from 'src/modules/hr/services/exchange-rate.service';
 import { WhtService } from './wht.service';
 import { WhtDirection } from '../schemas';
 import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
@@ -689,5 +690,71 @@ export class ExpensePolicyService {
       { upsert: true, new: true },
     );
     return saved.toObject();
+  }
+}
+
+// ── Overview ─────────────────────────────────────────────────
+// Total payables was previously derived indirectly — summed per
+// vendor — which silently excluded any bill with no linked vendor
+// record (a general expense, entered by name only). This reads
+// straight from Bills and ExpenseClaims themselves, the actual
+// source of truth, and converts every figure into the tenant's
+// base currency before summing so a mix of USD and RWF bills
+// never gets added together as if they were the same currency.
+@Injectable()
+export class PurchasesOverviewService {
+  constructor(
+    @InjectModel(Bill.name) private readonly billModel: Model<BillDocument>,
+    @InjectModel(ExpenseClaim.name)
+    private readonly claimModel: Model<ExpenseClaimDocument>,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    private readonly exchangeRateService: ExchangeRateService,
+  ) {}
+
+  async getOverview(tenantId: string) {
+    const tId = new Types.ObjectId(tenantId);
+    const [bills, claims, tenant] = await Promise.all([
+      this.billModel
+        .find({ tenantId: tId, status: { $ne: BillStatus.PAID } })
+        .lean(),
+      this.claimModel
+        .find({ tenantId: tId, status: ClaimStatus.APPROVED })
+        .lean(),
+      this.userModel
+        .findById(tenantId)
+        .select('tenantProfile.baseCurrency')
+        .lean(),
+    ]);
+
+    const baseCurrency = (tenant as any)?.tenantProfile?.baseCurrency || 'USD';
+    const rateCache = new Map<string, number>();
+    const rateTo = async (currency: string): Promise<number> => {
+      const cur = (currency || 'USD').toUpperCase();
+      if (cur === baseCurrency) return 1;
+      if (rateCache.has(cur)) return rateCache.get(cur)!;
+      const { rate } = await this.exchangeRateService.getRate(
+        cur,
+        baseCurrency,
+      );
+      rateCache.set(cur, rate);
+      return rate;
+    };
+
+    const totalPayables = (
+      await Promise.all(
+        bills.map(async (b: any) => b.amount * (await rateTo(b.currency))),
+      )
+    ).reduce((s, v) => s + v, 0);
+    const claimsAwaiting = (
+      await Promise.all(
+        claims.map(async (c: any) => c.amount * (await rateTo(c.currency))),
+      )
+    ).reduce((s, v) => s + v, 0);
+
+    return {
+      currency: baseCurrency,
+      totalPayables: Number(totalPayables.toFixed(2)),
+      claimsAwaiting: Number(claimsAwaiting.toFixed(2)),
+    };
   }
 }

@@ -64,6 +64,10 @@ export class BankTransaction {
   // Positive = inflow, negative = outflow — one signed number, not a
   // separate debit/credit pair, matching the confirmed prototype.
   @Prop({ required: true }) amount: number;
+  // The account's own currency at the time this was recorded — a
+  // transaction is always reported in the currency of the account
+  // it actually happened in, never a hardcoded default.
+  @Prop({ default: 'USD', uppercase: true, trim: true }) currency: string;
 
   @Prop({ enum: TxStatus, default: TxStatus.UNMATCHED, index: true })
   status: TxStatus;
