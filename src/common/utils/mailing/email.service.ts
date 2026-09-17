@@ -992,13 +992,25 @@ export class EmailService {
     });
   }
 
-  async sendQuoteEmail(data: QuoteSentEmailData): Promise<void> {
+  async sendQuoteEmail(
+    data: QuoteSentEmailData,
+    pdfBuffer?: Buffer,
+  ): Promise<void> {
     const { subject, html } = quoteSentTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,
       subject,
       html,
+      attachments: pdfBuffer
+        ? [
+            {
+              filename: `${data.ref}.pdf`,
+              content: pdfBuffer,
+              contentType: 'application/pdf',
+            },
+          ]
+        : undefined,
     });
   }
 

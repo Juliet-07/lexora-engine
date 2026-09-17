@@ -287,18 +287,24 @@ export class QuoteService {
       }
       q.status = status;
       await q.save();
+      const pdfBuffer = await this.generatePdf(tenantId, id).catch(
+        () => undefined,
+      );
       await this.emailService
-        .sendQuoteEmail({
-          to: destinationEmail,
-          clientName: q.clientName,
-          ref: q.ref,
-          kind: q.kind as 'Quote' | 'Proforma',
-          title: q.title,
-          amount: q.totalAmount,
-          currency: q.currency,
-          issued: q.issued,
-          expires: q.expires,
-        })
+        .sendQuoteEmail(
+          {
+            to: destinationEmail,
+            clientName: q.clientName,
+            ref: q.ref,
+            kind: q.kind as 'Quote' | 'Proforma',
+            title: q.title,
+            amount: q.totalAmount,
+            currency: q.currency,
+            issued: q.issued,
+            expires: q.expires,
+          },
+          pdfBuffer,
+        )
         .catch(() => undefined);
       return q.toObject();
     }
