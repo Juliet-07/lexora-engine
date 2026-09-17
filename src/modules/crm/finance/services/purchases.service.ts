@@ -6,8 +6,6 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
-  Vendor,
-  VendorDocument,
   PurchaseOrder,
   PurchaseOrderDocument,
   PoStatus,
@@ -21,7 +19,10 @@ import {
   ExpensePolicyDocument,
 } from '../schemas';
 import {
-  CreateVendorDto,
+  Vendor as CrmVendor,
+  VendorDocument as CrmVendorDocument,
+} from 'src/modules/crm/crm/schemas/vendor.schema';
+import {
   CreatePurchaseOrderDto,
   CreateBillDto,
   CreateExpenseClaimDto,
@@ -36,13 +37,19 @@ import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
 import { GlSource } from '../schemas';
 
 // ── Vendors ───────────────────────────────────────────────────
-// Outstanding and age band are never stored — always computed live
-// from real, unpaid Bills, same reasoning as Aged Receivables.
+// The vendor master record lives in CRM now — this reads it
+// directly rather than keeping a second, disconnected copy;
+// creating or editing a vendor happens through CRM's own vendor
+// management (with its onboarding and approval workflow), not
+// here. Outstanding and age band are never stored — always
+// computed live from real, unpaid Bills, same reasoning as Aged
+// Receivables.
 
 @Injectable()
 export class VendorService {
   constructor(
-    @InjectModel(Vendor.name) private readonly model: Model<VendorDocument>,
+    @InjectModel(CrmVendor.name)
+    private readonly model: Model<CrmVendorDocument>,
     @InjectModel(Bill.name) private readonly billModel: Model<BillDocument>,
   ) {}
 
@@ -58,7 +65,7 @@ export class VendorService {
     const tId = new Types.ObjectId(tenantId);
     const vendors = await this.model
       .find({ tenantId: tId })
-      .sort({ name: 1 })
+      .sort({ legalName: 1 })
       .lean();
     const unpaidBills = await this.billModel
       .find({ tenantId: tId, status: { $ne: BillStatus.PAID } })
@@ -74,22 +81,22 @@ export class VendorService {
       const daysOverdue = oldestDueMs
         ? Math.max(0, Math.floor((Date.now() - oldestDueMs) / 86400000))
         : 0;
-      return { ...v, outstanding, band: this.band(daysOverdue) };
+      // Mapped onto the same shape Purchases has always returned,
+      // so nothing downstream (the frontend's vendor table, the
+      // vendor picker) needs to change for the source switch.
+      return {
+        _id: v._id,
+        name: v.tradingName || v.legalName,
+        tin: v.taxId,
+        category: v.category,
+        terms: v.paymentTerms || 'Net 30',
+        currency: v.currency,
+        email: v.contactEmail,
+        wht: v.wht,
+        outstanding,
+        band: this.band(daysOverdue),
+      };
     });
-  }
-
-  async create(tenantId: string, dto: CreateVendorDto) {
-    const created = await this.model.create({
-      tenantId: new Types.ObjectId(tenantId),
-      name: dto.name,
-      tin: dto.tin ?? '',
-      category: dto.category ?? '',
-      terms: dto.terms ?? 'Net 30',
-      currency: dto.currency ?? 'USD',
-      email: dto.email ?? '',
-      wht: dto.wht ?? false,
-    });
-    return created.toObject();
   }
 }
 
@@ -100,8 +107,8 @@ export class PurchaseOrderService {
   constructor(
     @InjectModel(PurchaseOrder.name)
     private readonly model: Model<PurchaseOrderDocument>,
-    @InjectModel(Vendor.name)
-    private readonly vendorModel: Model<VendorDocument>,
+    @InjectModel(CrmVendor.name)
+    private readonly vendorModel: Model<CrmVendorDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly emailService: EmailService,
@@ -240,7 +247,7 @@ export class PurchaseOrderService {
     const normalized = this.normalize(po.toObject());
 
     const vendor = await this.vendorModel.findById(po.vendorId).lean();
-    if (vendor?.email) {
+    if (vendor?.contactEmail) {
       const pdfBuffer = await this.buildPdfForPo(tenantId, normalized);
       const tenant = await this.userModel.findById(tenantId).lean();
       const firmName = tenant?.tenantProfile?.businessName || 'Your firm';
@@ -248,7 +255,7 @@ export class PurchaseOrderService {
       await this.emailService
         .sendPurchaseOrderIssued(
           {
-            to: vendor.email,
+            to: vendor.contactEmail,
             vendorName: po.vendorName,
             ref: po.ref,
             firmName,
@@ -288,8 +295,8 @@ export class PurchaseOrderService {
 export class BillService {
   constructor(
     @InjectModel(Bill.name) private readonly model: Model<BillDocument>,
-    @InjectModel(Vendor.name)
-    private readonly vendorModel: Model<VendorDocument>,
+    @InjectModel(CrmVendor.name)
+    private readonly vendorModel: Model<CrmVendorDocument>,
     private readonly whtService: WhtService,
     private readonly glPostingService: GlPostingService,
   ) {}

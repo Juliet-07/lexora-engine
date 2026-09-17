@@ -138,6 +138,10 @@ export class Vendor {
   @Prop({ default: '' }) paymentTerms: string;
   @Prop({ default: '' }) budgetCode: string;
   @Prop({ type: [String], default: [] }) usedByModules: string[];
+  // Whether this vendor is a non-resident subject to withholding
+  // tax — read by Purchases when a bill from this vendor is paid,
+  // same 15% rate the Tax module already owns.
+  @Prop({ default: false }) wht: boolean;
 
   @Prop({ enum: VendorRisk, default: VendorRisk.LOW }) risk: VendorRisk;
   @Prop({ default: 'Annual' }) reviewFrequency: string;

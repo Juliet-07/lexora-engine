@@ -1,32 +1,11 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
-// ── Vendors ───────────────────────────────────────────────────
-// Outstanding/aged-payables figures are never stored here — always
-// computed live from real Bills, same reasoning as Aged Receivables
-// on the Sales side. A stored "outstanding" number would just be
-// another value to keep in sync and inevitably forget to.
-
-export type VendorDocument = Vendor & Document;
-
-@Schema({ timestamps: true, collection: 'crm_vendors' })
-export class Vendor {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
-  tenantId: Types.ObjectId;
-
-  @Prop({ required: true, trim: true }) name: string;
-  @Prop({ default: '' }) tin: string;
-  @Prop({ default: '' }) category: string;
-  @Prop({ default: 'Net 30' }) terms: string;
-  @Prop({ default: 'USD' }) currency: string;
-  // Real address to notify when a PO is issued — without this, "Issue
-  // to vendor" would have nowhere to actually send anything.
-  @Prop({ default: '' }) email: string;
-  // Whether this vendor is a non-resident subject to WHT — same 15%
-  // rate the Tax module already owns, not redefined here.
-  @Prop({ default: false }) wht: boolean;
-}
-export const VendorSchema = SchemaFactory.createForClass(Vendor);
+// Vendor master data lives in CRM's own Vendor schema now
+// (src/modules/crm/crm/schemas/vendor.schema.ts) — Purchases reads
+// it directly rather than keeping a second, disconnected copy that
+// could drift out of sync with what CRM's onboarding and approval
+// workflow actually created.
 
 // ── Purchase orders ──────────────────────────────────────────
 

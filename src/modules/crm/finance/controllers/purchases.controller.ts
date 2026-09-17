@@ -32,7 +32,6 @@ import {
   ExpensePolicyService,
 } from '../services';
 import {
-  CreateVendorDto,
   CreatePurchaseOrderDto,
   CreateBillDto,
   CreateExpenseClaimDto,
@@ -91,16 +90,6 @@ const expenseReceiptFileFilter = (
 @Controller('finance/vendors')
 export class VendorController {
   constructor(private readonly service: VendorService) {}
-
-  @Post()
-  @ApiOperation({ summary: 'Add a vendor' })
-  create(
-    @Body() dto: CreateVendorDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.create(t || u, dto);
-  }
 
   @Get()
   @ApiOperation({

@@ -168,16 +168,6 @@ export class CreatePaymentPlanDto {
 
 // ── Purchases: vendors ────────────────────────────────────────
 
-export class CreateVendorDto {
-  @ApiProperty() @IsString() name: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() tin?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() category?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() terms?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
-  @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() wht?: boolean;
-}
-
 // ── Purchases: purchase orders ───────────────────────────────
 
 export class PoLineDto {

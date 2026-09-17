@@ -5,6 +5,10 @@ import { HrModule } from 'src/modules/hr/hr.module';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
 import {
+  Vendor,
+  VendorSchema,
+} from 'src/modules/crm/crm/schemas/vendor.schema';
+import {
   Invoice,
   InvoiceSchema,
   RemittanceAccount,
@@ -21,8 +25,6 @@ import {
   RecurringInvoiceSchema,
   PaymentPlan,
   PaymentPlanSchema,
-  Vendor,
-  VendorSchema,
   PurchaseOrder,
   PurchaseOrderSchema,
   Bill,
