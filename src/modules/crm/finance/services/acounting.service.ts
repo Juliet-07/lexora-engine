@@ -26,6 +26,14 @@ import {
   MaintenanceLogEntryDocument,
 } from '../schemas';
 import { BankTransaction, BankTransactionDocument } from '../schemas';
+import { Invoice, InvoiceDocument } from '../schemas';
+import {
+  Bill,
+  BillDocument,
+  ExpenseClaim,
+  ExpenseClaimDocument,
+} from '../schemas';
+import { TrustMovement, TrustMovementDocument } from '../schemas';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { ExchangeRateService } from 'src/modules/hr/services/exchange-rate.service';
 import {
@@ -428,6 +436,18 @@ export class GeneralLedgerService {
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly exchangeRateService: ExchangeRateService,
+    @InjectModel(Invoice.name)
+    private readonly invoiceModel: Model<InvoiceDocument>,
+    @InjectModel(Bill.name)
+    private readonly billModel: Model<BillDocument>,
+    @InjectModel(ExpenseClaim.name)
+    private readonly expenseClaimModel: Model<ExpenseClaimDocument>,
+    @InjectModel(BankTransaction.name)
+    private readonly bankTransactionModel: Model<BankTransactionDocument>,
+    @InjectModel(Journal.name)
+    private readonly journalModel: Model<JournalDocument>,
+    @InjectModel(TrustMovement.name)
+    private readonly trustMovementModel: Model<TrustMovementDocument>,
   ) {}
 
   // displayCurrency lets a tenant view the ledger (already stored
@@ -485,6 +505,143 @@ export class GeneralLedgerService {
       };
     });
     return withBalance.reverse();
+  }
+
+  // Powers the GL's "ref" drill-through — given one GL entry, finds
+  // and normalizes whatever real record it was posted from, so the
+  // frontend can show it without knowing which of several possible
+  // collections that source category actually points to.
+  async getSourceDetail(tenantId: string, glEntryId: string) {
+    const tId = new Types.ObjectId(tenantId);
+    const entry = await this.model
+      .findOne({ _id: glEntryId, tenantId: tId })
+      .lean();
+    if (!entry) throw new NotFoundException('GL entry not found');
+    if (!entry.sourceId) {
+      return { found: false, reason: 'This entry has no linked record.' };
+    }
+    const sid = entry.sourceId;
+
+    if (entry.source === GlSource.SALES) {
+      const inv = await this.invoiceModel
+        .findOne({ _id: sid, tenantId: tId })
+        .lean();
+      if (inv) {
+        return {
+          found: true,
+          type: 'Invoice',
+          id: String(inv._id),
+          ref: inv.ref,
+          party: inv.clientName,
+          amount: inv.paidAmount,
+          currency: inv.currency,
+          status: inv.stage,
+          date: inv.issuedOn,
+        };
+      }
+    }
+
+    if (entry.source === GlSource.PURCHASES) {
+      const bill = await this.billModel
+        .findOne({ _id: sid, tenantId: tId })
+        .lean();
+      if (bill) {
+        return {
+          found: true,
+          type: 'Bill',
+          id: String(bill._id),
+          ref: bill.ref,
+          party: bill.vendorName,
+          amount: bill.amount,
+          currency: bill.currency,
+          status: bill.status,
+          date: bill.dueOn,
+        };
+      }
+      const claim = await this.expenseClaimModel
+        .findOne({ _id: sid, tenantId: tId })
+        .lean();
+      if (claim) {
+        return {
+          found: true,
+          type: 'Expense claim',
+          id: String(claim._id),
+          ref: claim.ref,
+          party: claim.employee,
+          amount: claim.amount,
+          currency: claim.currency,
+          status: claim.status,
+          date: (claim as any).date ?? (claim as any).createdAt,
+        };
+      }
+    }
+
+    if (entry.source === GlSource.BANKING) {
+      const tx = await this.bankTransactionModel
+        .findOne({ _id: sid, tenantId: tId })
+        .lean();
+      if (tx) {
+        return {
+          found: true,
+          type: 'Bank transaction',
+          id: String(tx._id),
+          ref: tx.linkLabel || entry.ref,
+          party: tx.description,
+          amount: tx.amount,
+          currency: entry.originalCurrency,
+          status: tx.status,
+          date: tx.date,
+        };
+      }
+    }
+
+    if (entry.source === GlSource.MANUAL) {
+      const journal = await this.journalModel
+        .findOne({ _id: sid, tenantId: tId })
+        .lean();
+      if (journal) {
+        return {
+          found: true,
+          type: 'Journal',
+          id: String(journal._id),
+          ref: journal.ref,
+          party: journal.title,
+          amount: null,
+          currency: journal.currency,
+          status: journal.status,
+          date: journal.date,
+        };
+      }
+    }
+
+    if (entry.source === GlSource.TRUST) {
+      const movement = await this.trustMovementModel
+        .findOne({ _id: sid, tenantId: tId })
+        .lean();
+      if (movement) {
+        return {
+          found: true,
+          type: 'Trust movement',
+          id: String(movement._id),
+          ref: movement.ref,
+          party: movement.type,
+          amount: movement.amount,
+          currency: entry.originalCurrency,
+          status: movement.status,
+          date: movement.date,
+        };
+      }
+    }
+
+    // Fund sources cover several sub-document types (capital calls,
+    // distributions, expenses, fee charges) that don't share one
+    // collection — falling through to "not found" here is honest:
+    // there's nothing to show rather than a guess.
+    return {
+      found: false,
+      reason:
+        'The record this entry was posted from could not be found — it may have been deleted.',
+    };
   }
 }
 
