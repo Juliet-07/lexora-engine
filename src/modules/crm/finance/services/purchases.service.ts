@@ -711,7 +711,7 @@ export class PurchasesOverviewService {
     private readonly exchangeRateService: ExchangeRateService,
   ) {}
 
-  async getOverview(tenantId: string) {
+  async getOverview(tenantId: string, displayCurrency?: string) {
     const tId = new Types.ObjectId(tenantId);
     const [bills, claims, tenant] = await Promise.all([
       this.billModel
@@ -727,14 +727,15 @@ export class PurchasesOverviewService {
     ]);
 
     const baseCurrency = (tenant as any)?.tenantProfile?.baseCurrency || 'USD';
+    const targetCurrency = (displayCurrency || baseCurrency).toUpperCase();
     const rateCache = new Map<string, number>();
     const rateTo = async (currency: string): Promise<number> => {
       const cur = (currency || 'USD').toUpperCase();
-      if (cur === baseCurrency) return 1;
+      if (cur === targetCurrency) return 1;
       if (rateCache.has(cur)) return rateCache.get(cur)!;
       const { rate } = await this.exchangeRateService.getRate(
         cur,
-        baseCurrency,
+        targetCurrency,
       );
       rateCache.set(cur, rate);
       return rate;
@@ -752,7 +753,7 @@ export class PurchasesOverviewService {
     ).reduce((s, v) => s + v, 0);
 
     return {
-      currency: baseCurrency,
+      currency: targetCurrency,
       totalPayables: Number(totalPayables.toFixed(2)),
       claimsAwaiting: Number(claimsAwaiting.toFixed(2)),
     };

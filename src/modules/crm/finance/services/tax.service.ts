@@ -27,7 +27,7 @@ export class VatService {
   ) {}
 
   // period is "YYYY-MM"; defaults to the current month.
-  async getReturn(tenantId: string, period?: string) {
+  async getReturn(tenantId: string, period?: string, displayCurrency?: string) {
     const targetPeriod = period ?? new Date().toISOString().slice(0, 7);
     const [invoices, bills] = await Promise.all([
       this.invoiceService.getAll(tenantId),
@@ -39,14 +39,15 @@ export class VatService {
       .select('tenantProfile.baseCurrency')
       .lean();
     const baseCurrency = (tenant as any)?.tenantProfile?.baseCurrency || 'USD';
+    const targetCurrency = (displayCurrency || baseCurrency).toUpperCase();
     const rateCache = new Map<string, number>();
     const rateTo = async (currency: string): Promise<number> => {
       const cur = (currency || 'USD').toUpperCase();
-      if (cur === baseCurrency) return 1;
+      if (cur === targetCurrency) return 1;
       if (rateCache.has(cur)) return rateCache.get(cur)!;
       const { rate } = await this.exchangeRateService.getRate(
         cur,
-        baseCurrency,
+        targetCurrency,
       );
       rateCache.set(cur, rate);
       return rate;
@@ -87,7 +88,7 @@ export class VatService {
 
     return {
       period: targetPeriod,
-      currency: baseCurrency,
+      currency: targetCurrency,
       outputVat,
       inputVat,
       netPayable: outputVat - inputVat,
@@ -154,7 +155,7 @@ export class CitService {
     private readonly exchangeRateService: ExchangeRateService,
   ) {}
 
-  async getProvision(tenantId: string) {
+  async getProvision(tenantId: string, displayCurrency?: string) {
     const [invoices, bills, runs] = await Promise.all([
       this.invoiceService.getAll(tenantId),
       this.billService.getAll(tenantId),
@@ -166,14 +167,15 @@ export class CitService {
       .select('tenantProfile.baseCurrency')
       .lean();
     const baseCurrency = (tenant as any)?.tenantProfile?.baseCurrency || 'USD';
+    const targetCurrency = (displayCurrency || baseCurrency).toUpperCase();
     const rateCache = new Map<string, number>();
     const rateTo = async (currency: string): Promise<number> => {
       const cur = (currency || 'USD').toUpperCase();
-      if (cur === baseCurrency) return 1;
+      if (cur === targetCurrency) return 1;
       if (rateCache.has(cur)) return rateCache.get(cur)!;
       const { rate } = await this.exchangeRateService.getRate(
         cur,
-        baseCurrency,
+        targetCurrency,
       );
       rateCache.set(cur, rate);
       return rate;
@@ -208,7 +210,7 @@ export class CitService {
     const citAtRate = Math.max(0, profitBeforeTax * (citRate / 100));
 
     return {
-      currency: baseCurrency,
+      currency: targetCurrency,
       revenue,
       expenses: billExpenses + payrollExpenses,
       profitBeforeTax,

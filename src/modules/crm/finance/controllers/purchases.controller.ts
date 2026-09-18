@@ -5,6 +5,7 @@ import {
   Patch,
   Body,
   Param,
+  Query,
   Res,
   UseInterceptors,
   UploadedFile,
@@ -18,6 +19,7 @@ import {
   ApiOperation,
   ApiConsumes,
   ApiBody,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -412,10 +414,12 @@ export class PurchasesOverviewController {
     summary:
       'Total payables and claims awaiting payment — real figures direct from bills and claims, converted to base currency',
   })
+  @ApiQuery({ name: 'displayCurrency', required: false })
   getOverview(
+    @Query('displayCurrency') displayCurrency: string | undefined,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.getOverview(t || u);
+    return this.service.getOverview(t || u, displayCurrency);
   }
 }

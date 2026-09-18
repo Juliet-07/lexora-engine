@@ -70,13 +70,15 @@ export class VatController {
     required: false,
     description: 'YYYY-MM, defaults to current month',
   })
+  @ApiQuery({ name: 'displayCurrency', required: false })
   @ApiOperation({ summary: 'Real output/input VAT return for a period' })
   getReturn(
     @Query('period') period: string | undefined,
+    @Query('displayCurrency') displayCurrency: string | undefined,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.getReturn(t || u, period);
+    return this.service.getReturn(t || u, period, displayCurrency);
   }
 }
 
@@ -109,14 +111,16 @@ export class CitController {
   constructor(private readonly service: CitService) {}
 
   @Get()
+  @ApiQuery({ name: 'displayCurrency', required: false })
   @ApiOperation({
     summary: 'Provisional CIT at 28%, computed from real revenue/expenses',
   })
   getProvision(
+    @Query('displayCurrency') displayCurrency: string | undefined,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.getProvision(t || u);
+    return this.service.getProvision(t || u, displayCurrency);
   }
 }
 

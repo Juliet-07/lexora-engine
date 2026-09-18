@@ -49,7 +49,7 @@ export class MandateService {
   // wip is no longer a stored value the tenant sets by hand — it's
   // the sum of this mandate's Approved, billable time entries, so
   // this normalization is now async.
-  private async normalize(m: any, wip?: number) {
+  private async normalize(m: any, wip?: number, actualCost?: number) {
     return {
       ...m,
       description: m.description ?? '',
@@ -61,6 +61,15 @@ export class MandateService {
           String(m.tenantId),
           String(m._id),
         )),
+      // Real budget consumption — every approved time entry, with
+      // write-downs/write-offs applied — not the stale, manually-set
+      // number this field used to hold.
+      actualCost:
+        actualCost ??
+        (await this.timeEntryService.getActualCostForMandate(
+          String(m.tenantId),
+          String(m._id),
+        )),
     };
   }
 
@@ -69,13 +78,24 @@ export class MandateService {
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
-    const wipMap =
-      await this.timeEntryService.getApprovedBillableValueByMandateIds(
+    const [wipMap, actualCostMap] = await Promise.all([
+      this.timeEntryService.getApprovedBillableValueByMandateIds(
         tenantId,
         rows.map((r) => String(r._id)),
-      );
+      ),
+      this.timeEntryService.getActualCostByMandateIds(
+        tenantId,
+        rows.map((r) => String(r._id)),
+      ),
+    ]);
     return Promise.all(
-      rows.map((m) => this.normalize(m, wipMap.get(String(m._id)) ?? 0)),
+      rows.map((m) =>
+        this.normalize(
+          m,
+          wipMap.get(String(m._id)) ?? 0,
+          actualCostMap.get(String(m._id)) ?? 0,
+        ),
+      ),
     );
   }
 
@@ -122,7 +142,7 @@ export class MandateService {
       })),
     });
     // A brand-new mandate has no time entries yet — 0 without a query.
-    return this.normalize(created.toObject(), 0);
+    return this.normalize(created.toObject(), 0, 0);
   }
 
   async update(tenantId: string, id: string, dto: UpdateMandateDto) {
@@ -136,10 +156,10 @@ export class MandateService {
     if (dto.team !== undefined) m.team = dto.team;
     if (dto.targetDate !== undefined) m.targetDate = new Date(dto.targetDate);
     if (dto.budget !== undefined) m.budget = dto.budget;
-    if (dto.actualCost !== undefined) m.actualCost = dto.actualCost;
     if (dto.billed !== undefined) m.billed = dto.billed;
-    // wip intentionally not settable here anymore — it's derived
-    // from Approved, billable time entries. See UpdateMandateDto.
+    // wip and actualCost intentionally not settable here anymore —
+    // both are derived from real Approved time entries. See
+    // UpdateMandateDto.
     if (dto.feeStructure !== undefined) m.feeStructure = dto.feeStructure;
     if (dto.progress !== undefined) m.progress = dto.progress;
     await m.save();

@@ -52,7 +52,6 @@ export class UpdateMandateDto {
   team?: string[];
   @ApiPropertyOptional() @IsOptional() @IsDateString() targetDate?: string;
   @ApiPropertyOptional() @IsOptional() @IsNumber() budget?: number;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() actualCost?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() billed?: number;
   @ApiPropertyOptional({ enum: FeeStructure })
   @IsOptional()

@@ -995,7 +995,7 @@ export class AccountingOverviewService {
   // still aren't included here, same reasoning they're absent from
   // Fund's own totals — no confirmed waterfall to compute them from
   // honestly yet.
-  async getOverview(tenantId: string) {
+  async getOverview(tenantId: string, displayCurrency?: string) {
     const [invoices, bills, trustLedgers, funds, bankAccounts, tenant] =
       await Promise.all([
         this.invoiceService.getAll(tenantId),
@@ -1010,14 +1010,15 @@ export class AccountingOverviewService {
       ]);
 
     const baseCurrency = (tenant as any)?.tenantProfile?.baseCurrency || 'USD';
+    const targetCurrency = (displayCurrency || baseCurrency).toUpperCase();
     const rateCache = new Map<string, number>();
     const rateTo = async (currency: string): Promise<number> => {
       const cur = (currency || 'USD').toUpperCase();
-      if (cur === baseCurrency) return 1;
+      if (cur === targetCurrency) return 1;
       if (rateCache.has(cur)) return rateCache.get(cur)!;
       const { rate } = await this.exchangeRateService.getRate(
         cur,
-        baseCurrency,
+        targetCurrency,
       );
       rateCache.set(cur, rate);
       return rate;
@@ -1069,7 +1070,7 @@ export class AccountingOverviewService {
     );
 
     return {
-      currency: baseCurrency,
+      currency: targetCurrency,
       salesRevenueYtd,
       outstandingReceivables,
       purchasesExpensesYtd,

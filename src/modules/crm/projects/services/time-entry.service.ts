@@ -210,6 +210,20 @@ export class TimeEntryService {
         `${e.member} has no rate card on file — set one up before approving their time.`,
       );
     }
+    // rate === 0 means no card existed when this was logged — not a
+    // real historical rate, just the absence marker. Now that a
+    // card genuinely exists, this is the one safe moment to backfill
+    // it; a real rate already on the entry is never touched, so a
+    // later rate-card change still can't rewrite logged history.
+    if (e.rate === 0) {
+      const { rate, currency } = await this.rateCardService.getRateForEmployee(
+        tenantId,
+        String(e.memberUserId),
+      );
+      e.rate = rate;
+      e.currency = currency;
+      await e.save();
+    }
     return this.transition(
       tenantId,
       id,
@@ -317,6 +331,63 @@ export class TimeEntryService {
       },
     ]);
     return new Map(rows.map((r) => [String(r._id), r.total]));
+  }
+
+  // Real budget consumption — every approved entry counts (not just
+  // billable ones, since non-billable time is still real staff cost
+  // to the firm), and a write-down/write-off's real effect is
+  // applied: written down entries contribute only what billing
+  // decided to carry forward, written-off entries contribute
+  // nothing, matching "deduction" exactly as recorded on the entry
+  // itself rather than re-deriving it from the separate WriteOff
+  // audit trail (which only carries a denormalized mandate name,
+  // not a real mandateId, to match against).
+  private effectiveValue(e: {
+    hours: number;
+    rate: number;
+    billingStatus: WipBillingStatus;
+    writtenDownAmount: number;
+  }): number {
+    if (e.billingStatus === WipBillingStatus.WRITTEN_OFF) return 0;
+    if (e.billingStatus === WipBillingStatus.WRITTEN_DOWN)
+      return e.writtenDownAmount;
+    return e.hours * e.rate;
+  }
+
+  async getActualCostForMandate(
+    tenantId: string,
+    mandateId: string,
+  ): Promise<number> {
+    const rows = await this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+        status: TimesheetStatus.APPROVED,
+      })
+      .select('hours rate billingStatus writtenDownAmount')
+      .lean();
+    return rows.reduce((s, e: any) => s + this.effectiveValue(e), 0);
+  }
+
+  async getActualCostByMandateIds(
+    tenantId: string,
+    mandateIds: string[],
+  ): Promise<Map<string, number>> {
+    if (!mandateIds.length) return new Map();
+    const rows = await this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: { $in: mandateIds.map((id) => new Types.ObjectId(id)) },
+        status: TimesheetStatus.APPROVED,
+      })
+      .select('mandateId hours rate billingStatus writtenDownAmount')
+      .lean();
+    const totals = new Map<string, number>();
+    for (const e of rows as any[]) {
+      const key = String(e.mandateId);
+      totals.set(key, (totals.get(key) ?? 0) + this.effectiveValue(e));
+    }
+    return totals;
   }
 
   // ── WIP register — real Approved, billable time that hasn't been

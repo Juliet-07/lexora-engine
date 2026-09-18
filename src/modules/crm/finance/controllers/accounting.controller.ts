@@ -51,11 +51,13 @@ export class AccountingOverviewController {
   @ApiOperation({
     summary: 'Real cross-module summary — Sales, Billing, Purchases',
   })
+  @ApiQuery({ name: 'displayCurrency', required: false })
   getOverview(
+    @Query('displayCurrency') displayCurrency: string | undefined,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.getOverview(t || u);
+    return this.service.getOverview(t || u, displayCurrency);
   }
 }
 
