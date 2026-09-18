@@ -49,6 +49,9 @@ export interface InvoicePdfData {
   payable: number;
   issuedOn: Date;
   dueOn: Date;
+  // A fully paid invoice is a receipt from here on — same document,
+  // different framing, since the client no longer owes anything.
+  isPaid?: boolean;
   // Real tenant branding — never the platform's own name.
   firmName: string;
   firmAddressLines: string[];
@@ -107,7 +110,7 @@ export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
       .font('Helvetica-Bold')
       .fontSize(24)
       .fillColor(PURPLE)
-      .text('INVOICE', 50, 50);
+      .text(data.isPaid ? 'RECEIPT' : 'INVOICE', 50, 50);
     doc.moveDown(0.4);
     doc
       .font('Helvetica-Bold')
@@ -133,7 +136,14 @@ export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
         .text(value, rightColX, y + 12, { width: rightColW, align: 'right' });
       return y + 30;
     };
-    rightY = metaRow('Invoice number', data.ref, rightY);
+    const displayRef = data.isPaid
+      ? data.ref.replace(/^INV-/, 'REC-')
+      : data.ref;
+    rightY = metaRow(
+      data.isPaid ? 'Receipt number' : 'Invoice number',
+      displayRef,
+      rightY,
+    );
     rightY = metaRow('Issued', fmtDate(data.issuedOn), rightY);
     rightY = metaRow('Due', fmtDate(data.dueOn), rightY);
 

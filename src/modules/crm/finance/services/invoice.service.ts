@@ -497,6 +497,7 @@ export class InvoiceService {
       ref: i.ref,
       clientName: i.clientName,
       mandateName: i.mandateName,
+      isPaid: i.stage === 'Paid',
       lines: i.lines.map((l: any) => ({
         description: l.description,
         qty: l.qty,
