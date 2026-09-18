@@ -201,28 +201,38 @@ export class TimeEntryService {
       tenantId: new Types.ObjectId(tenantId),
     });
     if (!e) throw new NotFoundException('Time entry not found');
-    const hasRateCard = await this.rateCardService.exists(
-      tenantId,
-      String(e.memberUserId),
-    );
-    if (!hasRateCard) {
-      throw new BadRequestException(
-        `${e.member} has no rate card on file — set one up before approving their time.`,
-      );
-    }
-    // rate === 0 means no card existed when this was logged — not a
-    // real historical rate, just the absence marker. Now that a
-    // card genuinely exists, this is the one safe moment to backfill
-    // it; a real rate already on the entry is never touched, so a
-    // later rate-card change still can't rewrite logged history.
-    if (e.rate === 0) {
-      const { rate, currency } = await this.rateCardService.getRateForEmployee(
+
+    // Non-billable time never carries a monetary value — create()
+    // always zeroes its rate up front and it was never priced off a
+    // rate card in the first place, so approving it shouldn't require
+    // one to exist, and its rate must never be backfilled away from
+    // 0. Skipping this whole block for a non-billable entry is what
+    // keeps it at $0 through approval, not just at creation.
+    if (e.billable) {
+      const hasRateCard = await this.rateCardService.exists(
         tenantId,
         String(e.memberUserId),
       );
-      e.rate = rate;
-      e.currency = currency;
-      await e.save();
+      if (!hasRateCard) {
+        throw new BadRequestException(
+          `${e.member} has no rate card on file — set one up before approving their time.`,
+        );
+      }
+      // rate === 0 means no card existed when this was logged — not a
+      // real historical rate, just the absence marker. Now that a
+      // card genuinely exists, this is the one safe moment to backfill
+      // it; a real rate already on the entry is never touched, so a
+      // later rate-card change still can't rewrite logged history.
+      if (e.rate === 0) {
+        const { rate, currency } =
+          await this.rateCardService.getRateForEmployee(
+            tenantId,
+            String(e.memberUserId),
+          );
+        e.rate = rate;
+        e.currency = currency;
+        await e.save();
+      }
     }
     return this.transition(
       tenantId,
