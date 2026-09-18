@@ -159,6 +159,7 @@ export class BankTransactionService {
     private readonly accountModel: Model<BankAccountDocument>,
     private readonly ruleService: BankRuleService,
     private readonly glPostingService: GlPostingService,
+    private readonly billService: BillService,
   ) {}
 
   async getAll(tenantId: string, accountId?: string) {
@@ -276,6 +277,14 @@ export class BankTransactionService {
     tx.linkType = dto.linkType;
     tx.linkLabel = dto.linkLabel;
     await tx.save();
+
+    // A transaction matched to a Bill is the real settlement — this
+    // is what actually marks the bill Paid now, not a bypass button
+    // that could fall out of sync with what the bank feed shows.
+    if (dto.linkType === TxLinkType.BILL && dto.linkId) {
+      await this.billService.markPaidViaBankMatch(tenantId, dto.linkId);
+    }
+
     return tx.toObject();
   }
 }

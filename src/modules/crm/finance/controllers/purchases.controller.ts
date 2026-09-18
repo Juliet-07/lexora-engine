@@ -236,6 +236,18 @@ export class BillController {
     return this.service.getAll(t || u);
   }
 
+  @Get(':id')
+  @ApiOperation({
+    summary: 'One bill — used by the Banking matched-transaction popup',
+  })
+  getOne(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getById(t || u, id);
+  }
+
   @Post(':id/approve')
   @ApiOperation({ summary: 'Approve for payment' })
   approve(

@@ -455,6 +455,37 @@ export class BillService {
     return b.toObject();
   }
 
+  async getById(tenantId: string, id: string) {
+    return this.getRawDoc(tenantId, id).then((b) => b.toObject());
+  }
+
+  // Real settlement path — called when a real bank transaction is
+  // matched to this bill (BankTransactionService.match), not when
+  // the tenant clicks a bypass button. No GL posting happens here:
+  // the real transaction already posted its own bank-side GL entry
+  // when it was recorded, so posting again here would double it.
+  async markPaidViaBankMatch(tenantId: string, id: string) {
+    const b = await this.getRawDoc(tenantId, id);
+    b.status = BillStatus.PAID;
+    b.paidAt = new Date();
+    await b.save();
+
+    if (b.vendorId) {
+      const vendor = await this.vendorModel.findById(b.vendorId).lean();
+      if (vendor?.wht) {
+        await this.whtService.record(tenantId, {
+          direction: WhtDirection.VENDOR_PAYMENT,
+          counterparty: b.vendorName,
+          sourceRef: b.ref,
+          sourceId: String(b._id),
+          gross: b.amount,
+        });
+      }
+    }
+
+    return b.toObject();
+  }
+
   // The vendor-payment side of the single WHT source of truth — if
   // the vendor is flagged non-resident/WHT-liable, this doesn't
   // compute its own WHT figure, it calls the one real register.
