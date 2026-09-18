@@ -93,6 +93,8 @@ import {
   FxRateSchema,
   Budget,
   BudgetSchema,
+  ManagementReport,
+  ManagementReportSchema,
 } from './schemas';
 import {
   WriteOffService,
@@ -152,6 +154,7 @@ import {
   ScenarioService,
   LpReportingService,
   BudgetService,
+  ManagementReportingService,
 } from './services';
 import {
   WriteOffController,
@@ -211,6 +214,7 @@ import {
   ScenarioController,
   LpReportingController,
   BudgetController,
+  ManagementReportingController,
 } from './controllers';
 
 @Module({
@@ -222,6 +226,7 @@ import {
       { name: RemittanceAccount.name, schema: RemittanceAccountSchema },
       { name: Payment.name, schema: PaymentSchema },
       { name: CalendarEvent.name, schema: CalendarEventSchema },
+      { name: ManagementReport.name, schema: ManagementReportSchema },
       { name: CreditNote.name, schema: CreditNoteSchema },
       { name: WriteOff.name, schema: WriteOffSchema },
       { name: Quote.name, schema: QuoteSchema },
@@ -324,6 +329,7 @@ import {
     ScenarioService,
     LpReportingService,
     BudgetService,
+    ManagementReportingService,
     EmailService,
   ],
   controllers: [
@@ -382,6 +388,7 @@ import {
     ScenarioController,
     LpReportingController,
     BudgetController,
+    ManagementReportingController,
   ],
   exports: [InvoiceService, WriteOffService],
 })

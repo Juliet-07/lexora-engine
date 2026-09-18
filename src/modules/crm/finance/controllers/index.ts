@@ -2,6 +2,7 @@ export * from './accounting.controller';
 export * from './banking.controller';
 export * from './fund.controller';
 export * from './invoice.controller';
+export * from './management-reporting.controller';
 export * from './purchases.controller';
 export * from './sales.controller';
 export * from './tax.controller';

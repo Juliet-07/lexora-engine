@@ -3,6 +3,7 @@ export * from './banking.schema';
 export * from './budget.schema';
 export * from './fund.schema';
 export * from './invoice.schema';
+export * from './management-report.schema';
 export * from './purchases.schema';
 export * from './sales.schema';
 export * from './tax.schema';

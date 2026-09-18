@@ -682,3 +682,16 @@ export class UpsertBudgetDto {
   @Type(() => BudgetLineDto)
   lines: BudgetLineDto[];
 }
+
+// ── Management reporting ─────────────────────────────────────
+
+export class SaveExecutiveSummaryDto {
+  @ApiProperty() @IsString() executiveSummary: string;
+}
+
+export class EmailManagementReportDto {
+  @ApiProperty() @IsString() recipientName: string;
+  @ApiProperty() @IsEmail() recipientEmail: string;
+  @ApiProperty() @IsString() subject: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() displayCurrency?: string;
+}

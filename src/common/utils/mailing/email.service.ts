@@ -1044,6 +1044,38 @@ export class EmailService {
     });
   }
 
+  async sendManagementReport(
+    data: {
+      to: string;
+      recipientName: string;
+      subject: string;
+      firmName: string;
+      periodLabel: string;
+    },
+    pdfBuffer: Buffer,
+  ): Promise<void> {
+    const html = `
+      <div style="font-family: Helvetica, Arial, sans-serif; color: #2c2c2c; max-width: 560px;">
+        <p>Hi ${data.recipientName || 'there'},</p>
+        <p>Please find attached the management report for <strong>${data.periodLabel}</strong>, from ${data.firmName}.</p>
+        <p style="color: #777777; font-size: 13px;">This report is confidential and intended for internal management use.</p>
+      </div>
+    `;
+    await this.transporter.sendMail({
+      from: `"${data.firmName}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject: data.subject,
+      html,
+      attachments: [
+        {
+          filename: `Management Report - ${data.periodLabel}.pdf`,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        },
+      ],
+    });
+  }
+
   async sendTaxObligationReminder(
     data: TaxObligationReminderEmailData,
   ): Promise<void> {
