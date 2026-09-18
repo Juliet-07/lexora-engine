@@ -37,6 +37,7 @@ import {
 import {
   CreatePurchaseOrderDto,
   CreateBillDto,
+  SchedulePaymentDto,
   CreateExpenseClaimDto,
   UpsertExpensePolicyDto,
 } from '../dtos';
@@ -257,13 +258,17 @@ export class BillController {
   }
 
   @Post(':id/schedule-payment')
-  @ApiOperation({ summary: 'Add to the next payment run' })
+  @ApiOperation({
+    summary:
+      'Schedule a real payment date/time — records a calendar event and starts real reminders',
+  })
   schedulePayment(
     @Param('id') id: string,
+    @Body() dto: SchedulePaymentDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.schedulePayment(t || u, id);
+    return this.service.schedulePayment(t || u, id, dto.date, dto.time);
   }
 
   @Post(':id/mark-paid')

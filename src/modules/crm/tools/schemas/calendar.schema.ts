@@ -20,6 +20,7 @@ export enum CalendarLayer {
   ADR = 'ADR',
   LITIGATION = 'Litigation',
   CONTRACT = 'Contract',
+  FINANCE = 'Finance',
 }
 export enum RecurrenceRule {
   NONE = 'None',
@@ -63,5 +64,13 @@ export class CalendarEvent {
   recurrence: RecurrenceRule;
 
   @Prop({ default: '' }) createdBy: string;
+
+  // Optional link back to the real record this event was created
+  // for (e.g. a scheduled bill payment) — used to avoid creating a
+  // duplicate event on every re-save, and to drill through from the
+  // calendar to the source record.
+  @Prop({ default: null }) sourceType: string | null;
+  @Prop({ type: Types.ObjectId, default: null })
+  sourceId: Types.ObjectId | null;
 }
 export const CalendarEventSchema = SchemaFactory.createForClass(CalendarEvent);

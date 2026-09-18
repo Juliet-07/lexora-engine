@@ -217,6 +217,11 @@ export class CreateBillDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() recurring?: boolean;
 }
 
+export class SchedulePaymentDto {
+  @ApiProperty() @IsDateString() date: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() time?: string;
+}
+
 // ── Purchases: expense claims ────────────────────────────────
 
 export class CreateExpenseClaimDto {

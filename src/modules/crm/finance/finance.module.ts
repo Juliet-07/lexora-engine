@@ -9,6 +9,10 @@ import {
   VendorSchema,
 } from 'src/modules/crm/crm/schemas/vendor.schema';
 import {
+  CalendarEvent,
+  CalendarEventSchema,
+} from 'src/modules/crm/tools/schemas/calendar.schema';
+import {
   Invoice,
   InvoiceSchema,
   RemittanceAccount,
@@ -107,6 +111,7 @@ import {
   ExpenseClaimService,
   ExpensePolicyService,
   PurchasesOverviewService,
+  BillPaymentReminderService,
   BankAccountService,
   BankTransactionService,
   BankRuleService,
@@ -216,6 +221,7 @@ import {
       { name: Invoice.name, schema: InvoiceSchema },
       { name: RemittanceAccount.name, schema: RemittanceAccountSchema },
       { name: Payment.name, schema: PaymentSchema },
+      { name: CalendarEvent.name, schema: CalendarEventSchema },
       { name: CreditNote.name, schema: CreditNoteSchema },
       { name: WriteOff.name, schema: WriteOffSchema },
       { name: Quote.name, schema: QuoteSchema },
@@ -277,6 +283,7 @@ import {
     ExpenseClaimService,
     ExpensePolicyService,
     PurchasesOverviewService,
+    BillPaymentReminderService,
     BankAccountService,
     BankTransactionService,
     BankRuleService,

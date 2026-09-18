@@ -1,5 +1,6 @@
 export * from './acounting.service';
 export * from './banking.service';
+export * from './bill-payment-reminder.service';
 export * from './budget.service';
 export * from './fund.service';
 export * from './gl-posting.service';

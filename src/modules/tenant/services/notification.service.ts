@@ -401,6 +401,26 @@ export class TenantNotificationService {
     );
   }
 
+  @OnEvent('finance.bill_payment_reminder')
+  async onBillPaymentReminder(e: {
+    tenantId: string;
+    billRef: string;
+    vendorName: string;
+    amountLabel: string;
+    dueLabel: string;
+  }) {
+    // Recipient is the tenant itself — a payment reminder isn't
+    // delegated to an employee the way a lead or vendor approval is.
+    await this.create(
+      e.tenantId,
+      e.tenantId,
+      TenantNotificationType.GENERAL,
+      `Payment due — ${e.billRef} (${e.vendorName})`,
+      `${e.amountLabel} due ${e.dueLabel}.`,
+      `/finance/purchases`,
+    );
+  }
+
   @OnEvent('tenant.vendor_approval.decided')
   async onVendorApprovalDecided(e: {
     tenantId: string;

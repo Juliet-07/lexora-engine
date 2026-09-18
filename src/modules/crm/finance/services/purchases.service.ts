@@ -32,6 +32,12 @@ import { buildPurchaseOrderPdf } from 'src/common/utils/pdf/purchase-order.util'
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { ExchangeRateService } from 'src/modules/hr/services/exchange-rate.service';
+import {
+  CalendarEvent,
+  CalendarEventDocument,
+  CalendarLayer,
+  RecurrenceRule,
+} from 'src/modules/crm/tools/schemas/calendar.schema';
 import { WhtService } from './wht.service';
 import { WhtDirection } from '../schemas';
 import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
@@ -298,6 +304,8 @@ export class BillService {
     @InjectModel(Bill.name) private readonly model: Model<BillDocument>,
     @InjectModel(CrmVendor.name)
     private readonly vendorModel: Model<CrmVendorDocument>,
+    @InjectModel(CalendarEvent.name)
+    private readonly calendarEventModel: Model<CalendarEventDocument>,
     private readonly whtService: WhtService,
     private readonly glPostingService: GlPostingService,
   ) {}
@@ -342,6 +350,20 @@ export class BillService {
       currency: dto.currency ?? 'USD',
       recurring: dto.recurring ?? false,
     });
+
+    if (created.recurring) {
+      await this.calendarEventModel.create({
+        tenantId: tId,
+        title: `Recurring bill due — ${created.vendorName}`,
+        date: dto.dueOn,
+        time: '09:00',
+        layer: CalendarLayer.FINANCE,
+        recurrence: RecurrenceRule.MONTHLY,
+        sourceType: 'Bill',
+        sourceId: created._id,
+      });
+    }
+
     return created.toObject();
   }
 
@@ -402,7 +424,12 @@ export class BillService {
     return b.toObject();
   }
 
-  async schedulePayment(tenantId: string, id: string) {
+  async schedulePayment(
+    tenantId: string,
+    id: string,
+    date: string,
+    time: string,
+  ) {
     const b = await this.getRawDoc(tenantId, id);
     if (b.status !== BillStatus.APPROVED) {
       throw new BadRequestException(
@@ -410,7 +437,21 @@ export class BillService {
       );
     }
     b.status = BillStatus.SCHEDULED;
+    b.scheduledPaymentDate = new Date(date);
+    b.scheduledPaymentTime = time || '09:00';
     await b.save();
+
+    await this.calendarEventModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      title: `Pay bill ${b.ref} — ${b.vendorName}`,
+      date,
+      time: time || '09:00',
+      layer: CalendarLayer.FINANCE,
+      recurrence: RecurrenceRule.NONE,
+      sourceType: 'Bill',
+      sourceId: b._id,
+    });
+
     return b.toObject();
   }
 

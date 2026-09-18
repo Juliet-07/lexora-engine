@@ -115,6 +115,21 @@ export class Bill {
   @Prop({ default: false }) recurring: boolean;
   @Prop({ default: null }) approvedBy: string | null;
   @Prop({ default: null }) paidAt: Date | null;
+
+  // Set when a real payment date/time is chosen via
+  // BillService.schedulePayment — this, not dueOn, is what the
+  // payment reminder cron actually watches for a one-off bill.
+  @Prop({ default: null }) scheduledPaymentDate: Date | null;
+  @Prop({ default: '09:00' }) scheduledPaymentTime: string;
+  // Tracks which reminder milestone was last sent (days-before, by
+  // convention: 3, 1, 0) so the same one is never sent twice — same
+  // pattern as ComplianceObligation.lastReminderMilestone.
+  @Prop({ default: null }) lastReminderMilestone: number | null;
+  // For a recurring bill, which YYYY-MM the monthly reminder was
+  // last sent for — recurring bills don't reset status monthly, so
+  // this is what actually prevents a duplicate send in the same
+  // month rather than lastReminderMilestone above.
+  @Prop({ default: null }) lastRecurringReminderMonth: string | null;
 }
 export const BillSchema = SchemaFactory.createForClass(Bill);
 
