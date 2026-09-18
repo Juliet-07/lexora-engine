@@ -356,13 +356,30 @@ export class MyProjectsService {
     });
   }
 
-  async logMyTime(tenantId: string, userId: string, dto: CreateMyTimeEntryDto) {
+  async logMyTime(
+    tenantId: string,
+    userId: string,
+    dto: CreateMyTimeEntryDto,
+    userType: string,
+  ) {
+    // Same tenant-vs-employee distinction as getAuthorizedMandate's
+    // every other caller: a tenant-type caller (the owner, possibly
+    // acting from their own Employee Workspace) isn't restricted to
+    // team/task membership. This used to be hardcoded to 'employee'
+    // here, which is exactly what produced "You don't have access to
+    // this mandate" for an owner who had genuinely been assigned a
+    // task on the mandate — the hardcoding ignored that entirely.
     const { employee, mandate } = await this.getAuthorizedMandate(
       tenantId,
       userId,
       dto.mandateId,
-      'employee',
+      userType,
     );
+    if (!employee) {
+      throw new NotFoundException(
+        'No employee record is linked to this account',
+      );
+    }
     return this.timeEntryService.create(tenantId, {
       memberUserId: String(employee._id),
       member: `${employee.firstName} ${employee.lastName}`,

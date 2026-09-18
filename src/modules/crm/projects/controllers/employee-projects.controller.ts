@@ -186,8 +186,9 @@ export class MyProjectsController {
     @Body() dto: CreateMyTimeEntryDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
   ) {
-    return this.service.logMyTime(t || u, u, dto);
+    return this.service.logMyTime(t || u, u, dto, userType);
   }
 
   @Post('my-time-entries/:id/submit')
