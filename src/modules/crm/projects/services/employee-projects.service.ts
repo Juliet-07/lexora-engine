@@ -79,14 +79,16 @@ export class MyProjectsService {
     };
   }
 
-  // "My mandates" means either of two things for a genuine employee,
-  // not just one: my team is formally assigned to the mandate, OR I
-  // personally have at least one task on it. A tenant-type caller
-  // (the account owner, possibly also linked to an Employee record)
-  // isn't subject to that restriction at all — they already have
-  // full visibility on the tenant side, so scoping "my mandates" to
-  // only their personal task/team links would just be a confusing,
-  // narrower view of data they can already see everything of.
+  // "My mandates" for a genuine employee means only mandates they
+  // personally have at least one task on — team assignment alone no
+  // longer surfaces a project here. A mandate the employee's team is
+  // on but that has no task assigned to them specifically doesn't
+  // belong on their dashboard. A tenant-type caller (the account
+  // owner, possibly also linked to an Employee record) isn't subject
+  // to that restriction at all — they already have full visibility
+  // on the tenant side, so scoping "my mandates" to only their
+  // personal task links would just be a confusing, narrower view of
+  // data they can already see everything of.
   async getMyMandates(tenantId: string, userId: string, userType: string) {
     const tId = new Types.ObjectId(tenantId);
 
@@ -104,11 +106,8 @@ export class MyProjectsService {
       assigneeUserId: employee._id,
     });
 
-    const or: any[] = [{ _id: { $in: taskMandateIds } }];
-    if (employee.teamId) or.push({ teamId: employee.teamId });
-
     const rows = await this.mandateModel
-      .find({ tenantId: tId, $or: or })
+      .find({ tenantId: tId, _id: { $in: taskMandateIds } })
       .sort({ createdAt: -1 })
       .lean();
     return rows.map((m) => this.normalizeMandate(m));
@@ -173,7 +172,12 @@ export class MyProjectsService {
     return this.normalizeMandate(mandate);
   }
 
-  // Every task on the mandate, any assignee — the "Board" view.
+  // The "Board" view. A tenant-type caller sees every task on the
+  // mandate, any assignee — same full-visibility rule as everywhere
+  // else in this file. A genuine employee only sees their own
+  // assigned tasks, even on a mandate their team is on — team
+  // membership is what grants them access to the mandate at all, not
+  // visibility into every other assignee's work.
   // Delegates to TaskService rather than querying the model
   // directly — loggedHrs/progress are computed there from Approved
   // time entries, not stored, so duplicating the query here would
@@ -184,8 +188,19 @@ export class MyProjectsService {
     mandateId: string,
     userType: string,
   ) {
-    await this.getAuthorizedMandate(tenantId, userId, mandateId, userType);
-    return this.taskService.getAll(tenantId, { mandateId });
+    const { employee } = await this.getAuthorizedMandate(
+      tenantId,
+      userId,
+      mandateId,
+      userType,
+    );
+    if (userType === 'tenant') {
+      return this.taskService.getAll(tenantId, { mandateId });
+    }
+    return this.taskService.getAll(tenantId, {
+      mandateId,
+      assigneeUserId: employee ? String(employee._id) : undefined,
+    });
   }
 
   // Read-only access to the mandate's real documents — reuses the
