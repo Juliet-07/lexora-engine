@@ -1034,14 +1034,20 @@ export class AccountingOverviewService {
         )
       ).reduce((s, v) => s + v, 0);
 
+    // Cancelled invoices (see InvoiceService.cancel) were voided
+    // outright — GL-reversed if they'd ever been sent — so they were
+    // never real revenue and are never a real receivable. Excluded
+    // the same way Draft is, not treated as an ordinary uncollected
+    // invoice.
     const salesRevenueYtd = await sumConverted(
-      invoices.filter((i: any) => i.stage !== 'Draft'),
+      invoices.filter((i: any) => !['Draft', 'Cancelled'].includes(i.stage)),
       (i) => i.currency,
       (i) => i.net,
     );
     const outstandingReceivables = await sumConverted(
       invoices.filter(
-        (i: any) => !['Paid', 'Draft', 'Written Off'].includes(i.stage),
+        (i: any) =>
+          !['Paid', 'Draft', 'Written Off', 'Cancelled'].includes(i.stage),
       ),
       (i) => i.currency,
       (i) => i.payable - i.paidAmount,
@@ -1399,7 +1405,9 @@ export class FinancialStatementsService {
     const wipDays = dailyRevenue > 0 ? unbilledWipValue / dailyRevenue : 0;
 
     const outstandingAr = (invoices as any[])
-      .filter((i) => !['Paid', 'Draft', 'Written Off'].includes(i.stage))
+      .filter(
+        (i) => !['Paid', 'Draft', 'Written Off', 'Cancelled'].includes(i.stage),
+      )
       .reduce((s, i) => s + (i.payable - i.paidAmount), 0);
     const arDays = dailyRevenue > 0 ? outstandingAr / dailyRevenue : 0;
 

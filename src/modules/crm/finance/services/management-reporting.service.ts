@@ -108,8 +108,13 @@ export class ManagementReportingService {
       return t >= start.getTime() && t <= end.getTime();
     };
 
+    // A Cancelled invoice was voided outright (see InvoiceService.cancel)
+    // — its GL posting was reversed if it ever had one, so it was never
+    // real revenue and never a real receivable. Excluded here exactly
+    // like Draft, not treated as a normal invoice that merely didn't
+    // collect.
     const periodInvoices = (invoices as any[]).filter(
-      (i) => i.stage !== 'Draft' && inRange(i.issuedOn),
+      (i) => !['Draft', 'Cancelled'].includes(i.stage) && inRange(i.issuedOn),
     );
     const periodBills = (bills as any[]).filter((b) => inRange(b.dueOn));
 
@@ -125,7 +130,7 @@ export class ManagementReportingService {
     );
     const outstandingReceivables = await sumConverted(
       (invoices as any[]).filter(
-        (i) => !['Paid', 'Draft', 'Written Off'].includes(i.stage),
+        (i) => !['Paid', 'Draft', 'Written Off', 'Cancelled'].includes(i.stage),
       ),
       (i) => i.currency,
       (i) => i.payable - i.paidAmount,

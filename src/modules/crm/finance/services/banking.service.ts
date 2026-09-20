@@ -482,8 +482,12 @@ export class CashForecastService {
       .reduce((s: number, a: any) => s + a.balance, 0);
 
     const now = Date.now();
+    // A Cancelled invoice (see InvoiceService.cancel) was voided
+    // outright, so it's never a real future cash inflow to forecast —
+    // same reasoning it's excluded from every other receivables total.
     const outstandingInvoices = invoices.filter(
-      (i: any) => !['Paid', 'Draft', 'Written Off'].includes(i.stage),
+      (i: any) =>
+        !['Paid', 'Draft', 'Written Off', 'Cancelled'].includes(i.stage),
     );
     const outstandingBills = bills.filter(
       (b: any) => b.status !== 'Paid' && b.status !== 'Rejected',
