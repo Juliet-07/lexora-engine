@@ -20,6 +20,13 @@ import {
   ClientInvoiceAction,
   RemittanceAccount,
   RemittanceAccountDocument,
+  BankAccount,
+  BankAccountDocument,
+  BankAccountType,
+  BankTransaction,
+  BankTransactionDocument,
+  TxStatus,
+  TxLinkType,
 } from '../schemas';
 import {
   CreateInvoiceDto,
@@ -67,6 +74,10 @@ export class InvoiceService {
     private readonly userModel: Model<UserDocument>,
     @InjectModel(RemittanceAccount.name)
     private readonly remittanceModel: Model<RemittanceAccountDocument>,
+    @InjectModel(BankAccount.name)
+    private readonly bankAccountModel: Model<BankAccountDocument>,
+    @InjectModel(BankTransaction.name)
+    private readonly bankTransactionModel: Model<BankTransactionDocument>,
     private readonly mandateService: MandateService,
     private readonly timeEntryService: TimeEntryService,
     private readonly writeOffService: WriteOffService,
@@ -106,6 +117,61 @@ export class InvoiceService {
       .lean();
     const matching = all.filter((a) => a.currency === currency);
     return matching.length ? matching : all;
+  }
+
+  // Which of the tenant's real bank accounts a payment actually
+  // landed in — used by applyPayment to record a real BankTransaction
+  // rather than an invisible GL-only figure. Unlike
+  // getRemittanceAccountsFor above (which is fine falling back to a
+  // mismatched currency — it's only ever choosing what to *display*
+  // to a client), this one is choosing what to *credit*: crediting a
+  // RWF account for a USD payment would quietly misstate that
+  // account's real balance, so a currency match is required rather
+  // than a soft fallback. bankAccountId lets the tenant override the
+  // auto-pick for the genuine edge case (e.g. a payment deliberately
+  // deposited somewhere other than its "natural" currency account).
+  private async pickBankAccount(
+    tenantId: string,
+    currency: string,
+    bankAccountId?: string,
+  ) {
+    const tId = new Types.ObjectId(tenantId);
+
+    if (bankAccountId) {
+      const account = await this.bankAccountModel
+        .findOne({ _id: bankAccountId, tenantId: tId })
+        .lean();
+      if (!account) {
+        throw new BadRequestException('That bank account was not found');
+      }
+      return account;
+    }
+
+    const all = await this.bankAccountModel.find({ tenantId: tId }).lean();
+    if (!all.length) {
+      throw new BadRequestException(
+        'Add a bank account in Banking before recording payments, so this payment has somewhere real to land.',
+      );
+    }
+    const matching = all.filter((a) => a.currency === currency);
+    if (!matching.length) {
+      throw new BadRequestException(
+        `No ${currency} bank account exists yet — add one in Banking, or pass bankAccountId to record this against a specific account.`,
+      );
+    }
+    return matching[0];
+  }
+
+  // Trust and Fund accounts each need their own ring-fenced GL code;
+  // everything else (Office, Special purpose) posts to the ordinary
+  // operating account — same mapping BankTransactionService.create
+  // already uses for a manually-entered bank transaction, so an
+  // invoice payment and a bank-feed entry into the same account
+  // always land on the same GL line.
+  private bankGlAccountFor(account: { type?: string }) {
+    if (account.type === BankAccountType.TRUST) return GL_ACCOUNTS.BANK_TRUST;
+    if (account.type === BankAccountType.FUND) return GL_ACCOUNTS.BANK_FUND;
+    return GL_ACCOUNTS.BANK_OPERATING;
   }
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -592,8 +658,19 @@ export class InvoiceService {
   }
 
   // Internal — used by PaymentService after recording a real payment,
-  // so the stage always reflects the real running paidAmount.
-  async applyPayment(tenantId: string, id: string, amount: number) {
+  // so the stage always reflects the real running paidAmount. Also
+  // where the money side of that payment becomes real: a
+  // BankTransaction is created against whichever of the tenant's own
+  // bank accounts matches the invoice's currency (or bankAccountId,
+  // if the tenant is overriding that), so the payment shows up in
+  // Banking's transaction feed and that account's live balance —
+  // not just a GL line no other screen in the app ever surfaces.
+  async applyPayment(
+    tenantId: string,
+    id: string,
+    amount: number,
+    bankAccountId?: string,
+  ) {
     const i = await this.getRawDoc(tenantId, id);
     const totals = this.computeTotals(i.toObject());
     i.paidAmount = i.paidAmount + amount;
@@ -614,6 +691,29 @@ export class InvoiceService {
     }
     await i.save();
 
+    const account = await this.pickBankAccount(
+      tenantId,
+      i.currency,
+      bankAccountId,
+    );
+    const bankGlAccount = this.bankGlAccountFor(account);
+
+    const bankTx = await this.bankTransactionModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      accountId: account._id,
+      date: new Date(),
+      description: `${i.clientName} — ${i.ref} payment received`,
+      // Positive = inflow, matching every other BankTransaction —
+      // this is real money landing in a real account, not a GL-only
+      // figure the Banking screen would never otherwise see.
+      amount,
+      currency: account.currency,
+      status: TxStatus.MATCHED,
+      linkType: TxLinkType.INVOICE_PAYMENT,
+      linkId: i._id,
+      linkLabel: i.ref,
+    });
+
     await this.glPostingService.post(
       tenantId,
       [
@@ -621,11 +721,11 @@ export class InvoiceService {
           date: new Date(),
           ref: i.ref,
           description: `${i.clientName} — payment received`,
-          accountCode: GL_ACCOUNTS.BANK_OPERATING.code,
-          accountName: GL_ACCOUNTS.BANK_OPERATING.name,
+          accountCode: bankGlAccount.code,
+          accountName: bankGlAccount.name,
           source: GlSource.BANKING,
           debit: amount,
-          sourceId: i._id,
+          sourceId: bankTx._id,
         },
         {
           date: new Date(),
@@ -903,7 +1003,12 @@ export class PaymentService {
       at: new Date(),
     });
 
-    await this.invoiceService.applyPayment(tenantId, invoiceId, amount);
+    await this.invoiceService.applyPayment(
+      tenantId,
+      invoiceId,
+      amount,
+      dto.bankAccountId,
+    );
     return created.toObject();
   }
 }

@@ -83,6 +83,11 @@ export class RecordPaymentDto {
   @ApiProperty({ enum: PaymentMethod })
   @IsEnum(PaymentMethod)
   method: PaymentMethod;
+  // Which real bank account the money landed in. Optional — when
+  // omitted, the account is auto-picked by matching the invoice's
+  // currency (see InvoiceService.pickBankAccount); pass this to
+  // override that when the payment actually landed somewhere else.
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() bankAccountId?: string;
 }
 
 export class AddDunningEventDto {
