@@ -5,6 +5,7 @@ export * from './budget.service';
 export * from './fund.service';
 export * from './gl-posting.service';
 export * from './management-reporting.service';
+export * from './installment-auto-send.service';
 export * from './invoice.service';
 export * from './purchases.service';
 export * from './sales.service';

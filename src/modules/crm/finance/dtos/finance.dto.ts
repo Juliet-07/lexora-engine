@@ -96,6 +96,10 @@ export class WriteOffInvoiceDto {
   @ApiProperty() @IsString() approvedBy: string;
 }
 
+export class CancelInvoiceDto {
+  @ApiProperty() @IsString() reason: string;
+}
+
 // ── Credit notes ──────────────────────────────────────────────
 
 export class CreateCreditNoteDto {

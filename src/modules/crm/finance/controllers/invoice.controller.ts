@@ -37,6 +37,7 @@ import {
   RecordPaymentDto,
   AddDunningEventDto,
   WriteOffInvoiceDto,
+  CancelInvoiceDto,
   CreatePaymentPlanDto,
   CreateRemittanceAccountDto,
   SetClientInvoiceStatusDto,
@@ -159,6 +160,21 @@ export class InvoiceController {
     return this.service.writeOff(t || u, id, dto.reason, dto.approvedBy);
   }
 
+  @Post(':id/cancel')
+  @ApiOperation({
+    summary:
+      'Cancel/void this invoice — reverses its GL posting if it was already ' +
+      'sent. Blocked once a payment has been recorded against it.',
+  })
+  cancel(
+    @Param('id') id: string,
+    @Body() dto: CancelInvoiceDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.cancel(t || u, id, dto.reason);
+  }
+
   @Post(':id/dunning-events')
   @ApiOperation({
     summary: 'Log a credit control action (call, reminder, escalation, etc.)',
@@ -229,7 +245,10 @@ export class PaymentPlanController {
 
   @Post()
   @ApiOperation({
-    summary: 'Agree a payment plan for an overdue invoice — pauses dunning',
+    summary:
+      'Agree a payment plan for a receivable — cancels the original invoice ' +
+      '(GL-reversed if already sent) and generates one Draft instalment ' +
+      'invoice per instalment, ready for approval',
   })
   create(
     @Body() dto: CreatePaymentPlanDto,
@@ -240,22 +259,25 @@ export class PaymentPlanController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'All payment plans' })
+  @ApiOperation({
+    summary: 'All payment plans, with each instalment’s live invoice status',
+  })
   getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
     return this.service.getAll(t || u);
   }
 
-  @Post(':planId/instalments/:instalmentId/paid')
+  @Post(':planId/approve')
   @ApiOperation({
-    summary: 'Mark an instalment paid — applies it to the invoice balance',
+    summary:
+      'Approve every Draft instalment invoice under this plan in one go — ' +
+      'each is then auto-sent by the daily cron once its own due date arrives',
   })
-  markInstalmentPaid(
+  approveAll(
     @Param('planId') planId: string,
-    @Param('instalmentId') instalmentId: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.markInstalmentPaid(t || u, planId, instalmentId);
+    return this.service.approveAll(t || u, planId);
   }
 }
 

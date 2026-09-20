@@ -16,7 +16,6 @@ import {
   PaymentMatchStatus,
   PaymentPlan,
   PaymentPlanDocument,
-  InstalmentStatus,
   WriteOffStage,
   ClientInvoiceAction,
   RemittanceAccount,
@@ -663,6 +662,152 @@ export class InvoiceService {
     return this.normalize(i.toObject());
   }
 
+  // Same shape as getAll, but by a specific set of ids rather than
+  // filters — one round trip for PaymentPlanService to resolve every
+  // instalment invoice a plan (or a page of plans) points to, instead
+  // of one query per instalment.
+  async getByIds(tenantId: string, ids: string[]) {
+    if (!ids.length) return [];
+    const rows = await this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        _id: { $in: ids.map((id) => new Types.ObjectId(id)) },
+      })
+      .lean();
+    return rows.map((i) => this.normalize(i));
+  }
+
+  // Cancelling reverses whatever GL impact the invoice already had —
+  // if it was never sent, nothing was posted yet, so this is just a
+  // stage flip; if it was Sent/Part Paid/Overdue, the exact mirror of
+  // the Dr AR / Cr Revenue / Cr VAT posting `send()` made is posted
+  // back dated today, so the ledger nets to zero rather than carrying
+  // a phantom receivable. Blocked once real money has already moved
+  // against it (paidAmount > 0) — that has to be resolved (refunded,
+  // or the invoice written off) before it can be voided, rather than
+  // silently losing track of cash the client actually sent. Used both
+  // for a direct cancellation and, via PaymentPlanService, to void a
+  // bulk invoice the moment it's replaced by a payment plan.
+  async cancel(tenantId: string, id: string, reason: string) {
+    const i = await this.getRawDoc(tenantId, id);
+    if (
+      [
+        InvoiceStage.CANCELLED,
+        InvoiceStage.WRITTEN_OFF,
+        InvoiceStage.PAID,
+      ].includes(i.stage)
+    ) {
+      throw new BadRequestException(
+        `Can't cancel an invoice that's already ${i.stage}`,
+      );
+    }
+    if (i.paidAmount > 0) {
+      throw new BadRequestException(
+        'This invoice has payments recorded against it — resolve or refund those before cancelling it',
+      );
+    }
+
+    const wasPosted = [
+      InvoiceStage.SENT,
+      InvoiceStage.PART_PAID,
+      InvoiceStage.OVERDUE,
+    ].includes(i.stage);
+
+    if (wasPosted) {
+      const totals = this.computeTotals(i.toObject());
+      const glLines: Parameters<GlPostingService['post']>[1] = [
+        {
+          date: new Date(),
+          ref: i.ref,
+          description: `${i.clientName} — cancellation reversal`,
+          accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.code,
+          accountName: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.name,
+          source: GlSource.SALES,
+          credit: totals.payable,
+          sourceId: i._id,
+        },
+        {
+          date: new Date(),
+          ref: i.ref,
+          description: `${i.clientName} — cancellation reversal`,
+          accountCode: GL_ACCOUNTS.REVENUE.code,
+          accountName: GL_ACCOUNTS.REVENUE.name,
+          source: GlSource.SALES,
+          debit: totals.net,
+          sourceId: i._id,
+        },
+      ];
+      if (totals.vat > 0) {
+        glLines.push({
+          date: new Date(),
+          ref: i.ref,
+          description: `${i.clientName} — cancellation reversal (VAT)`,
+          accountCode: GL_ACCOUNTS.VAT_PAYABLE.code,
+          accountName: GL_ACCOUNTS.VAT_PAYABLE.name,
+          source: GlSource.SALES,
+          debit: totals.vat,
+          sourceId: i._id,
+        });
+      }
+      await this.glPostingService.post(tenantId, glLines, i.currency);
+    }
+
+    i.stage = InvoiceStage.CANCELLED;
+    i.cancelledReason = reason;
+    i.cancelledAt = new Date();
+    await i.save();
+    return this.normalize(i.toObject());
+  }
+
+  // One Draft invoice per instalment, billed to the exact same
+  // client/mandate as the bulk invoice it's replacing — created by
+  // PaymentPlanService.create() right after that original invoice is
+  // cancelled. vatRate/whtRate are zeroed rather than copied from the
+  // original: the instalment amount the tenant enters in the payment
+  // plan dialog is the flat amount the client owes for that
+  // instalment, so re-applying tax on top of it would double-tax
+  // money that was already accounted for once on the original.
+  async createInstalmentInvoice(
+    tenantId: string,
+    opts: {
+      original: any;
+      due: string;
+      amount: number;
+      planId: Types.ObjectId;
+      index: number;
+      count: number;
+    },
+  ) {
+    const tId = new Types.ObjectId(tenantId);
+    const ref = await this.nextRef(tId);
+    const created = await this.model.create({
+      tenantId: tId,
+      ref,
+      clientUserId: new Types.ObjectId(opts.original.clientUserId),
+      clientName: opts.original.clientName,
+      mandateId: new Types.ObjectId(opts.original.mandateId),
+      mandateName: opts.original.mandateName,
+      currency: opts.original.currency,
+      vatRate: 0,
+      whtRate: 0,
+      discount: 0,
+      model: opts.original.model,
+      issuedOn: new Date(opts.due),
+      dueOn: new Date(opts.due),
+      lines: [
+        {
+          description: `Instalment ${opts.index} of ${opts.count} — ${opts.original.ref}`,
+          qty: 1,
+          unit: opts.amount,
+        },
+      ],
+      instalmentPlanId: opts.planId,
+      instalmentIndex: opts.index,
+      instalmentCount: opts.count,
+    });
+    return this.normalize(created.toObject());
+  }
+
   // Writing off an invoice creates the third checkpoint of the real
   // write-off lifecycle — same WriteOff record type as a WIP write-
   // down or a credit note, not a separate concept.
@@ -771,54 +916,129 @@ export class PaymentPlanService {
     private readonly invoiceService: InvoiceService,
   ) {}
 
+  // Attaches each instalment's real invoice (ref/stage/payable/
+  // paidAmount) so the UI can show live status without an extra
+  // round trip per instalment — one bulk lookup covering every plan
+  // in the list, not one query per instalment.
+  private async withInstalmentInvoices(tenantId: string, plans: any[]) {
+    const ids = plans.flatMap((p) =>
+      p.instalments.map((inst: any) => String(inst.invoiceId)),
+    );
+    const invoices = await this.invoiceService.getByIds(tenantId, ids);
+    const byId = new Map(invoices.map((inv: any) => [String(inv._id), inv]));
+    return plans.map((p) => ({
+      ...p,
+      instalments: p.instalments.map((inst: any) => ({
+        ...inst,
+        invoice: byId.get(String(inst.invoiceId)) ?? null,
+      })),
+    }));
+  }
+
   async getAll(tenantId: string) {
-    return this.model
+    const plans = await this.model
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
+    return this.withInstalmentInvoices(tenantId, plans);
   }
 
+  // Agreeing a payment plan replaces the bulk invoice outright: it's
+  // cancelled (GL-reversed if it had already been sent) and one Draft
+  // invoice is generated per instalment, dated on that instalment's
+  // due date. Nothing is sent to the client yet — that happens once
+  // the tenant approves the batch (see approveAll) and, from then on,
+  // automatically on each instalment's own due date (see the
+  // InstalmentAutoSendService cron). The instalments must add up to
+  // exactly the invoice's outstanding balance — a plan that under- or
+  // over-bills the client relative to what they actually owe is
+  // almost certainly a typo, not intent.
   async create(tenantId: string, dto: CreatePaymentPlanDto) {
-    const invoice: any = await this.invoiceService.getById(
+    if (!dto.instalments.length) {
+      throw new BadRequestException(
+        'A payment plan needs at least one instalment',
+      );
+    }
+    const original: any = await this.invoiceService.getById(
       tenantId,
       dto.invoiceId,
     );
-    const created = await this.model.create({
+    const outstanding = original.payable - original.paidAmount;
+    const planTotal = dto.instalments.reduce((s, i) => s + i.amount, 0);
+    if (Math.round(planTotal * 100) !== Math.round(outstanding * 100)) {
+      throw new BadRequestException(
+        `Instalments must add up to the outstanding balance (${original.currency} ${outstanding.toFixed(2)}), got ${original.currency} ${planTotal.toFixed(2)}`,
+      );
+    }
+
+    await this.invoiceService.cancel(
+      tenantId,
+      dto.invoiceId,
+      `Replaced by a ${dto.instalments.length}-instalment payment plan`,
+    );
+
+    const plan = await this.model.create({
       tenantId: new Types.ObjectId(tenantId),
       invoiceId: new Types.ObjectId(dto.invoiceId),
-      invoiceRef: invoice.ref,
-      clientName: invoice.clientName,
-      instalments: dto.instalments.map((i) => ({
-        due: new Date(i.due),
-        amount: i.amount,
-      })),
+      invoiceRef: original.ref,
+      clientName: original.clientName,
+      instalments: [],
     });
-    // Agreeing a payment plan naturally pauses dunning while the
-    // client is compliant with it — matches the spec's own framing.
-    await this.invoiceService.setDunningPaused(tenantId, dto.invoiceId, true);
-    return created.toObject();
+
+    const instalments = [];
+    for (let idx = 0; idx < dto.instalments.length; idx++) {
+      const inst = dto.instalments[idx];
+      const instalmentInvoice =
+        await this.invoiceService.createInstalmentInvoice(tenantId, {
+          original,
+          due: inst.due,
+          amount: inst.amount,
+          planId: plan._id,
+          index: idx + 1,
+          count: dto.instalments.length,
+        });
+      instalments.push({
+        due: new Date(inst.due),
+        amount: inst.amount,
+        invoiceId: instalmentInvoice._id,
+      });
+    }
+
+    plan.instalments = instalments as any;
+    await plan.save();
+    const [withInvoices] = await this.withInstalmentInvoices(tenantId, [
+      plan.toObject(),
+    ]);
+    return withInvoices;
   }
 
-  async markInstalmentPaid(
-    tenantId: string,
-    planId: string,
-    instalmentId: string,
-  ) {
-    const plan = await this.model.findOne({
-      _id: planId,
-      tenantId: new Types.ObjectId(tenantId),
-    });
+  // The one-time sign-off the tenant asked not to have to repeat per
+  // instalment: every Draft instalment invoice under this plan is
+  // pushed through the normal submit → approve steps in one call.
+  // Once approved, an instalment is picked up and sent automatically
+  // by the cron when its due date arrives — no further clicks.
+  async approveAll(tenantId: string, planId: string) {
+    const plan = await this.model
+      .findOne({ _id: planId, tenantId: new Types.ObjectId(tenantId) })
+      .lean();
     if (!plan) throw new NotFoundException('Payment plan not found');
-    const instalment = (plan.instalments as any).id(instalmentId);
-    if (!instalment) throw new NotFoundException('Instalment not found');
-    instalment.status = InstalmentStatus.PAID;
-    await plan.save();
-    await this.invoiceService.applyPayment(
-      tenantId,
-      String(plan.invoiceId),
-      instalment.amount,
-    );
-    return plan.toObject();
+
+    for (const inst of plan.instalments as any[]) {
+      const invoice: any = await this.invoiceService.getById(
+        tenantId,
+        String(inst.invoiceId),
+      );
+      if (invoice.stage === InvoiceStage.DRAFT) {
+        await this.invoiceService.submitForReview(
+          tenantId,
+          String(inst.invoiceId),
+        );
+        await this.invoiceService.approve(tenantId, String(inst.invoiceId));
+      }
+    }
+
+    const [withInvoices] = await this.withInstalmentInvoices(tenantId, [plan]);
+    return withInvoices;
   }
 }
 
