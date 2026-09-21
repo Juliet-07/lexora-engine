@@ -32,9 +32,7 @@ export function buildManagementReportPdf(
     doc.on('error', reject);
 
     const money = (n: number) =>
-      `${data.currency} ${Number(n || 0).toLocaleString(undefined, {
-        maximumFractionDigits: 0,
-      })}`;
+      `${data.currency} ${Number(n || 0).toLocaleString(undefined)}`;
 
     const sectionHeading = (text: string) => {
       doc.moveDown(0.75);
@@ -91,6 +89,18 @@ export function buildManagementReportPdf(
       .stroke();
     doc.moveDown(1);
 
+    // ── Executive summary — leads the report, per house style ──
+    sectionHeading('Executive Summary');
+    doc
+      .fontSize(10.5)
+      .fillColor(INK)
+      .font('Helvetica')
+      .text(
+        data.executiveSummary?.trim() ||
+          'No executive summary has been written for this period yet.',
+        { lineGap: 3 },
+      );
+
     // ── Financial summary ────────────────────────────────────
     sectionHeading('Financial Summary');
     figureRow('Revenue', money(data.revenue), POSITIVE);
@@ -105,18 +115,6 @@ export function buildManagementReportPdf(
     figureRow('Cash position (as of today)', money(data.cashPosition));
     figureRow('Outstanding receivables', money(data.outstandingReceivables));
     figureRow('Outstanding payables', money(data.outstandingPayables));
-
-    // ── Executive summary ────────────────────────────────────
-    sectionHeading('Executive Summary');
-    doc
-      .fontSize(10.5)
-      .fillColor(INK)
-      .font('Helvetica')
-      .text(
-        data.executiveSummary?.trim() ||
-          'No executive summary has been written for this period yet.',
-        { lineGap: 3 },
-      );
 
     // ── Footer ──────────────────────────────────────────────
     doc

@@ -116,9 +116,17 @@ export class Invoice {
 
   // EBM (Electronic Billing Machine) sync — same status vocabulary
   // CreditNote already uses, since it's the same real RRA compliance
-  // concern on a different document type.
+  // concern on a different document type. The receipt number is
+  // captured manually (EbmService.updateReceipt) against the real
+  // physical/EBM device receipt, never auto-generated — same for the
+  // scanned/photographed copy of that receipt, stored the same way
+  // proofOfPayment is below.
   @Prop({ enum: EbmStatus, default: EbmStatus.PENDING }) ebmStatus: EbmStatus;
   @Prop({ default: '' }) ebmReceiptNumber: string;
+  @Prop({ default: null }) ebmReceiptFileUrl: string | null;
+  @Prop({ default: null }) ebmReceiptFileName: string | null;
+  @Prop({ default: null }) ebmReceiptMimeType: string | null;
+  @Prop({ default: null }) ebmReceiptFilePath: string | null;
 
   @Prop({ enum: ClientInvoiceAction, default: null })
   clientAction: ClientInvoiceAction | null;

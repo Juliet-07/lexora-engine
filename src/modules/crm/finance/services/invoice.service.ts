@@ -674,16 +674,39 @@ export class InvoiceService {
   }
 
   // Called by EbmService.resync — the only writer of this field, so
-  // the real sync state lives in one place.
-  async setEbmStatus(
-    tenantId: string,
-    id: string,
-    status: EbmStatus,
-    receiptNumber: string,
-  ) {
+  // the real sync state lives in one place. No receipt number here
+  // any more: that's only ever captured manually, via setEbmReceipt,
+  // against the real physical/EBM receipt once the tenant has it.
+  async setEbmStatus(tenantId: string, id: string, status: EbmStatus) {
     const i = await this.getRawDoc(tenantId, id);
     i.ebmStatus = status;
+    await i.save();
+    return this.normalize(i.toObject());
+  }
+
+  // Called by EbmService.updateReceipt — the real receipt number the
+  // tenant reads off the physical EBM device/slip, optionally with a
+  // photo or scan of it as evidence. Recording a real receipt number
+  // is itself confirmation the document was actually issued, so this
+  // also marks the invoice Synced.
+  async setEbmReceipt(
+    tenantId: string,
+    id: string,
+    receiptNumber: string,
+    file?: Express.Multer.File | null,
+  ) {
+    const i = await this.getRawDoc(tenantId, id);
     i.ebmReceiptNumber = receiptNumber;
+    i.ebmStatus = EbmStatus.SYNCED;
+    if (file) {
+      if (i.ebmReceiptFilePath && fs.existsSync(i.ebmReceiptFilePath)) {
+        fs.unlinkSync(i.ebmReceiptFilePath);
+      }
+      i.ebmReceiptFileUrl = toFileUrl(file.path);
+      i.ebmReceiptFileName = file.originalname;
+      i.ebmReceiptMimeType = file.mimetype;
+      i.ebmReceiptFilePath = file.path;
+    }
     await i.save();
     return this.normalize(i.toObject());
   }

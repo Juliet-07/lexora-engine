@@ -317,6 +317,14 @@ export class CreateTaxObligationDto {
   frequency?: RecurringFrequency;
 }
 
+export class UpdateEbmReceiptDto {
+  @ApiProperty({
+    description: 'The real receipt number read off the EBM device/slip',
+  })
+  @IsString()
+  receiptNumber: string;
+}
+
 // ── Accounting: chart of accounts ────────────────────────────
 
 export class CreateAccountDto {

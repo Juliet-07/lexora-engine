@@ -285,21 +285,39 @@ export class EbmService {
         receipt: i.ebmReceiptNumber || '—',
         classification: i.vatRate > 0 ? `VAT ${i.vatRate}%` : 'Exempt',
         status: i.ebmStatus,
+        receiptFileUrl: i.ebmReceiptFileUrl || null,
+        receiptFileName: i.ebmReceiptFileName || null,
       }));
   }
 
   async resync(tenantId: string, invoiceId: string) {
     // No real RRA connection to actually call — this marks the
-    // document as synced with a generated receipt reference, the
-    // same shape a real sync response would leave behind.
-    const receiptNumber = `EBM-${Date.now().toString().slice(-8)}`;
+    // document as synced. It no longer invents a receipt number:
+    // the real one is captured separately via updateReceipt, once
+    // the tenant actually has it off the EBM device.
     await this.invoiceService.setEbmStatus(
       tenantId,
       invoiceId,
       EbmStatus.SYNCED,
-      receiptNumber,
     );
     return this.invoiceService.getById(tenantId, invoiceId);
+  }
+
+  // The real receipt number, typed in by the tenant off the actual
+  // EBM device/slip, optionally with a photo or scan of that receipt
+  // as evidence — replaces the old auto-generated placeholder.
+  async updateReceipt(
+    tenantId: string,
+    invoiceId: string,
+    receiptNumber: string,
+    file?: Express.Multer.File | null,
+  ) {
+    return this.invoiceService.setEbmReceipt(
+      tenantId,
+      invoiceId,
+      receiptNumber,
+      file,
+    );
   }
 }
 

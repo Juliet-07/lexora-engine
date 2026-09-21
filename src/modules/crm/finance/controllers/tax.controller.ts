@@ -1,9 +1,25 @@
-import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseInterceptors,
+  UploadedFile,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
+import { existsSync, mkdirSync } from 'fs';
+import { v4 as uuidv4 } from 'uuid';
 import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
   ApiQuery,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
 import {
   WhtService,
@@ -13,13 +29,43 @@ import {
   EbmService,
   TaxObligationService,
 } from '../services';
-import { CreateTaxObligationDto } from '../dtos';
+import { CreateTaxObligationDto, UpdateEbmReceiptDto } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
   PlatformModuleKey,
   UserType,
 } from 'src/common/interfaces/user-role.enum';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
+
+// Same real disk-storage convention used across the app's other
+// upload features — /uploads/{feature}/ with a UUID filename, served
+// back via main.ts's existing /uploads static route.
+const ebmReceiptStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(process.cwd(), 'uploads', 'ebm-receipts');
+    if (!existsSync(uploadPath)) mkdirSync(uploadPath, { recursive: true });
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) =>
+    cb(null, `${uuidv4()}${extname(file.originalname)}`),
+});
+const ebmReceiptFileFilter = (
+  _req: any,
+  file: Express.Multer.File,
+  cb: any,
+) => {
+  const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(
+      new Error(
+        'Only PDF or image files (JPEG, PNG, WEBP) are accepted for an EBM receipt.',
+      ),
+      false,
+    );
+  }
+};
 
 @ApiTags('CRM — Finance — Tax')
 @ApiBearerAuth()
@@ -164,5 +210,43 @@ export class EbmController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.resync(t || u, invoiceId);
+  }
+
+  @Post(':invoiceId/receipt')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: ebmReceiptStorage,
+      fileFilter: ebmReceiptFileFilter,
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['receiptNumber'],
+      properties: {
+        receiptNumber: { type: 'string' },
+        file: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @ApiOperation({
+    summary:
+      'Record the real EBM receipt number (never auto-generated) and optionally attach a photo/scan of the actual receipt',
+  })
+  updateReceipt(
+    @Param('invoiceId') invoiceId: string,
+    @Body() dto: UpdateEbmReceiptDto,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateReceipt(
+      t || u,
+      invoiceId,
+      dto.receiptNumber,
+      file,
+    );
   }
 }
