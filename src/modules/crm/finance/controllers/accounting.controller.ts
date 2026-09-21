@@ -185,6 +185,19 @@ export class GeneralLedgerController {
       displayCurrency,
     });
   }
+
+  @Get(':glEntryId/source')
+  @ApiOperation({
+    summary:
+      'Resolve the real invoice/bill/transaction a GL entry was posted from, for the ref drill-through popup',
+  })
+  getSourceDetail(
+    @Param('glEntryId') glEntryId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getSourceDetail(t || u, glEntryId);
+  }
 }
 
 @ApiTags('CRM — Finance — Accounting')
