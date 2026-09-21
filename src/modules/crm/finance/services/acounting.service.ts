@@ -45,8 +45,7 @@ import {
 } from '../dtos';
 import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
 import { InvoiceService } from './invoice.service';
-import { BillService, ExpenseClaimService } from './purchases.service';
-import { BankAccountService } from './banking.service';
+import { ExpenseClaimService } from './purchases.service';
 import {
   MandateService,
   TimeEntryService,
@@ -979,34 +978,65 @@ export class MaintenanceLogService {
 @Injectable()
 export class AccountingOverviewService {
   constructor(
-    private readonly invoiceService: InvoiceService,
-    private readonly billService: BillService,
     private readonly trustLedgerService: TrustLedgerService,
     private readonly fundService: FundService,
-    private readonly bankAccountService: BankAccountService,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(GlEntry.name)
+    private readonly glModel: Model<GlEntryDocument>,
     private readonly exchangeRateService: ExchangeRateService,
   ) {}
 
-  // Real cross-module summary. Trust and Fund now contribute real
-  // figures too — total trust balance is the same live-computed sum
-  // the Trust register itself shows, total committed fund capital
-  // is the same real figure Fund setup computes. Distributed/NAV
-  // still aren't included here, same reasoning they're absent from
-  // Fund's own totals — no confirmed waterfall to compute them from
-  // honestly yet.
+  // Real cross-module summary — Sales, Purchases and Cash balance now
+  // all read the same posted GlEntry rows the Chart of Accounts,
+  // Trial Balance and Financials pages read, instead of separately
+  // re-summing Invoice/Bill/BankAccount records with their own date
+  // scope and their own (live, not frozen-at-posting) fx rate. That
+  // used to make this page's "Sales" and "Cash balance" permanently
+  // disagree with everywhere else in Finance — now every page is
+  // reading the exact same underlying ledger, just displayed
+  // differently, so they agree by construction rather than by luck.
+  // GL amounts are always stored in the tenant's base currency
+  // (frozen at the fx rate in effect when each entry was posted), so
+  // only one further conversion — base currency → the requested
+  // display currency, at today's rate — is ever needed here.
+  //
+  // Trust and Fund still read their own subledgers directly — those
+  // are a different real-money concept (ring-fenced client/fund cash,
+  // not the firm's own P&L) that was never part of the reported
+  // inconsistency.
   async getOverview(tenantId: string, displayCurrency?: string) {
-    const [invoices, bills, trustLedgers, funds, bankAccounts, tenant] =
+    const tId = new Types.ObjectId(tenantId);
+    const now = new Date();
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+
+    const [trustLedgers, funds, tenant, ytdTotals, asOfNowBalances] =
       await Promise.all([
-        this.invoiceService.getAll(tenantId),
-        this.billService.getAll(tenantId),
         this.trustLedgerService.getAll(tenantId),
         this.fundService.getAll(tenantId),
-        this.bankAccountService.getAll(tenantId),
         this.userModel
           .findById(tenantId)
           .select('tenantProfile.baseCurrency')
           .lean(),
+        this.glModel.aggregate([
+          { $match: { tenantId: tId, date: { $gte: yearStart, $lte: now } } },
+          {
+            $group: {
+              _id: { source: '$source', accountCode: '$accountCode' },
+              debit: { $sum: '$debit' },
+              credit: { $sum: '$credit' },
+            },
+          },
+        ]),
+        this.glModel.aggregate([
+          { $match: { tenantId: tId, date: { $lte: now } } },
+          {
+            $group: {
+              _id: '$accountCode',
+              debit: { $sum: '$debit' },
+              credit: { $sum: '$credit' },
+            },
+          },
+        ]),
       ]);
 
     const baseCurrency = (tenant as any)?.tenantProfile?.baseCurrency || 'USD';
@@ -1034,29 +1064,63 @@ export class AccountingOverviewService {
         )
       ).reduce((s, v) => s + v, 0);
 
-    // Cancelled invoices (see InvoiceService.cancel) were voided
-    // outright — GL-reversed if they'd ever been sent — so they were
-    // never real revenue and are never a real receivable. Excluded
-    // the same way Draft is, not treated as an ordinary uncollected
-    // invoice.
-    const salesRevenueYtd = await sumConverted(
-      invoices.filter((i: any) => !['Draft', 'Cancelled'].includes(i.stage)),
-      (i) => i.currency,
-      (i) => i.net,
+    const toDisplay = async (baseAmount: number) =>
+      baseAmount * (await rateTo(baseCurrency));
+
+    // Revenue (4200) is credit-normal — YTD, Sales-sourced only.
+    const salesRevenueYtdBase = ytdTotals
+      .filter(
+        (r: any) =>
+          r._id.source === GlSource.SALES &&
+          r._id.accountCode === GL_ACCOUNTS.REVENUE.code,
+      )
+      .reduce((s: number, r: any) => s + (r.credit - r.debit), 0);
+    // Purchases (5000, General expenses) is debit-normal — YTD,
+    // Purchases-sourced only, matching what "Purchases: expenses
+    // posted YTD" has always meant (bills expensed), not every
+    // expense account in the chart (payroll, bad debt, etc).
+    const purchasesExpensesYtdBase = ytdTotals
+      .filter(
+        (r: any) =>
+          r._id.source === GlSource.PURCHASES &&
+          r._id.accountCode === GL_ACCOUNTS.GENERAL_EXPENSE.code,
+      )
+      .reduce((s: number, r: any) => s + (r.debit - r.credit), 0);
+
+    const balanceOf = (code: string) => {
+      const row = asOfNowBalances.find((r: any) => r._id === code);
+      return row ? row.debit - row.credit : 0;
+    };
+    // Accounts receivable (1200) is debit-normal — an as-of-now
+    // balance (what's actually still owed), not a YTD flow. Now that
+    // write-offs, credit notes and bank-matched invoice payments all
+    // correctly clear this account, it reflects real outstanding
+    // receivables rather than every invoice ever sent minus what
+    // "Record payment" happened to clear.
+    const outstandingReceivablesBase = Math.max(
+      0,
+      balanceOf(GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.code),
     );
-    const outstandingReceivables = await sumConverted(
-      invoices.filter(
-        (i: any) =>
-          !['Paid', 'Draft', 'Written Off', 'Cancelled'].includes(i.stage),
-      ),
-      (i) => i.currency,
-      (i) => i.payable - i.paidAmount,
-    );
-    const purchasesExpensesYtd = await sumConverted(
-      bills,
-      (b) => b.currency,
-      (b) => b.amount,
-    );
+    // Cash balance — Office/operating accounts only (1110), same
+    // scope this tile has always had; Trust/Fund cash is ring-fenced
+    // and reported separately below. This is the "book" balance —
+    // it's expected to match the Banking page's own account tiles
+    // (the "bank" balance) once every real cash movement (opening
+    // balances, transfers, bank-feed matches) is posted here too.
+    const cashBalanceBase = balanceOf(GL_ACCOUNTS.BANK_OPERATING.code);
+
+    const [
+      salesRevenueYtd,
+      purchasesExpensesYtd,
+      outstandingReceivables,
+      cashBalance,
+    ] = await Promise.all([
+      toDisplay(salesRevenueYtdBase),
+      toDisplay(purchasesExpensesYtdBase),
+      toDisplay(outstandingReceivablesBase),
+      toDisplay(cashBalanceBase),
+    ]);
+
     const trustBalance = await sumConverted(
       trustLedgers,
       (l: any) => l.currency,
@@ -1066,13 +1130,6 @@ export class AccountingOverviewService {
       funds,
       (f: any) => f.currency,
       (f: any) => f.committed,
-    );
-    // Only office accounts — same scope Cash Forecast already uses,
-    // since Trust/Fund balances are ring-fenced and reported above.
-    const cashBalance = await sumConverted(
-      bankAccounts.filter((a: any) => a.type === 'Office'),
-      (a: any) => a.currency,
-      (a: any) => a.balance,
     );
 
     return {

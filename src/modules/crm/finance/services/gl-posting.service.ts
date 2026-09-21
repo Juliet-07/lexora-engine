@@ -83,6 +83,74 @@ export class GlPostingService {
       }),
     );
   }
+
+  // A bank transaction posts its cash-side GL entry the moment it's
+  // recorded (BankTransactionService.create), against whatever contra
+  // account a Bank Rule suggests — or General expenses if none
+  // matched. When that transaction is later matched to the real
+  // invoice it actually settles, the guessed contra account is
+  // usually wrong (it was never really a general expense — it was
+  // Accounts receivable clearing). This corrects just the contra
+  // side in place: the bank leg (excludeAccountCode) is untouched
+  // since that cash movement was always real and correct; the wrong
+  // contra leg is reversed and reposted against the right account,
+  // in the same original currency and at the same frozen fx rate so
+  // the correction doesn't introduce a new conversion. A no-op if
+  // the contra leg already points at the right account (nothing to
+  // fix) or no lines are found for this source.
+  async reclassifyContra(
+    tenantId: string,
+    sourceId: string | Types.ObjectId,
+    excludeAccountCode: string,
+    toAccount: { code: string; name: string },
+    date: Date,
+    ref: string,
+    description: string,
+  ): Promise<void> {
+    const lines = await this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        sourceId: new Types.ObjectId(String(sourceId)),
+      })
+      .lean();
+    const contra = lines.find((l) => l.accountCode !== excludeAccountCode);
+    if (!contra || contra.accountCode === toAccount.code) return;
+
+    await this.model.insertMany([
+      {
+        tenantId: new Types.ObjectId(tenantId),
+        date,
+        ref,
+        description: `${description} (reclassified from ${contra.accountName})`,
+        accountCode: contra.accountCode,
+        accountName: contra.accountName,
+        source: contra.source,
+        debit: contra.credit,
+        credit: contra.debit,
+        originalCurrency: contra.originalCurrency,
+        originalDebit: contra.credit,
+        originalCredit: contra.debit,
+        fxRateToBase: contra.fxRateToBase,
+        sourceId: contra.sourceId,
+      },
+      {
+        tenantId: new Types.ObjectId(tenantId),
+        date,
+        ref,
+        description,
+        accountCode: toAccount.code,
+        accountName: toAccount.name,
+        source: contra.source,
+        debit: contra.debit,
+        credit: contra.credit,
+        originalCurrency: contra.originalCurrency,
+        originalDebit: contra.debit,
+        originalCredit: contra.credit,
+        fxRateToBase: contra.fxRateToBase,
+        sourceId: contra.sourceId,
+      },
+    ]);
+  }
 }
 
 // The well-known codes every automatic posting hook writes against.
@@ -114,4 +182,5 @@ export const GL_ACCOUNTS = {
   GENERAL_EXPENSE: { code: '5000', name: 'General expenses' },
   STAFF_COSTS: { code: '5800', name: 'Staff costs' },
   DEPRECIATION_EXPENSE: { code: '5900', name: 'Depreciation expense' },
+  BAD_DEBT_EXPENSE: { code: '6900', name: 'Bad debt expense' },
 } as const;

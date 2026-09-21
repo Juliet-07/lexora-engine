@@ -6,9 +6,8 @@ import {
   ManagementReportDocument,
   ReportPeriodType,
 } from '../schemas';
-import { InvoiceService } from './invoice.service';
-import { BillService } from './purchases.service';
-import { BankAccountService } from './banking.service';
+import { FinancialStatementsService } from './acounting.service';
+import { GL_ACCOUNTS } from './gl-posting.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { ExchangeRateService } from 'src/modules/hr/services/exchange-rate.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
@@ -54,13 +53,28 @@ export class ManagementReportingService {
     @InjectModel(ManagementReport.name)
     private readonly model: Model<ManagementReportDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
-    private readonly invoiceService: InvoiceService,
-    private readonly billService: BillService,
-    private readonly bankAccountService: BankAccountService,
+    private readonly financialStatementsService: FinancialStatementsService,
     private readonly exchangeRateService: ExchangeRateService,
     private readonly emailService: EmailService,
   ) {}
 
+  // Revenue/expenses now read the exact same posted GlEntry rows the
+  // Financials P&L reads for the same period — previously this
+  // summed Invoice.net/Bill.amount directly, re-converting each one
+  // at TODAY's live fx rate regardless of when it was actually
+  // posted, while the P&L (and everywhere else) uses the rate frozen
+  // at posting time. That's what let a single month here show more
+  // revenue than an entire year-to-date on the P&L: two different
+  // data sets, two different fx treatments, not just two different
+  // date windows. GL amounts are always in the tenant's base
+  // currency already, so only one further conversion — base →
+  // requested display currency, at today's rate — happens here.
+  //
+  // Receivables/payables/cash stay as-of-today balance snapshots
+  // (this section is literally headed "Position (as of today)" in
+  // the UI) rather than period-bound flows — same real GL accounts
+  // the Chart of Accounts and Accounting overview read, so this
+  // matches them too, not just the P&L.
   private async buildFigures(
     tenantId: string,
     periodType: ReportPeriodType,
@@ -68,10 +82,18 @@ export class ManagementReportingService {
     displayCurrency?: string,
   ) {
     const { start, end, label } = periodRange(periodType, periodKey);
-    const [invoices, bills, bankAccounts, tenant] = await Promise.all([
-      this.invoiceService.getAll(tenantId),
-      this.billService.getAll(tenantId),
-      this.bankAccountService.getAll(tenantId),
+    const today = new Date();
+    const [pnl, asOfNow, tenant] = await Promise.all([
+      this.financialStatementsService.getProfitAndLoss(
+        tenantId,
+        start.toISOString(),
+        end.toISOString(),
+      ),
+      this.financialStatementsService.getAccountBalances(
+        tenantId,
+        undefined,
+        today.toISOString(),
+      ),
       this.userModel
         .findById(tenantId)
         .select('tenantProfile.baseCurrency')
@@ -92,64 +114,35 @@ export class ManagementReportingService {
       rateCache.set(cur, rate);
       return rate;
     };
-    const sumConverted = async (
-      rows: any[],
-      currencyOf: (r: any) => string,
-      valueOf: (r: any) => number,
-    ) =>
-      (
-        await Promise.all(
-          rows.map(async (r) => valueOf(r) * (await rateTo(currencyOf(r)))),
-        )
-      ).reduce((s, v) => s + v, 0);
+    const toDisplay = async (baseAmount: number) =>
+      baseAmount * (await rateTo(baseCurrency));
 
-    const inRange = (d: string | Date) => {
-      const t = new Date(d).getTime();
-      return t >= start.getTime() && t <= end.getTime();
-    };
+    const balanceOf = (code: string) => asOfNow.balanceMap.get(code) ?? 0;
+    // AR (1200) is debit-normal, AP (2110) and cash (1110) sign
+    // conventions follow the same balanceMap the Balance sheet uses.
+    const outstandingReceivablesBase = Math.max(
+      0,
+      balanceOf(GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.code),
+    );
+    const outstandingPayablesBase = Math.max(
+      0,
+      -balanceOf(GL_ACCOUNTS.ACCOUNTS_PAYABLE.code),
+    );
+    const cashPositionBase = balanceOf(GL_ACCOUNTS.BANK_OPERATING.code);
 
-    // A Cancelled invoice was voided outright (see InvoiceService.cancel)
-    // — its GL posting was reversed if it ever had one, so it was never
-    // real revenue and never a real receivable. Excluded here exactly
-    // like Draft, not treated as a normal invoice that merely didn't
-    // collect.
-    const periodInvoices = (invoices as any[]).filter(
-      (i) => !['Draft', 'Cancelled'].includes(i.stage) && inRange(i.issuedOn),
-    );
-    const periodBills = (bills as any[]).filter((b) => inRange(b.dueOn));
-
-    const revenue = await sumConverted(
-      periodInvoices,
-      (i) => i.currency,
-      (i) => i.net,
-    );
-    const expenses = await sumConverted(
-      periodBills,
-      (b) => b.currency,
-      (b) => b.amount,
-    );
-    const outstandingReceivables = await sumConverted(
-      (invoices as any[]).filter(
-        (i) => !['Paid', 'Draft', 'Written Off', 'Cancelled'].includes(i.stage),
-      ),
-      (i) => i.currency,
-      (i) => i.payable - i.paidAmount,
-    );
-    const outstandingPayables = await sumConverted(
-      (bills as any[]).filter((b) => b.status !== 'Paid'),
-      (b) => b.currency,
-      (b) => b.amount,
-    );
-    // Current cash position — a bank balance is a point-in-time
-    // snapshot, not something honestly reconstructable for a past
-    // period without replaying every transaction, so this is
-    // labelled as "as of today" rather than pretended to be
-    // historical.
-    const cashPosition = await sumConverted(
-      (bankAccounts as any[]).filter((a) => a.type === 'Office'),
-      (a) => a.currency,
-      (a) => a.balance,
-    );
+    const [
+      revenue,
+      expenses,
+      outstandingReceivables,
+      outstandingPayables,
+      cashPosition,
+    ] = await Promise.all([
+      toDisplay(pnl.totalRevenue),
+      toDisplay(pnl.totalExpenses),
+      toDisplay(outstandingReceivablesBase),
+      toDisplay(outstandingPayablesBase),
+      toDisplay(cashPositionBase),
+    ]);
 
     return {
       periodLabel: label,
@@ -160,8 +153,6 @@ export class ManagementReportingService {
       outstandingReceivables: Number(outstandingReceivables.toFixed(2)),
       outstandingPayables: Number(outstandingPayables.toFixed(2)),
       cashPosition: Number(cashPosition.toFixed(2)),
-      invoiceCount: periodInvoices.length,
-      billCount: periodBills.length,
     };
   }
 

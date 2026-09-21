@@ -33,6 +33,7 @@ export interface QuotePdfData {
   currency: string;
   issued: Date;
   expires: Date;
+  termsAndConditions?: string;
   // Real tenant branding — never the platform's own name. Logo if
   // they've set one, business name as text either way, same
   // convention the purchase order PDF already established.
@@ -220,7 +221,32 @@ export function buildQuotePdf(data: QuotePdfData): Promise<Buffer> {
       },
     );
 
-    doc.moveDown(3);
+    if (data.termsAndConditions?.trim()) {
+      doc.moveDown(1.2);
+      doc
+        .moveTo(50, doc.y)
+        .lineTo(50 + contentWidth, doc.y)
+        .lineWidth(1)
+        .strokeColor(GOLD)
+        .stroke();
+      doc.moveDown(0.5);
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(9)
+        .fillColor(PURPLE)
+        .text('TERMS & CONDITIONS', 50, doc.y, { characterSpacing: 0.5 });
+      doc.moveDown(0.3);
+      doc
+        .font('Helvetica')
+        .fontSize(9)
+        .fillColor(MUTED)
+        .text(data.termsAndConditions.trim(), 50, doc.y, {
+          width: contentWidth,
+          lineGap: 2,
+        });
+    }
+
+    doc.moveDown(1.2);
     doc
       .font('Helvetica')
       .fontSize(9)

@@ -793,6 +793,56 @@ export class InvoiceService {
     return this.normalize(i.toObject());
   }
 
+  // Real settlement path for a bank-feed transaction matched directly
+  // to an invoice (BankTransactionService.match) — the counterpart to
+  // applyPayment() for the "Record payment" button. The difference:
+  // that bank transaction already exists and already posted its own
+  // cash-side GL entry the moment it was recorded, so this doesn't
+  // create a second BankTransaction or post a fresh Dr Bank/Cr AR
+  // pair (that would double the cash movement). BankTransactionService
+  // handles correcting the GL after calling this, by reclassifying
+  // that transaction's contra leg onto Accounts receivable — this
+  // method only updates the invoice's own paid state, same
+  // paidAmount/stage logic as applyPayment.
+  async markPaidViaBankMatch(tenantId: string, id: string, amount: number) {
+    const i = await this.getRawDoc(tenantId, id);
+    const totals = this.computeTotals(i.toObject());
+    i.paidAmount = i.paidAmount + amount;
+    i.stage =
+      i.paidAmount >= totals.payable
+        ? InvoiceStage.PAID
+        : InvoiceStage.PART_PAID;
+    if (
+      i.stage === InvoiceStage.PAID &&
+      i.clientAction === ClientInvoiceAction.PAID
+    ) {
+      i.clientAction = null;
+      i.clientActionAt = null;
+      i.clientActionNote = null;
+    }
+    await i.save();
+
+    this.eventEmitter.emit('client.invoice.paid', {
+      tenantId,
+      clientUserId: String(i.clientUserId),
+      invoiceId: String(i._id),
+      ref: i.ref,
+      amount,
+      currency: i.currency,
+    });
+    this.eventEmitter.emit('tenant.invoice.paid', {
+      tenantId,
+      clientUserId: String(i.clientUserId),
+      clientName: i.clientName,
+      invoiceId: String(i._id),
+      ref: i.ref,
+      amount,
+      currency: i.currency,
+    });
+
+    return this.normalize(i.toObject());
+  }
+
   // Same shape as getAll, but by a specific set of ids rather than
   // filters — one round trip for PaymentPlanService to resolve every
   // instalment invoice a plan (or a page of plans) points to, instead
@@ -942,6 +992,16 @@ export class InvoiceService {
   // Writing off an invoice creates the third checkpoint of the real
   // write-off lifecycle — same WriteOff record type as a WIP write-
   // down or a credit note, not a separate concept.
+  //
+  // Unlike cancel(), this doesn't reverse Revenue/VAT — the service
+  // was genuinely delivered and billed, the client just isn't going
+  // to pay the outstanding part. So only the still-unpaid receivable
+  // is cleared, against Bad debt expense (Dr 6900 / Cr 1200,
+  // standard direct write-off treatment) — the revenue already
+  // recognised at send() stays recognised. Without this posting the
+  // AR debit from send() would sit on the books forever with nothing
+  // to clear it, which is exactly what was making the trial balance
+  // permanently unbalanced.
   async writeOff(
     tenantId: string,
     id: string,
@@ -951,6 +1011,41 @@ export class InvoiceService {
     const i = await this.getRawDoc(tenantId, id);
     const totals = this.computeTotals(i.toObject());
     const outstanding = totals.payable - i.paidAmount;
+    const wasPosted = [
+      InvoiceStage.SENT,
+      InvoiceStage.PART_PAID,
+      InvoiceStage.OVERDUE,
+    ].includes(i.stage);
+
+    if (wasPosted && outstanding > 0) {
+      await this.glPostingService.post(
+        tenantId,
+        [
+          {
+            date: new Date(),
+            ref: i.ref,
+            description: `${i.clientName} — written off`,
+            accountCode: GL_ACCOUNTS.BAD_DEBT_EXPENSE.code,
+            accountName: GL_ACCOUNTS.BAD_DEBT_EXPENSE.name,
+            source: GlSource.SALES,
+            debit: outstanding,
+            sourceId: i._id,
+          },
+          {
+            date: new Date(),
+            ref: i.ref,
+            description: `${i.clientName} — written off`,
+            accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.code,
+            accountName: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.name,
+            source: GlSource.SALES,
+            credit: outstanding,
+            sourceId: i._id,
+          },
+        ],
+        i.currency,
+      );
+    }
+
     i.stage = InvoiceStage.WRITTEN_OFF;
     i.writeOffReason = reason;
     await i.save();

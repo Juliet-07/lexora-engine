@@ -87,6 +87,10 @@ export class Quote {
   // A real breakdown for the client to read — what's actually
   // included, not just a single line-item title.
   @Prop({ default: '' }) description: string;
+  // Captured at quote creation, per the product owner's ask — shown
+  // on the quote PDF/email the client actually receives, not just
+  // stored invisibly.
+  @Prop({ default: '' }) termsAndConditions: string;
   @Prop({ required: true }) amount: number;
   @Prop({ default: 0, min: 0, max: 100 }) vatPercent: number;
   @Prop({ default: 0 }) vatAmount: number;

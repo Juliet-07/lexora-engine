@@ -21,8 +21,11 @@ import {
   RecurringInvoice,
   RecurringInvoiceDocument,
   RecurringStatus,
+  GlSource,
+  InvoiceStage,
 } from '../schemas';
 import { InvoiceService } from './invoice.service';
+import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
 import {
   CreateCreditNoteDto,
   CreateQuoteDto,
@@ -123,6 +126,7 @@ export class CreditNoteService {
     private readonly model: Model<CreditNoteDocument>,
     private readonly invoiceService: InvoiceService,
     private readonly writeOffService: WriteOffService,
+    private readonly glPostingService: GlPostingService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -146,6 +150,14 @@ export class CreditNoteService {
   // real accounting practice. It's the second checkpoint of the
   // consolidated write-off lifecycle, same record type as a WIP
   // write-down or a bad-debt write-off.
+  //
+  // Unlike a bad-debt write-off, a credit note means the firm no
+  // longer expects that revenue at all (a correction, discount or
+  // refund) — so it reverses Revenue, not Bad debt expense: Dr 4200
+  // Fee income / Cr 1200 Accounts receivable, for the credited
+  // amount. Without this the invoice's original Dr AR / Cr Revenue
+  // posting from send() would never clear for the credited portion,
+  // the same permanent-imbalance gap that write-offs had.
   async create(tenantId: string, dto: CreateCreditNoteDto) {
     const invoice: any = await this.invoiceService.getById(
       tenantId,
@@ -163,6 +175,42 @@ export class CreditNoteService {
       reason: dto.reason,
       approvedBy: dto.approvedBy,
     });
+
+    const wasPosted = [
+      InvoiceStage.SENT,
+      InvoiceStage.PART_PAID,
+      InvoiceStage.OVERDUE,
+      InvoiceStage.PAID,
+    ].includes(invoice.stage);
+    if (wasPosted && dto.amount > 0) {
+      await this.glPostingService.post(
+        tenantId,
+        [
+          {
+            date: new Date(),
+            ref,
+            description: `${invoice.clientName} — credit note against ${invoice.ref}`,
+            accountCode: GL_ACCOUNTS.REVENUE.code,
+            accountName: GL_ACCOUNTS.REVENUE.name,
+            source: GlSource.SALES,
+            debit: dto.amount,
+            sourceId: created._id,
+          },
+          {
+            date: new Date(),
+            ref,
+            description: `${invoice.clientName} — credit note against ${invoice.ref}`,
+            accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.code,
+            accountName: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE.name,
+            source: GlSource.SALES,
+            credit: dto.amount,
+            sourceId: created._id,
+          },
+        ],
+        invoice.currency,
+      );
+    }
+
     await this.writeOffService.record(tenantId, {
       stage: WriteOffStage.CREDIT_NOTE,
       reference: ref,
@@ -241,6 +289,7 @@ export class QuoteService {
       mandateId: dto.mandateId ? new Types.ObjectId(dto.mandateId) : null,
       title: dto.title,
       description: dto.description ?? '',
+      termsAndConditions: dto.termsAndConditions ?? '',
       amount: dto.amount,
       vatPercent,
       vatAmount,
@@ -347,6 +396,7 @@ export class QuoteService {
       clientName: q.clientName,
       title: q.title,
       description: q.description,
+      termsAndConditions: q.termsAndConditions,
       amount: q.amount,
       vatPercent: q.vatPercent,
       vatAmount: q.vatAmount,

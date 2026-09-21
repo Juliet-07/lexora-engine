@@ -84,6 +84,7 @@ export class BankAccountService {
     private readonly txModel: Model<BankTransactionDocument>,
     @InjectModel(Transfer.name)
     private readonly transferModel: Model<TransferDocument>,
+    private readonly glPostingService: GlPostingService,
   ) {}
 
   // Balance is never stored — it's openingBalance plus every real
@@ -134,6 +135,16 @@ export class BankAccountService {
     );
   }
 
+  // A nonzero opening balance is real money the tenant is telling us
+  // is already sitting in this account — same principle as every
+  // other real cash movement in this app, it gets a real journal
+  // entry (Dr the bank's GL account / Cr Partners' capital, the
+  // standard "opening balance equity" treatment) rather than only
+  // ever showing up in this account's own live-computed balance.
+  // Without this, a tenant who starts using Lexora mid-year with
+  // existing bank balances would see their bank tiles and their
+  // books (Chart of accounts / Financials) permanently disagree by
+  // exactly that opening amount.
   async create(tenantId: string, dto: CreateBankAccountDto) {
     const created = await this.model.create({
       tenantId: new Types.ObjectId(tenantId),
@@ -144,6 +155,46 @@ export class BankAccountService {
       openingBalance: dto.openingBalance ?? 0,
       type: dto.type,
     });
+
+    if (dto.openingBalance) {
+      const bankGlAccount =
+        dto.type === 'Trust'
+          ? GL_ACCOUNTS.BANK_TRUST
+          : dto.type === 'Fund'
+            ? GL_ACCOUNTS.BANK_FUND
+            : GL_ACCOUNTS.BANK_OPERATING;
+      const isPositive = dto.openingBalance > 0;
+      const magnitude = Math.abs(dto.openingBalance);
+      await this.glPostingService.post(
+        tenantId,
+        [
+          {
+            date: new Date(),
+            ref: `${dto.name} — opening balance`,
+            description: `${dto.name} — opening balance`,
+            accountCode: bankGlAccount.code,
+            accountName: bankGlAccount.name,
+            source: GlSource.BANKING,
+            debit: isPositive ? magnitude : 0,
+            credit: isPositive ? 0 : magnitude,
+            sourceId: created._id,
+          },
+          {
+            date: new Date(),
+            ref: `${dto.name} — opening balance`,
+            description: `${dto.name} — opening balance`,
+            accountCode: '3000',
+            accountName: "Partners' capital",
+            source: GlSource.BANKING,
+            debit: isPositive ? 0 : magnitude,
+            credit: isPositive ? magnitude : 0,
+            sourceId: created._id,
+          },
+        ],
+        dto.currency ?? 'USD',
+      );
+    }
+
     return { ...created.toObject(), balance: dto.openingBalance ?? 0 };
   }
 }
@@ -160,6 +211,7 @@ export class BankTransactionService {
     private readonly ruleService: BankRuleService,
     private readonly glPostingService: GlPostingService,
     private readonly billService: BillService,
+    private readonly invoiceService: InvoiceService,
   ) {}
 
   async getAll(tenantId: string, accountId?: string) {
@@ -285,6 +337,39 @@ export class BankTransactionService {
       await this.billService.markPaidViaBankMatch(tenantId, dto.linkId);
     }
 
+    // Same real settlement for the money-in side: a bank line matched
+    // to an Invoice marks it paid, then corrects the GL entry this
+    // transaction already posted at create() time — its cash side
+    // (the bank account) was always right, but its contra side was
+    // only ever a guess (a Bank Rule's suggestion, or General
+    // expenses by default) until now, when we actually know it was
+    // this invoice's receivable clearing.
+    if (dto.linkType === TxLinkType.INVOICE_PAYMENT && dto.linkId) {
+      await this.invoiceService.markPaidViaBankMatch(
+        tenantId,
+        dto.linkId,
+        Math.abs(tx.amount),
+      );
+      const account = await this.accountModel
+        .findOne({ _id: tx.accountId, tenantId: new Types.ObjectId(tenantId) })
+        .lean();
+      const bankGlAccount =
+        account?.type === 'Trust'
+          ? GL_ACCOUNTS.BANK_TRUST
+          : account?.type === 'Fund'
+            ? GL_ACCOUNTS.BANK_FUND
+            : GL_ACCOUNTS.BANK_OPERATING;
+      await this.glPostingService.reclassifyContra(
+        tenantId,
+        tx._id,
+        bankGlAccount.code,
+        GL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+        tx.date,
+        dto.linkLabel || tx.description,
+        `${tx.description} — matched to ${dto.linkLabel || 'invoice'}`,
+      );
+    }
+
     return tx.toObject();
   }
 }
@@ -298,6 +383,7 @@ export class TransferService {
     private readonly model: Model<TransferDocument>,
     @InjectModel(BankAccount.name)
     private readonly accountModel: Model<BankAccountDocument>,
+    private readonly glPostingService: GlPostingService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -314,6 +400,17 @@ export class TransferService {
 
   // Real accounts on both ends, resolved server-side — a transfer
   // between an account that doesn't exist isn't a transfer at all.
+  //
+  // A transfer is real money moving, so it posts to the GL like
+  // every other cash movement — Dr the receiving account's GL code /
+  // Cr the sending one's. When both accounts are the same type (two
+  // Office accounts, say), both legs land on the same pooled GL code
+  // (1110) and net to zero, which is correct: nothing left the firm.
+  // Between different types (Office → Trust), it correctly moves
+  // value from 1110 to 1120. Without this, every transfer would move
+  // each account's own live balance while leaving the general ledger
+  // completely unaware anything happened — another permanent gap
+  // between "Banking" and "Accounting".
   async create(tenantId: string, dto: CreateTransferDto) {
     const tId = new Types.ObjectId(tenantId);
     const [fromAccount, toAccount] = await Promise.all([
@@ -340,6 +437,43 @@ export class TransferService {
       reference: dto.reference ?? '',
       authoriser: dto.authoriser,
     });
+
+    const glAccountFor = (account: { type?: string }) =>
+      account.type === 'Trust'
+        ? GL_ACCOUNTS.BANK_TRUST
+        : account.type === 'Fund'
+          ? GL_ACCOUNTS.BANK_FUND
+          : GL_ACCOUNTS.BANK_OPERATING;
+    const fromGl = glAccountFor(fromAccount);
+    const toGl = glAccountFor(toAccount);
+
+    await this.glPostingService.post(
+      tenantId,
+      [
+        {
+          date: created.date,
+          ref,
+          description: `Transfer to ${toAccount.name}`,
+          accountCode: toGl.code,
+          accountName: toGl.name,
+          source: GlSource.BANKING,
+          debit: dto.amount,
+          sourceId: created._id,
+        },
+        {
+          date: created.date,
+          ref,
+          description: `Transfer from ${fromAccount.name}`,
+          accountCode: fromGl.code,
+          accountName: fromGl.name,
+          source: GlSource.BANKING,
+          credit: dto.amount,
+          sourceId: created._id,
+        },
+      ],
+      fromAccount.currency,
+    );
+
     return created.toObject();
   }
 }
