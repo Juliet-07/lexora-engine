@@ -339,6 +339,37 @@ export class InvoiceService {
       );
     }
 
+    // Multi-currency rate cards mean selected WIP entries can each
+    // carry their own real currency (set from the employee's rate
+    // card at the time the hours were logged). An invoice is still
+    // one document in one currency (matching Invoice.currency /
+    // Quote.currency elsewhere in Finance), so a mixed-currency
+    // selection is rejected outright rather than silently summing
+    // incompatible numbers together — the tenant re-selects per
+    // currency and issues one invoice per currency instead.
+    const selectionCurrencies = new Set<string>([
+      ...entries.map((e: any) => (e.currency || 'USD').toUpperCase()),
+      ...selectedDisbursements.map((d: any) =>
+        (d.currency || 'USD').toUpperCase(),
+      ),
+    ]);
+    if (selectionCurrencies.size > 1) {
+      throw new BadRequestException(
+        `Selected WIP entries span more than one currency (${[...selectionCurrencies].join(', ')}) — invoice each currency separately.`,
+      );
+    }
+    const wipCurrency = [...selectionCurrencies][0];
+    if (
+      dto.currency &&
+      wipCurrency &&
+      dto.currency.toUpperCase() !== wipCurrency
+    ) {
+      throw new BadRequestException(
+        `Requested invoice currency (${dto.currency}) doesn't match the selected WIP entries' currency (${wipCurrency}).`,
+      );
+    }
+    const invoiceCurrency = wipCurrency || dto.currency || 'USD';
+
     const timeLines = entries.map((e: any) => {
       const isWrittenDown = e.billingStatus === WipBillingStatus.WRITTEN_DOWN;
       return {
@@ -364,7 +395,7 @@ export class InvoiceService {
       clientName: mandate.clientName,
       mandateId: new Types.ObjectId(dto.mandateId),
       mandateName: mandate.name,
-      currency: dto.currency ?? 'USD',
+      currency: invoiceCurrency,
       vatRate: dto.vatRate ?? 18,
       whtRate: dto.whtRate ?? 0,
       discount: 0,

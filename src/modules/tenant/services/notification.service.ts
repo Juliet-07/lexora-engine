@@ -421,6 +421,28 @@ export class TenantNotificationService {
     );
   }
 
+  @OnEvent('finance.tax_obligation_reminder')
+  async onTaxObligationReminder(e: {
+    tenantId: string;
+    type: string;
+    period: string;
+    amountLabel: string;
+    dueOn: Date;
+  }) {
+    // The branded reminder email is already sent directly by
+    // TaxObligationReminderService — this only creates the in-app
+    // portal record, so skipEmail avoids a duplicate send.
+    await this.create(
+      e.tenantId,
+      e.tenantId,
+      TenantNotificationType.GENERAL,
+      `Tax obligation due — ${e.type} (${e.period})`,
+      `${e.amountLabel} due ${new Date(e.dueOn).toLocaleDateString()}.`,
+      '/finance/tax',
+      true,
+    );
+  }
+
   @OnEvent('tenant.vendor_approval.decided')
   async onVendorApprovalDecided(e: {
     tenantId: string;

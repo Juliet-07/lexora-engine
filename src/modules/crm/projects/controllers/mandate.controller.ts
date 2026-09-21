@@ -88,6 +88,19 @@ export class MandateController {
     return this.service.clearConflictCheck(t || u, id);
   }
 
+  @Post(':id/rerun-conflict-check')
+  @ApiOperation({
+    summary:
+      'Re-run the automated conflict search against clients and other mandates',
+  })
+  rerunConflictCheck(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.rerunConflictCheck(t || u, id);
+  }
+
   @Patch(':id/closure/:itemId')
   @ApiOperation({ summary: 'Toggle a closure checklist item' })
   setClosureItem(

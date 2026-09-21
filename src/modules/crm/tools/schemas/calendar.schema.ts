@@ -27,6 +27,8 @@ export enum RecurrenceRule {
   DAILY = 'Daily',
   WEEKLY = 'Weekly',
   MONTHLY = 'Monthly',
+  QUARTERLY = 'Quarterly',
+  ANNUALLY = 'Annually',
 }
 export enum VirtualProvider {
   TEAMS = 'Teams',

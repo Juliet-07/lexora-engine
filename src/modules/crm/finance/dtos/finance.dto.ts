@@ -127,6 +127,7 @@ export class CreateQuoteDto {
   @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
   @ApiProperty() @IsString() title: string;
   @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() termsAndConditions?: string;
   @ApiProperty() @IsNumber() @Min(0) amount: number;
   @ApiPropertyOptional()
   @IsOptional()
@@ -309,6 +310,11 @@ export class CreateTaxObligationDto {
   @ApiProperty() @IsString() period: string;
   @ApiProperty() @IsDateString() dueOn: string;
   @ApiProperty() @IsNumber() amount: number;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() recurring?: boolean;
+  @ApiPropertyOptional({ enum: RecurringFrequency })
+  @IsOptional()
+  @IsEnum(RecurringFrequency)
+  frequency?: RecurringFrequency;
 }
 
 // ── Accounting: chart of accounts ────────────────────────────

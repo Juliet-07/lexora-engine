@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import { RecurringFrequency } from './sales.schema';
 
 // ── WHT register — the single source of truth for withholding tax.
 // Bill payments to WHT-liable vendors and invoices with a whtRate
@@ -78,5 +79,17 @@ export class TaxObligation {
   })
   status: TaxObligationStatus;
   @Prop({ default: null }) filedAt: Date | null;
+
+  // Recurring obligations — set at creation. When recurring, this
+  // record is the current head of a chain: TaxObligationReminderService
+  // watches nextDueOn and, once it's within the reminder window,
+  // creates the next period's obligation (a new head, with its own
+  // nextDueOn), files a Finance calendar entry for it, sends the
+  // reminder email/portal notification, and clears nextDueOn here so
+  // this record is never processed again.
+  @Prop({ default: false }) recurring: boolean;
+  @Prop({ enum: RecurringFrequency, default: null })
+  frequency: RecurringFrequency | null;
+  @Prop({ default: null }) nextDueOn: Date | null;
 }
 export const TaxObligationSchema = SchemaFactory.createForClass(TaxObligation);

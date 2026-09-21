@@ -30,12 +30,15 @@ export class CreateMandateDto {
 
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
 
-  // Purely informational right now (no real task-generation system
-  // yet) — echoed back in the create response so the frontend's
-  // "template applied" toast has real numbers rather than guessed
-  // ones, exactly like the confirmed prototype's own toast.
-  @ApiPropertyOptional() @IsOptional() @IsString() templateName?: string;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() templateTaskCount?: number;
+  // Other named parties on this engagement (counterparties, related
+  // entities) — feeds the automated conflict search alongside the
+  // client name. No template/engagement-letter generation exists in
+  // the system, so nothing here echoes a "template applied" claim.
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  parties?: string[];
 }
 
 export class UpdateMandateDto {
@@ -58,6 +61,11 @@ export class UpdateMandateDto {
   @IsEnum(FeeStructure)
   feeStructure?: FeeStructure;
   @ApiPropertyOptional() @IsOptional() @IsNumber() progress?: number;
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  parties?: string[];
 }
 
 export class ClearConflictCheckDto {}

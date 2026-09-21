@@ -50,11 +50,11 @@ export const MANDATE_STAGE_META: Record<
 > = {
   [MandateStage.CREATE]: {
     owner: 'Partner',
-    trigger: 'Mandate created, template applied, conflict check queued.',
+    trigger: 'Mandate created — conflict check queued for partner review.',
   },
   [MandateStage.SETUP]: {
     owner: 'Manager',
-    trigger: 'Conflict check cleared — engagement letter and team setup.',
+    trigger: 'Conflict check cleared — team and delivery setup.',
   },
   [MandateStage.DELIVER]: {
     owner: 'Team',
@@ -105,13 +105,35 @@ export class Milestone {
 }
 export const MilestoneSchema = SchemaFactory.createForClass(Milestone);
 
-@Schema({ _id: false })
+// Previously `{ _id: false }`, which meant every closure checklist
+// item was created with no id at all — the frontend's toggle
+// (PATCH .../closure/:itemId) had nothing real to address, so no
+// item could ever be marked done and Close stayed permanently
+// disabled. Subdocuments now get their normal auto _id; existing
+// mandates created before this fix are healed in place the first
+// time they're loaded (see MandateService.healClosureChecklist).
+@Schema()
 export class ClosureChecklistItem {
   @Prop({ required: true }) label: string;
   @Prop({ default: false }) done: boolean;
 }
 export const ClosureChecklistItemSchema =
   SchemaFactory.createForClass(ClosureChecklistItem);
+
+// One hit from the automated conflict search — a name on the new
+// mandate (its client, or one of its other named parties) that
+// matched an existing client or another mandate's parties closely
+// enough to need a partner's eyes before the check can be cleared.
+@Schema({ timestamps: false })
+export class ConflictHit {
+  @Prop({ required: true }) matchedAgainst: string; // which name on *this* mandate triggered it
+  @Prop({ required: true, enum: ['client', 'mandate'] }) source: string;
+  @Prop({ required: true }) matchedName: string; // the existing client/party name it matched
+  @Prop() clientUserId?: string;
+  @Prop() mandateId?: string;
+  @Prop() mandateRef?: string;
+}
+export const ConflictHitSchema = SchemaFactory.createForClass(ConflictHit);
 
 @Schema({ timestamps: true, collection: 'crm_mandates' })
 export class Mandate {
@@ -157,6 +179,18 @@ export class Mandate {
   @Prop({ default: 0, min: 0, max: 100 }) progress: number;
   @Prop({ enum: ConflictCheckStatus, default: ConflictCheckStatus.PENDING })
   conflictCheck: ConflictCheckStatus;
+
+  // Other named parties on this engagement (counterparties, related
+  // entities, etc.) beyond the primary client — entered at creation
+  // so the conflict search has real names to cross-reference, not
+  // just the one client field.
+  @Prop({ type: [String], default: [] }) parties: string[];
+  // Populated by MandateService.runConflictSearch — real matches
+  // against existing clients and other mandates, not a blind status
+  // flip. Empty means the search ran and found nothing.
+  @Prop({ type: [ConflictHitSchema], default: [] })
+  conflictHits: Types.DocumentArray<ConflictHit>;
+
   @Prop({ default: 'USD' }) currency: string;
 
   @Prop({ type: [ClosureChecklistItemSchema], default: [] })

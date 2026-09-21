@@ -5,6 +5,7 @@ import {
   TaxObligation,
   TaxObligationDocument,
   TaxObligationStatus,
+  RecurringFrequency,
 } from '../schemas';
 import { EbmStatus } from '../schemas';
 import { CreateTaxObligationDto } from '../dtos';
@@ -14,6 +15,50 @@ import { PayrollRunService } from 'src/modules/hr/services/payroll-run.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { ExchangeRateService } from 'src/modules/hr/services/exchange-rate.service';
+import {
+  CalendarEvent,
+  CalendarEventDocument,
+  CalendarLayer,
+  RecurrenceRule,
+} from 'src/modules/crm/tools/schemas/calendar.schema';
+
+// ── Recurring tax obligations — shared date/label math used both
+// when a recurring obligation is first created and by
+// TaxObligationReminderService when it rolls the chain forward. ──
+
+export const FREQUENCY_MONTHS: Record<RecurringFrequency, number> = {
+  [RecurringFrequency.MONTHLY]: 1,
+  [RecurringFrequency.QUARTERLY]: 3,
+  [RecurringFrequency.ANNUALLY]: 12,
+};
+
+export const FREQUENCY_CALENDAR_RULE: Record<
+  RecurringFrequency,
+  RecurrenceRule
+> = {
+  [RecurringFrequency.MONTHLY]: RecurrenceRule.MONTHLY,
+  [RecurringFrequency.QUARTERLY]: RecurrenceRule.QUARTERLY,
+  [RecurringFrequency.ANNUALLY]: RecurrenceRule.ANNUALLY,
+};
+
+export function addInterval(date: Date, frequency: RecurringFrequency): Date {
+  const d = new Date(date);
+  d.setMonth(d.getMonth() + FREQUENCY_MONTHS[frequency]);
+  return d;
+}
+
+export function periodLabelFor(
+  date: Date,
+  frequency: RecurringFrequency,
+): string {
+  const year = date.getFullYear();
+  if (frequency === RecurringFrequency.ANNUALLY) return String(year);
+  if (frequency === RecurringFrequency.QUARTERLY) {
+    const quarter = Math.floor(date.getMonth() / 3) + 1;
+    return `${year}-Q${quarter}`;
+  }
+  return date.toISOString().slice(0, 7); // YYYY-MM
+}
 
 // ── VAT — real output VAT from invoices, real input VAT from bills ──
 
@@ -267,6 +312,8 @@ export class TaxObligationService {
     private readonly model: Model<TaxObligationDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    @InjectModel(CalendarEvent.name)
+    private readonly calendarEventModel: Model<CalendarEventDocument>,
     private readonly emailService: EmailService,
   ) {}
 
@@ -282,13 +329,29 @@ export class TaxObligationService {
   // the send fails (bad address, SMTP hiccup) the obligation is
   // still created; the tenant sees it on the calendar regardless
   // and email delivery doesn't block the record existing.
+  //
+  // When recurring is set, this obligation is filed on the shared
+  // Finance calendar (so it shows up alongside every other calendar
+  // layer) and becomes the head of a chain: TaxObligationService
+  // stores nextDueOn on it, and TaxObligationReminderService's daily
+  // cron watches that date — once it's within the reminder window,
+  // it creates the next period's obligation (repeating this same
+  // create-time work: email + calendar entry) and rolls the chain
+  // forward.
   async create(tenantId: string, dto: CreateTaxObligationDto) {
+    const dueOn = new Date(dto.dueOn);
+    const recurring = !!dto.recurring && !!dto.frequency;
+    const nextDueOn = recurring ? addInterval(dueOn, dto.frequency!) : null;
+
     const created = await this.model.create({
       tenantId: new Types.ObjectId(tenantId),
       type: dto.type,
       period: dto.period,
-      dueOn: new Date(dto.dueOn),
+      dueOn,
       amount: dto.amount,
+      recurring,
+      frequency: recurring ? dto.frequency : null,
+      nextDueOn,
     });
 
     const tenant = await this.userModel.findById(tenantId).lean();
@@ -307,6 +370,22 @@ export class TaxObligationService {
           period: dto.period,
           dueOn: created.dueOn,
           amount: dto.amount,
+        })
+        .catch(() => undefined);
+    }
+
+    if (recurring) {
+      await this.calendarEventModel
+        .create({
+          tenantId: new Types.ObjectId(tenantId),
+          title: `${dto.type} due — ${dto.period}`,
+          date: created.dueOn.toISOString().slice(0, 10),
+          time: '09:00',
+          layer: CalendarLayer.FINANCE,
+          recurrence: FREQUENCY_CALENDAR_RULE[dto.frequency!],
+          createdBy: firmName,
+          sourceType: 'TaxObligation',
+          sourceId: created._id,
         })
         .catch(() => undefined);
     }

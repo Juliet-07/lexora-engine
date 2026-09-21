@@ -22,12 +22,72 @@ import {
   UpdateMilestoneDto,
 } from '../dtos';
 import { TimeEntryService } from './time-entry.service';
+import { User, UserDocument } from '../../../auth/schemas/user.schema';
+import { UserType } from '../../../../common/interfaces/user-role.enum';
+
+// Legal-entity suffixes and generic words that would otherwise make
+// almost every company name "match" almost every other one — dropped
+// before comparing so the conflict search is looking at the part of
+// the name that's actually distinctive.
+const NAME_NOISE_WORDS = new Set([
+  'the',
+  'and',
+  'ltd',
+  'limited',
+  'llc',
+  'inc',
+  'incorporated',
+  'corp',
+  'corporation',
+  'co',
+  'company',
+  'group',
+  'holdings',
+  'holding',
+  'plc',
+  'llp',
+  'partners',
+  'international',
+]);
+
+const normalizeName = (raw: string): string =>
+  raw
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const significantTokens = (raw: string): string[] =>
+  normalizeName(raw)
+    .split(' ')
+    .filter((t) => t.length >= 3 && !NAME_NOISE_WORDS.has(t));
+
+// True when two names are close enough to warrant a partner's eyes:
+// exact match once normalized, one fully contains the other, or they
+// share at least two distinctive words (or their only distinctive
+// word, for short names).
+function namesConflict(a: string, b: string): boolean {
+  const na = normalizeName(a);
+  const nb = normalizeName(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  if (na.length > 4 && nb.length > 4 && (na.includes(nb) || nb.includes(na)))
+    return true;
+  const ta = significantTokens(a);
+  const tb = significantTokens(b);
+  if (!ta.length || !tb.length) return false;
+  const shared = ta.filter((t) => tb.includes(t));
+  const needed = Math.min(ta.length, tb.length) === 1 ? 1 : 2;
+  return shared.length >= needed;
+}
 
 @Injectable()
 export class MandateService {
   constructor(
     @InjectModel(Mandate.name)
     private readonly model: Model<MandateDocument_>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
     private readonly timeEntryService: TimeEntryService,
   ) {}
 
@@ -73,11 +133,30 @@ export class MandateService {
     };
   }
 
+  // Heals mandates created back when ClosureChecklistItem's schema had
+  // `_id: false` — those stored items have no id for the toggle
+  // endpoint to address, so Close stays stuck forever until this
+  // runs once. Re-creating the subdocuments under the current schema
+  // gives each a real auto _id; a no-op once a mandate's already
+  // healed. Returns true if it had to write.
+  private async healClosureChecklist(m: MandateDocument_): Promise<boolean> {
+    const needsHeal = m.closureChecklist.some((c: any) => !c._id);
+    if (!needsHeal) return false;
+    m.closureChecklist = m.closureChecklist.map((c: any) => ({
+      label: c.label,
+      done: c.done,
+    })) as any;
+    await m.save();
+    return true;
+  }
+
   async getAll(tenantId: string) {
-    const rows = await this.model
-      .find({ tenantId: new Types.ObjectId(tenantId) })
-      .sort({ createdAt: -1 })
-      .lean();
+    const tId = new Types.ObjectId(tenantId);
+    const docs = await this.model.find({ tenantId: tId }).sort({
+      createdAt: -1,
+    });
+    await Promise.all(docs.map((d) => this.healClosureChecklist(d)));
+    const rows = docs.map((d) => d.toObject());
     const [wipMap, actualCostMap] = await Promise.all([
       this.timeEntryService.getApprovedBillableValueByMandateIds(
         tenantId,
@@ -100,11 +179,8 @@ export class MandateService {
   }
 
   async getById(tenantId: string, id: string) {
-    const m = await this.model
-      .findOne({ _id: id, tenantId: new Types.ObjectId(tenantId) })
-      .lean();
-    if (!m) throw new NotFoundException('Mandate not found');
-    return this.normalize(m);
+    const m = await this.getRawDoc(tenantId, id);
+    return this.normalize(m.toObject());
   }
 
   private async getRawDoc(tenantId: string, id: string) {
@@ -113,12 +189,14 @@ export class MandateService {
       tenantId: new Types.ObjectId(tenantId),
     });
     if (!m) throw new NotFoundException('Mandate not found');
+    await this.healClosureChecklist(m);
     return m;
   }
 
   async create(tenantId: string, dto: CreateMandateDto) {
     const tId = new Types.ObjectId(tenantId);
     const ref = await this.nextRef(tId);
+    const parties = (dto.parties ?? []).map((p) => p.trim()).filter(Boolean);
     const created = await this.model.create({
       tenantId: tId,
       ref,
@@ -136,13 +214,92 @@ export class MandateService {
       budget: dto.budget,
       feeStructure: dto.feeStructure,
       currency: dto.currency ?? 'USD',
+      parties,
       closureChecklist: DEFAULT_CLOSURE_CHECKLIST.map((label) => ({
         label,
         done: false,
       })),
     });
+    await this.runConflictSearch(tId, created);
     // A brand-new mandate has no time entries yet — 0 without a query.
     return this.normalize(created.toObject(), 0, 0);
+  }
+
+  // The real check the product owner asked for: cross-references this
+  // mandate's client + named parties against every other client on
+  // the tenant and every other mandate's client/parties, rather than
+  // a button that just flips Pending → Cleared with nothing behind
+  // it. Clears automatically when nothing matches; leaves it Pending
+  // with the hits recorded for a partner to review when something
+  // does, so `clearConflictCheck` remains a real, informed decision.
+  private async runConflictSearch(
+    tenantId: Types.ObjectId,
+    m: MandateDocument_,
+  ): Promise<void> {
+    const searchNames = [m.clientName, ...(m.parties ?? [])].filter(Boolean);
+    if (!searchNames.length) return;
+
+    const [clients, otherMandates] = await Promise.all([
+      this.userModel
+        .find({
+          tenantId,
+          userType: UserType.CLIENT,
+          _id: { $ne: m.clientUserId },
+        })
+        .select('_id businessName firstName lastName')
+        .lean(),
+      this.model
+        .find({ tenantId, _id: { $ne: m._id } })
+        .select('_id ref clientName parties')
+        .lean(),
+    ]);
+
+    const hits: any[] = [];
+    for (const needle of searchNames) {
+      for (const c of clients) {
+        const candidateName =
+          (c as any).businessName ||
+          [(c as any).firstName, (c as any).lastName].filter(Boolean).join(' ');
+        if (candidateName && namesConflict(needle, candidateName)) {
+          hits.push({
+            matchedAgainst: needle,
+            source: 'client',
+            matchedName: candidateName,
+            clientUserId: String((c as any)._id),
+          });
+        }
+      }
+      for (const om of otherMandates) {
+        const candidates = [om.clientName, ...(om.parties ?? [])].filter(
+          Boolean,
+        );
+        for (const candidateName of candidates) {
+          if (namesConflict(needle, candidateName)) {
+            hits.push({
+              matchedAgainst: needle,
+              source: 'mandate',
+              matchedName: candidateName,
+              mandateId: String(om._id),
+              mandateRef: om.ref,
+            });
+          }
+        }
+      }
+    }
+
+    m.conflictHits = hits as any;
+    m.conflictCheck = hits.length
+      ? ConflictCheckStatus.PENDING
+      : ConflictCheckStatus.CLEARED;
+    await m.save();
+  }
+
+  // Lets a partner re-run the search on demand — e.g. after editing
+  // the mandate's parties, or simply to double-check before clearing.
+  async rerunConflictCheck(tenantId: string, id: string) {
+    const m = await this.getRawDoc(tenantId, id);
+    await this.runConflictSearch(new Types.ObjectId(tenantId), m);
+    return this.normalize(m.toObject());
   }
 
   async update(tenantId: string, id: string, dto: UpdateMandateDto) {
@@ -162,6 +319,7 @@ export class MandateService {
     // UpdateMandateDto.
     if (dto.feeStructure !== undefined) m.feeStructure = dto.feeStructure;
     if (dto.progress !== undefined) m.progress = dto.progress;
+    if (dto.parties !== undefined) m.parties = dto.parties;
     await m.save();
     return this.normalize(m.toObject());
   }
