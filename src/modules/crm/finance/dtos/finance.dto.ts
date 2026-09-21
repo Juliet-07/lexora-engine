@@ -284,6 +284,12 @@ export class CreateBankRuleDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() auto?: boolean;
 }
 
+export class UpdateBankRuleDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() matchText?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() account?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() auto?: boolean;
+}
+
 export class CreateTransferDto {
   @ApiProperty() @IsMongoId() fromAccountId: string;
   @ApiProperty() @IsMongoId() toAccountId: string;
@@ -371,6 +377,16 @@ export class RecodeTransactionDto {
 
 export class CompletePeriodStepDto {
   @ApiProperty() @IsString() completedBy: string;
+}
+
+export class MarkStepNotApplicableDto {
+  @ApiProperty({
+    description:
+      'Why this step never applies to this tenant, e.g. "No Trust account"',
+  })
+  @IsString()
+  reason: string;
+  @ApiProperty() @IsString() by: string;
 }
 
 export class LockPeriodDto {

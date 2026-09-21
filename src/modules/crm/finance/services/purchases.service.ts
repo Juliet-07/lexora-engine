@@ -334,7 +334,13 @@ export class BillService {
     tenantId: string,
     dto: CreateBillDto,
     resolvedVendorName: string | null,
+    receiptFile?: Express.Multer.File,
   ) {
+    if (!receiptFile) {
+      throw new BadRequestException(
+        'Attach the vendor receipt/invoice (image or PDF) to capture a bill',
+      );
+    }
     const tId = new Types.ObjectId(tenantId);
     const ref = await this.nextRef(tId);
     const created = await this.model.create({
@@ -349,6 +355,8 @@ export class BillService {
       amount: dto.amount,
       currency: dto.currency ?? 'USD',
       recurring: dto.recurring ?? false,
+      receiptUrl: `/uploads/finance/bills/${receiptFile.filename}`,
+      receiptFileName: receiptFile.originalname,
     });
 
     if (created.recurring) {
@@ -374,6 +382,16 @@ export class BillService {
     });
     if (!b) throw new NotFoundException('Bill not found');
     return b;
+  }
+
+  // Replace the receipt/invoice document — same convention
+  // ExpenseClaim.attachReceipt already uses.
+  async attachReceipt(tenantId: string, id: string, file: Express.Multer.File) {
+    const b = await this.getRawDoc(tenantId, id);
+    b.receiptUrl = `/uploads/finance/bills/${file.filename}`;
+    b.receiptFileName = file.originalname;
+    await b.save();
+    return b.toObject();
   }
 
   async approve(tenantId: string, id: string, approvedBy: string) {

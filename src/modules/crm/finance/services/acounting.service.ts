@@ -739,6 +739,66 @@ export class PeriodCloseService {
         $set: {
           'steps.$.completedBy': completedBy,
           'steps.$.completedAt': new Date(),
+          'steps.$.notApplicable': false,
+          'steps.$.notApplicableReason': null,
+          'steps.$.notApplicableBy': null,
+        },
+      },
+      { new: true },
+    );
+    if (!updated) throw new NotFoundException('Period or step not found');
+    return updated.toObject();
+  }
+
+  // A step that will genuinely never apply to this tenant (e.g. no
+  // Trust account, so trust reconciliation has nothing to
+  // reconcile) — satisfies the lock gate the same as completing it,
+  // with the reason kept as the audit trail for why it was skipped.
+  async markNotApplicable(
+    tenantId: string,
+    period: string,
+    key: string,
+    reason: string,
+    by: string,
+  ) {
+    if (key === 'lock') {
+      throw new BadRequestException('The lock step itself cannot be skipped');
+    }
+    await this.getPeriod(tenantId, period);
+    const updated = await this.model.findOneAndUpdate(
+      { tenantId: new Types.ObjectId(tenantId), period, 'steps.key': key },
+      {
+        $set: {
+          'steps.$.notApplicable': true,
+          'steps.$.notApplicableReason': reason,
+          'steps.$.notApplicableBy': by,
+          'steps.$.completedBy': null,
+          'steps.$.completedAt': null,
+        },
+      },
+      { new: true },
+    );
+    if (!updated) throw new NotFoundException('Period or step not found');
+    return updated.toObject();
+  }
+
+  // Undo a mistaken "complete" or "not applicable" — puts the step
+  // back to pending. Only before the period is locked; a locked
+  // period's steps are the real historical record.
+  async resetStep(tenantId: string, period: string, key: string) {
+    const doc = await this.getPeriod(tenantId, period);
+    if (doc.locked) {
+      throw new BadRequestException('Period is locked — cannot change a step');
+    }
+    const updated = await this.model.findOneAndUpdate(
+      { tenantId: new Types.ObjectId(tenantId), period, 'steps.key': key },
+      {
+        $set: {
+          'steps.$.completedBy': null,
+          'steps.$.completedAt': null,
+          'steps.$.notApplicable': false,
+          'steps.$.notApplicableReason': null,
+          'steps.$.notApplicableBy': null,
         },
       },
       { new: true },
@@ -750,7 +810,7 @@ export class PeriodCloseService {
   async lock(tenantId: string, period: string, lockedBy: string) {
     const doc = await this.getPeriod(tenantId, period);
     const incomplete = doc.steps.filter(
-      (s) => s.key !== 'lock' && !s.completedBy,
+      (s) => s.key !== 'lock' && !s.completedBy && !s.notApplicable,
     );
     if (incomplete.length) {
       throw new BadRequestException(

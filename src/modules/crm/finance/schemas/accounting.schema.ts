@@ -183,6 +183,14 @@ export class PeriodCloseStep {
   @Prop({ required: true }) key: string;
   @Prop({ default: null }) completedBy: string | null;
   @Prop({ default: null }) completedAt: Date | null;
+  // Not every tenant has every kind of ledger — e.g. no Trust
+  // account means trust reconciliation will never have anything to
+  // complete. Marking a step N/A (with a reason, for the audit
+  // trail) satisfies the lock gate the same way completing it does,
+  // without pretending a reconciliation that never happened did.
+  @Prop({ default: false }) notApplicable: boolean;
+  @Prop({ default: null }) notApplicableReason: string | null;
+  @Prop({ default: null }) notApplicableBy: string | null;
 }
 export const PeriodCloseStepSchema =
   SchemaFactory.createForClass(PeriodCloseStep);

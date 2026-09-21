@@ -130,6 +130,14 @@ export class Bill {
   // this is what actually prevents a duplicate send in the same
   // month rather than lastReminderMilestone above.
   @Prop({ default: null }) lastRecurringReminderMonth: string | null;
+
+  // The real vendor receipt/invoice document — image or PDF —
+  // captured with the bill, same convention ExpenseClaim's
+  // receiptUrl already uses. Optional at the schema level (a bill
+  // predating this feature has none), but the create form requires
+  // it going forward.
+  @Prop({ default: null }) receiptUrl: string | null;
+  @Prop({ default: null }) receiptFileName: string | null;
 }
 export const BillSchema = SchemaFactory.createForClass(Bill);
 

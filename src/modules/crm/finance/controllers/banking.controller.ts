@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  Param,
+  Query,
+} from '@nestjs/common';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -18,6 +26,7 @@ import {
   CreateBankTransactionDto,
   MatchTransactionDto,
   CreateBankRuleDto,
+  UpdateBankRuleDto,
   CreateTransferDto,
   SetStatementBalanceDto,
   SignOffReconciliationDto,
@@ -124,6 +133,19 @@ export class BankRuleController {
   @ApiOperation({ summary: 'All bank rules' })
   getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
     return this.service.getAll(t || u);
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary: 'Edit a bank rule — description and/or ledger account',
+  })
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateBankRuleDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.update(t || u, id, dto);
   }
 }
 

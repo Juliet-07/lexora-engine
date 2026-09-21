@@ -24,6 +24,7 @@ import {
   PostJournalDto,
   RecodeTransactionDto,
   CompletePeriodStepDto,
+  MarkStepNotApplicableDto,
   LockPeriodDto,
   OverridePeriodLockDto,
   CreateAssetDto,
@@ -252,6 +253,41 @@ export class PeriodCloseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.completeStep(t || u, period, key, dto.completedBy);
+  }
+
+  @Post(':period/steps/:key/not-applicable')
+  @ApiOperation({
+    summary:
+      'Mark a step N/A for this tenant (e.g. no Trust account) — satisfies the lock gate without a real completion',
+  })
+  markNotApplicable(
+    @Param('period') period: string,
+    @Param('key') key: string,
+    @Body() dto: MarkStepNotApplicableDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.markNotApplicable(
+      t || u,
+      period,
+      key,
+      dto.reason,
+      dto.by,
+    );
+  }
+
+  @Post(':period/steps/:key/reset')
+  @ApiOperation({
+    summary:
+      'Undo a mistaken complete/N/A — puts the step back to pending (period must still be unlocked)',
+  })
+  resetStep(
+    @Param('period') period: string,
+    @Param('key') key: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.resetStep(t || u, period, key);
   }
 
   @Post(':period/lock')

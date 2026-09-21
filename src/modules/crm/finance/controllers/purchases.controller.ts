@@ -67,6 +67,20 @@ const expenseReceiptStorage = diskStorage({
   },
 });
 
+const billReceiptStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(process.cwd(), 'uploads', 'finance', 'bills');
+    if (!existsSync(uploadPath)) {
+      mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) => {
+    const ext = extname(file.originalname);
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
+
 const expenseReceiptFileFilter = (
   _req: any,
   file: Express.Multer.File,
@@ -212,12 +226,21 @@ export class BillController {
   ) {}
 
   @Post()
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: billReceiptStorage,
+      fileFilter: expenseReceiptFileFilter,
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary:
-      'Capture a bill — a real vendor invoice, or a general expense with no vendor at all',
+      'Capture a bill — a real vendor invoice, or a general expense with no vendor at all. The vendor receipt/invoice (image or PDF) is required.',
   })
   async create(
     @Body() dto: CreateBillDto,
+    @UploadedFile() file: Express.Multer.File | undefined,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
@@ -227,7 +250,36 @@ export class BillController {
       const vendor = vendors.find((v: any) => String(v._id) === dto.vendorId);
       resolvedVendorName = vendor?.name ?? null;
     }
-    return this.service.create(t || u, dto, resolvedVendorName);
+    return this.service.create(t || u, dto, resolvedVendorName, file);
+  }
+
+  @Post(':id/receipt')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: billReceiptStorage,
+      fileFilter: expenseReceiptFileFilter,
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOperation({
+    summary: 'Replace the receipt/invoice document attached to this bill',
+  })
+  attachReceipt(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.attachReceipt(t || u, id, file);
   }
 
   @Get()

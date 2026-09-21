@@ -24,6 +24,7 @@ import {
   CreateBankTransactionDto,
   MatchTransactionDto,
   CreateBankRuleDto,
+  UpdateBankRuleDto,
   CreateTransferDto,
   SetStatementBalanceDto,
   SignOffReconciliationDto,
@@ -58,6 +59,21 @@ export class BankRuleService {
       auto: dto.auto ?? true,
     });
     return created.toObject();
+  }
+
+  // A rule is editable after creation — the description it matches
+  // on and the ledger account it posts to can both change.
+  async update(tenantId: string, id: string, dto: UpdateBankRuleDto) {
+    const rule = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!rule) throw new NotFoundException('Bank rule not found');
+    if (dto.matchText !== undefined) rule.matchText = dto.matchText;
+    if (dto.account !== undefined) rule.account = dto.account;
+    if (dto.auto !== undefined) rule.auto = dto.auto;
+    await rule.save();
+    return rule.toObject();
   }
 
   // Real, applied matching — first active rule whose matchText
