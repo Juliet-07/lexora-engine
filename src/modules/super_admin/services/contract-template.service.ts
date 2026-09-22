@@ -1,14 +1,11 @@
 import {
   Injectable,
-  Logger,
   NotFoundException,
-  BadRequestException,
   ConflictException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as fs from 'fs';
-import * as mammoth from 'mammoth';
 import {
   PlatformContractTemplate,
   PlatformContractTemplateDocument,
@@ -22,7 +19,6 @@ import {
   CreatePlatformTemplateFolderDto,
   UpdatePlatformContractTemplateDto,
   UpdatePlatformTemplateFolderDto,
-  UploadPlatformContractTemplateDto,
 } from '../dtos';
 
 @Injectable()
@@ -99,43 +95,10 @@ export class PlatformTemplateFolderService {
 
 @Injectable()
 export class PlatformContractTemplateService {
-  private readonly logger = new Logger(PlatformContractTemplateService.name);
-
   constructor(
     @InjectModel(PlatformContractTemplate.name)
     private readonly model: Model<PlatformContractTemplateDocument>,
   ) {}
-
-  // Real docx-to-HTML extraction — an uploaded Word document's real
-  // text becomes real, editable content (same field authored
-  // templates use), so a tenant can preview and edit it just like
-  // an authored one, and it can be merge-field substituted when
-  // generating a contract. A corrupt/unusual .docx shouldn't block
-  // the upload outright — falls back to an honest note instead of
-  // failing the whole request.
-  private async extractDocxHtml(filePath: string): Promise<string> {
-    try {
-      const result = await mammoth.convertToHtml({ path: filePath });
-      return result.value;
-    } catch (err) {
-      this.logger.error(
-        `Failed to extract content from ${filePath}: ${err?.message}`,
-      );
-      return "<p><em>This document's content could not be automatically extracted. Download the original file to view it.</em></p>";
-    }
-  }
-
-  // Same real conversion EngagementLetterService already uses —
-  // filePath may be absolute or relative, so only the part from
-  // 'uploads/' onwards is kept, then prefixed with the real
-  // configured APP_URL.
-  private toFileUrl(filePath: string): string {
-    const rawPath = filePath.replace(/\\/g, '/');
-    const uploadsIndex = rawPath.indexOf('uploads/');
-    const relativePath =
-      uploadsIndex !== -1 ? rawPath.slice(uploadsIndex) : rawPath;
-    return `${process.env.APP_URL}/${relativePath}`;
-  }
 
   async getAll(folderId?: string, moduleKey?: string, areaKey?: string) {
     const query: any = {};
@@ -170,86 +133,20 @@ export class PlatformContractTemplateService {
     return created.toObject();
   }
 
-  // Real file(s) on disk (Multer has already saved them by the time
-  // this runs) — each becomes its own, genuinely separate template
-  // record, all sharing the metadata given once in the dialog
-  // (category, jurisdiction, folder, module/area). With a single
-  // file, the given title is used as-is; with several, there's no
-  // way to give each a different title in one form submission, so
-  // each file's own real name (extension stripped) becomes that
-  // template's title instead — never a fabricated or duplicated one.
-  async uploadMany(
-    files: Express.Multer.File[],
-    dto: UploadPlatformContractTemplateDto,
-    createdBy: string,
-  ) {
-    if (!files?.length) throw new BadRequestException('No file uploaded.');
-
-    const created = await Promise.all(
-      files.map(async (file) => {
-        const content = await this.extractDocxHtml(file.path);
-        const title =
-          files.length === 1 && dto.title
-            ? dto.title
-            : file.originalname.replace(/\.[^/.]+$/, '');
-
-        const doc = await this.model.create({
-          title,
-          category: dto.category,
-          jurisdiction: dto.jurisdiction ?? '',
-          description: dto.description ?? '',
-          folderId: dto.folderId ?? null,
-          moduleKey: dto.moduleKey ?? '',
-          areaKey: dto.areaKey ?? '',
-          sourceType: TemplateSourceType.UPLOADED,
-          content,
-          fileUrl: this.toFileUrl(file.path),
-          fileName: file.originalname,
-          fileMimeType: file.mimetype,
-          filePath: file.path,
-          version: dto.version ?? '1.0',
-          status: PlatformTemplateStatus.DRAFT,
-          createdBy,
-        });
-        return doc.toObject();
-      }),
-    );
-
-    return created;
-  }
-
-  // Replaces an uploaded template's real file — same real
-  // delete-old-then-save-new discipline EngagementLetterService
-  // uses on re-upload, so a stale file never lingers on disk.
-  async replaceFile(id: string, file: Express.Multer.File) {
-    if (!file) throw new BadRequestException('No file uploaded.');
-    const t = await this.model.findById(id);
-    if (!t) throw new NotFoundException('Template not found');
-    if (t.sourceType !== TemplateSourceType.UPLOADED) {
-      throw new BadRequestException(
-        'This template is authored, not uploaded — edit its content instead of replacing a file.',
-      );
-    }
-    if (t.filePath && fs.existsSync(t.filePath)) {
-      fs.unlinkSync(t.filePath);
-    }
-    t.fileUrl = this.toFileUrl(file.path);
-    t.fileName = file.originalname;
-    t.fileMimeType = file.mimetype;
-    t.filePath = file.path;
-    t.content = await this.extractDocxHtml(file.path);
-    await t.save();
-    return t.toObject();
-  }
-
+  // Uploading a template file is no longer supported — every
+  // template, including one that predates this change and was
+  // originally uploaded, is authored and edited directly here from
+  // now on. That's the only way a template reliably ends up using
+  // the real {{token}} merge fields (see contract-merge-fields.ts on
+  // the frontend) instead of static text a tenant has to hand-edit
+  // per contract. A legacy uploaded template's extracted content and
+  // original file (fileUrl/fileName/filePath, sourceType:
+  // 'uploaded') are left as-is for historical reference and are
+  // still editable through this same method — there's no separate
+  // "authored only" restriction any more.
   async update(id: string, dto: UpdatePlatformContractTemplateDto) {
     const t = await this.model.findById(id);
     if (!t) throw new NotFoundException('Template not found');
-    if (t.sourceType !== TemplateSourceType.AUTHORED) {
-      throw new BadRequestException(
-        'This template was uploaded as a file — replace the file instead of editing content.',
-      );
-    }
     t.title = dto.title;
     t.category = dto.category;
     t.jurisdiction = dto.jurisdiction ?? '';

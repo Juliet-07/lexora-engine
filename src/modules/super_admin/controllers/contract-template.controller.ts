@@ -7,22 +7,11 @@ import {
   Body,
   Param,
   Query,
-  UseInterceptors,
-  UploadedFile,
-  UploadedFiles,
-  BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { extname, join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
-import { v4 as uuidv4 } from 'uuid';
 import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
-  ApiConsumes,
-  ApiBody,
   ApiQuery,
 } from '@nestjs/swagger';
 import {
@@ -33,47 +22,12 @@ import {
   CreatePlatformContractTemplateDto,
   UpdatePlatformContractTemplateDto,
   SetTemplateStatusDto,
-  UploadPlatformContractTemplateDto,
   SetTemplateFolderDto,
   CreatePlatformTemplateFolderDto,
   UpdatePlatformTemplateFolderDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
-
-// ── Same real disk-storage convention EngagementLetterController
-// already uses — saves to /uploads/{feature}/ with a UUID filename,
-// served back via main.ts's existing /uploads static prefix. ──────
-const templateStorage = diskStorage({
-  destination: (_req, _file, cb) => {
-    const uploadPath = join(process.cwd(), 'uploads', 'contract-templates');
-    if (!existsSync(uploadPath)) {
-      mkdirSync(uploadPath, { recursive: true });
-    }
-    cb(null, uploadPath);
-  },
-  filename: (_req, file, cb) => {
-    const ext = extname(file.originalname);
-    cb(null, `${uuidv4()}${ext}`);
-  },
-});
-
-const ALLOWED_MIME_TYPES = [
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-];
-const templateFileFilter = (_req: any, file: Express.Multer.File, cb: any) => {
-  if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(
-      new BadRequestException(
-        'Only Word documents (.doc, .docx) are accepted.',
-      ),
-      false,
-    );
-  }
-};
 
 @ApiTags('SuperAdmin')
 @ApiBearerAuth()
@@ -115,75 +69,6 @@ export class PlatformContractTemplateController {
     @CurrentUser('sub') adminId: string,
   ) {
     return this.service.create(dto, adminId);
-  }
-
-  @Post('upload')
-  @UseInterceptors(
-    FilesInterceptor('files', 10, {
-      storage: templateStorage,
-      fileFilter: templateFileFilter,
-      limits: { fileSize: 20 * 1024 * 1024 }, // 20MB max per file
-    }),
-  )
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['files', 'category'],
-      properties: {
-        files: {
-          type: 'array',
-          items: { type: 'string', format: 'binary' },
-        },
-        title: {
-          type: 'string',
-          description:
-            "Used only when a single file is uploaded — with multiple files, each real filename becomes that template's title instead.",
-        },
-        category: { type: 'string' },
-        jurisdiction: { type: 'string' },
-        description: { type: 'string' },
-        version: { type: 'string' },
-        folderId: { type: 'string' },
-        moduleKey: { type: 'string' },
-        areaKey: { type: 'string' },
-      },
-    },
-  })
-  @ApiOperation({
-    summary:
-      'Upload one or more PDF/Word documents as templates, starting as Draft. The shared metadata (category, jurisdiction, folder, module/area) applies to every file; each becomes its own template.',
-  })
-  upload(
-    @UploadedFiles() files: Express.Multer.File[],
-    @Body() dto: UploadPlatformContractTemplateDto,
-    @CurrentUser('sub') adminId: string,
-  ) {
-    return this.service.uploadMany(files, dto, adminId);
-  }
-
-  @Post(':id/replace-file')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: templateStorage,
-      fileFilter: templateFileFilter,
-      limits: { fileSize: 20 * 1024 * 1024 },
-    }),
-  )
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['file'],
-      properties: { file: { type: 'string', format: 'binary' } },
-    },
-  })
-  @ApiOperation({ summary: "Replace an uploaded template's real file" })
-  replaceFile(
-    @Param('id') id: string,
-    @UploadedFile() file: Express.Multer.File,
-  ) {
-    return this.service.replaceFile(id, file);
   }
 
   @Patch(':id')
