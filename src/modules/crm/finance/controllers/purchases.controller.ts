@@ -355,7 +355,18 @@ export class ExpenseClaimController {
   constructor(private readonly service: ExpenseClaimService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Record an expense claim for an employee' })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: expenseReceiptStorage,
+      fileFilter: expenseReceiptFileFilter,
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary:
+      'Record an expense claim for an employee — proof of the claim (receipt image or PDF) can be attached in the same request, or added later',
+  })
   create(
     @Body()
     body: CreateExpenseClaimDto & {
@@ -363,6 +374,7 @@ export class ExpenseClaimController {
       employee: string;
       mandateName?: string;
     },
+    @UploadedFile() file: Express.Multer.File | undefined,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
@@ -372,6 +384,7 @@ export class ExpenseClaimController {
       body.employee,
       body,
       body.mandateName,
+      file,
     );
   }
 

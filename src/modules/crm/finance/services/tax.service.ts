@@ -319,6 +319,15 @@ export class EbmService {
       file,
     );
   }
+
+  // EBM rows aren't a standalone collection — they're derived live off
+  // Invoice documents, so "delete" can't mean removing the row itself.
+  // What it means is: clear the manually-recorded receipt (number +
+  // attached file) and revert the document back to Pending, so the
+  // tenant can re-enter it correctly.
+  async deleteReceipt(tenantId: string, invoiceId: string) {
+    return this.invoiceService.clearEbmReceipt(tenantId, invoiceId);
+  }
 }
 
 // ── Tax calendar ──────────────────────────────────────────────

@@ -711,6 +711,26 @@ export class InvoiceService {
     return this.normalize(i.toObject());
   }
 
+  // Called by EbmService.deleteReceipt. There's no standalone EBM
+  // record to delete — the reconciliation row is derived live off this
+  // invoice — so "delete" clears the manually-recorded receipt number
+  // and attached file/evidence, removes the file from disk if present,
+  // and reverts the document back to Pending so it can be re-entered.
+  async clearEbmReceipt(tenantId: string, id: string) {
+    const i = await this.getRawDoc(tenantId, id);
+    if (i.ebmReceiptFilePath && fs.existsSync(i.ebmReceiptFilePath)) {
+      fs.unlinkSync(i.ebmReceiptFilePath);
+    }
+    i.ebmReceiptNumber = '';
+    i.ebmReceiptFileUrl = null;
+    i.ebmReceiptFileName = null;
+    i.ebmReceiptMimeType = null;
+    i.ebmReceiptFilePath = null;
+    i.ebmStatus = EbmStatus.PENDING;
+    await i.save();
+    return this.normalize(i.toObject());
+  }
+
   // Internal — used by PaymentService after recording a real payment,
   // so the stage always reflects the real running paidAmount. Also
   // where the money side of that payment becomes real: a

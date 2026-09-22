@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Body,
   Param,
   Query,
@@ -248,5 +249,18 @@ export class EbmController {
       dto.receiptNumber,
       file,
     );
+  }
+
+  @Delete(':invoiceId/receipt')
+  @ApiOperation({
+    summary:
+      'Clear a manually-recorded EBM receipt (number + attached file) and revert the document back to Pending sync status',
+  })
+  deleteReceipt(
+    @Param('invoiceId') invoiceId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.deleteReceipt(t || u, invoiceId);
   }
 }

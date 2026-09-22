@@ -608,6 +608,7 @@ export class ExpenseClaimService {
     employee: string,
     dto: CreateExpenseClaimDto,
     mandateName?: string,
+    receiptFile?: Express.Multer.File,
   ) {
     const tId = new Types.ObjectId(tenantId);
     const ref = await this.nextRef(tId);
@@ -622,6 +623,12 @@ export class ExpenseClaimService {
       amount: dto.amount,
       currency: dto.currency ?? 'USD',
       rechargeable: dto.rechargeable ?? false,
+      // Optional — the tenant can attach proof of the claim right
+      // away, or come back and attach it later via attachReceipt.
+      receiptUrl: receiptFile
+        ? `/uploads/finance/expense-claims/${receiptFile.filename}`
+        : null,
+      receiptName: receiptFile ? receiptFile.originalname : null,
     });
     return created.toObject();
   }
