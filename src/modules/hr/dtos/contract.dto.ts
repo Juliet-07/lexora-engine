@@ -70,6 +70,14 @@ export class UpdateContractTemplateDto {
 export class GenerateContractFromCandidateDto {
   @ApiProperty() @IsMongoId() candidateId: string;
   @ApiProperty() @IsMongoId() templateId: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Free-text scope of work — mainly relevant for a consultant/contractor template that references {{scopeOfWork}}',
+  })
+  @IsOptional()
+  @IsString()
+  scopeOfWork?: string;
 }
 
 export class GenerateContractForEmployeeDto {
@@ -96,6 +104,14 @@ export class GenerateContractForEmployeeDto {
   @IsOptional()
   @IsString()
   endDate?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Free-text scope of work — mainly relevant for a consultant/contractor template that references {{scopeOfWork}}',
+  })
+  @IsOptional()
+  @IsString()
+  scopeOfWork?: string;
 }
 
 export class SendContractDto {

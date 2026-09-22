@@ -93,6 +93,7 @@ export class ContractService {
       roleAppliedFor: candidate.roleAppliedFor,
       workerCategory: candidate.workerCategory,
       tenantCompanyName,
+      scopeOfWork: dto.scopeOfWork,
     });
 
     return this.contractModel.create({
@@ -148,6 +149,7 @@ export class ContractService {
       reason: dto.reason,
       effectiveDate: dto.effectiveDate,
       endDate: dto.endDate,
+      scopeOfWork: dto.scopeOfWork,
     });
 
     return this.contractModel.create({

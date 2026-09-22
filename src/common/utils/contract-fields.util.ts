@@ -35,6 +35,7 @@ export function buildMergeFieldsForCandidate(params: {
   startDate?: string;
   salaryCurrency?: string;
   noticePeriod?: string;
+  scopeOfWork?: string;
 }): Record<string, string> {
   return {
     employeeName: params.candidateName,
@@ -46,6 +47,7 @@ export function buildMergeFieldsForCandidate(params: {
     workerCategory: params.workerCategory,
     tenantCompanyName: params.tenantCompanyName,
     todayDate: new Date().toISOString().slice(0, 10),
+    scopeOfWork: params.scopeOfWork ?? '',
   };
 }
 
@@ -60,6 +62,7 @@ export function buildMergeFieldsForEmployee(params: {
   reason?: string;
   effectiveDate?: string;
   endDate?: string;
+  scopeOfWork?: string;
 }): Record<string, string> {
   return {
     employeeName: params.employeeName,
@@ -74,5 +77,6 @@ export function buildMergeFieldsForEmployee(params: {
     reason: params.reason ?? '',
     effectiveDate: params.effectiveDate ?? '',
     endDate: params.endDate ?? '',
+    scopeOfWork: params.scopeOfWork ?? '',
   };
 }

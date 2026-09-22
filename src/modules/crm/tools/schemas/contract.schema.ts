@@ -250,6 +250,13 @@ export class ToolContract {
   @Prop({ default: 0 }) value: number;
   @Prop({ default: 'USD' }) currency: string;
 
+  // Free-text scope of work / deliverables, captured on the
+  // generate-from-template form and merged into the body via
+  // {{scopeOfWork}} — kept here too (not just baked into
+  // renderedBody) so it survives as its own reviewable/editable
+  // field even after the body itself has been hand-edited.
+  @Prop({ default: '' }) scopeOfWork: string;
+
   @Prop({ default: null }) executedOn: Date | null;
   @Prop({ default: null }) effectiveOn: Date | null;
   @Prop({ required: true }) expiresOn: Date;
@@ -392,6 +399,9 @@ export enum TenantTemplateSourceType {
 //                         that read more naturally addressing a
 //                         person directly (e.g. "Dear {{recipientName}},")
 //   {{recipientEmail}} — the resolved counterparty's email
+//   {{scopeOfWork}}    — the free-text scope of work / deliverables
+//                         entered on the "New contract" form (blank
+//                         if left empty — never throws)
 //   {{tenantCompanyName}} — this tenant's own registered business name
 //   {{contractValue}}  — the contract value as entered on the form
 //   {{contractCurrency}} — the contract currency as entered on the form
@@ -403,6 +413,7 @@ export const CONTRACT_MERGE_FIELDS = [
   'counterpartyName',
   'recipientName',
   'recipientEmail',
+  'scopeOfWork',
   'tenantCompanyName',
   'contractValue',
   'contractCurrency',

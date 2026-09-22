@@ -17,6 +17,12 @@ export const AVAILABLE_MERGE_FIELDS = [
   'reason',
   'effectiveDate',
   'endDate',
+  // Free-text scope of work / responsibilities — optional, blank
+  // unless supplied on the generate-from-candidate/employee request;
+  // mainly useful for consultant/contractor-worker-category templates
+  // where a defined scope matters more than it does for a standard
+  // employment contract.
+  'scopeOfWork',
 ] as const;
 export type MergeField = (typeof AVAILABLE_MERGE_FIELDS)[number];
 

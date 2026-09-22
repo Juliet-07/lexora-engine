@@ -191,6 +191,11 @@ export class GenerateFromTemplateDto {
   @ApiPropertyOptional() @IsOptional() @IsEmail() counterpartyEmail?: string;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) value?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+  // Free-text scope of work / deliverables — merged into the body as
+  // {{scopeOfWork}} and kept on the contract record for reference.
+  // Optional: a template that doesn't reference the token, or a
+  // contract with nothing special to scope, is still valid.
+  @ApiPropertyOptional() @IsOptional() @IsString() scopeOfWork?: string;
   @ApiProperty() @IsDateString() expiresOn: string;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() autoRenew?: boolean;
   @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
