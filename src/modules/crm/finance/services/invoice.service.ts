@@ -891,11 +891,16 @@ export class InvoiceService {
   // instalment invoice a plan (or a page of plans) points to, instead
   // of one query per instalment.
   async getByIds(tenantId: string, ids: string[]) {
-    if (!ids.length) return [];
+    // Tolerant of a bad/missing id in the list (stale data, an
+    // instalment created before invoiceId was populated, etc.) — one
+    // malformed id shouldn't take down the whole lookup and crash
+    // every caller (e.g. the payment plans list) with a BSONError.
+    const validIds = ids.filter((id) => Types.ObjectId.isValid(id));
+    if (!validIds.length) return [];
     const rows = await this.model
       .find({
         tenantId: new Types.ObjectId(tenantId),
-        _id: { $in: ids.map((id) => new Types.ObjectId(id)) },
+        _id: { $in: validIds.map((id) => new Types.ObjectId(id)) },
       })
       .lean();
     return rows.map((i) => this.normalize(i));

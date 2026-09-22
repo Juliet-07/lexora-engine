@@ -30,6 +30,7 @@ import {
   SignatureStatus,
   ApprovalStepStatus,
   ClauseChangeStatus,
+  type ContractMergeField,
 } from '../schemas';
 import {
   CreateContractDto,
@@ -882,8 +883,17 @@ export class ContractService {
     // content is now real, extracted HTML (via mammoth at upload
     // time), not a placeholder, so it gets the same treatment an
     // authored template's content does.
-    const fields: Record<string, string> = {
+    //
+    // Typed as Record<ContractMergeField, string> — every field
+    // CONTRACT_MERGE_FIELDS declares must be populated here, and
+    // nothing extra can sneak in, so the "what tokens can a template
+    // use" list and what actually gets substituted can't drift apart
+    // again the way counterpartyName's siblings quietly did before.
+    const fields: Record<ContractMergeField, string> = {
+      title: dto.title,
       counterpartyName: counterparty,
+      recipientName: counterparty,
+      recipientEmail: counterpartyEmail,
       tenantCompanyName: businessName,
       contractValue: dto.value != null ? String(dto.value) : '',
       contractCurrency: dto.currency ?? 'USD',

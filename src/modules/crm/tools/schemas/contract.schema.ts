@@ -372,8 +372,37 @@ export enum TenantTemplateSourceType {
 // own fields, distinct from HR's employee-oriented set, since a
 // vendor/partnership/service agreement has nothing to do with
 // employeeName/jobTitle/salary.
+//
+// This is the single source of truth for what {{token}} a template
+// author can use — ContractService.generateFromTemplate builds its
+// substitution map as a Record<ContractMergeField, string>, so
+// adding/removing a field here forces that call site to be updated
+// too (TypeScript will error on a missing/extra key). Never edit the
+// fields object in generateFromTemplate without editing this list.
+//
+//   {{title}}          — the contract title as entered on the "New
+//                         contract" form (e.g. "Engagement Letter —
+//                         Roselyn Designs Ltd")
+//   {{counterpartyName}} — the resolved counterparty label: a
+//                         registered client's name, a registered
+//                         vendor's contact name (falling back to its
+//                         legal name), or the external party's typed
+//                         name — whichever this contract is with
+//   {{recipientName}}  — alias of counterpartyName, for templates
+//                         that read more naturally addressing a
+//                         person directly (e.g. "Dear {{recipientName}},")
+//   {{recipientEmail}} — the resolved counterparty's email
+//   {{tenantCompanyName}} — this tenant's own registered business name
+//   {{contractValue}}  — the contract value as entered on the form
+//   {{contractCurrency}} — the contract currency as entered on the form
+//   {{effectiveDate}}  — today's date, as the contract's effective date
+//   {{expiryDate}}     — the expiry date as entered on the form
+//   {{todayDate}}      — today's date
 export const CONTRACT_MERGE_FIELDS = [
+  'title',
   'counterpartyName',
+  'recipientName',
+  'recipientEmail',
   'tenantCompanyName',
   'contractValue',
   'contractCurrency',
