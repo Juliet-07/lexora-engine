@@ -10,6 +10,7 @@ import {
   IsDateString,
   IsBoolean,
   IsMongoId,
+  Min,
 } from 'class-validator';
 import {
   ClientClassification,
@@ -84,6 +85,14 @@ export class CreateClientWithContractDto {
   templateSource: 'platform' | 'tenant';
   @ApiProperty() @IsString() contractTitle: string;
   @ApiPropertyOptional() @IsOptional() @IsString() contractType?: string;
+  // Contract value/currency — same as the "New contract" dialogs
+  // elsewhere (VendorContractDialog, Contracts.tsx), which already
+  // collect these. This wizard never had them: without them, every
+  // onboarding contract was silently generated with value 0 and
+  // currency defaulted to USD, and {{contractValue}} rendered "0" in
+  // the document with no way to set it from this flow.
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) value?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
 
   // ── Additional contract-merge fields — same vocabulary
   // GenerateFromTemplateDto accepts (see CONTRACT_MERGE_FIELDS' doc

@@ -169,6 +169,8 @@ export class TenantClientsService {
           clientId: String(client._id),
           expiresOn: expiresOn.toISOString(),
           origin: 'kyc_onboarding',
+          value: dto.value,
+          currency: dto.currency,
           // Everything captured on the wizard's "Select Contract" step
           // — passed straight through to the same merge-field pipeline
           // every other contract-generation flow uses, so a template
