@@ -196,6 +196,36 @@ export class GenerateFromTemplateDto {
   // Optional: a template that doesn't reference the token, or a
   // contract with nothing special to scope, is still valid.
   @ApiPropertyOptional() @IsOptional() @IsString() scopeOfWork?: string;
+  // ── Engagement-letter fields — see CONTRACT_MERGE_FIELDS' doc
+  // comments for what each merges to. All optional, all blank if
+  // left empty — a template that doesn't reference a given token is
+  // unaffected either way.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  tenantCompanyJurisdiction?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() clientJurisdiction?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  leadProfessionalName?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  leadProfessionalTitle?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  clientRepresentativeName?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  clientRepresentativeTitle?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  commencementDate?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() engagementDuration?: string;
   @ApiProperty() @IsDateString() expiresOn: string;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() autoRenew?: boolean;
   @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;

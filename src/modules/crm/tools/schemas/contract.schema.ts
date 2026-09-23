@@ -257,6 +257,24 @@ export class ToolContract {
   // field even after the body itself has been hand-edited.
   @Prop({ default: '' }) scopeOfWork: string;
 
+  // ── Engagement-letter fields — captured on the generate-from-template
+  // form alongside scopeOfWork, for templates (professional-services /
+  // client-engagement letters especially) that reference jurisdictions,
+  // named individuals, or timing beyond the basic effective/expiry
+  // dates. Same rationale as scopeOfWork: kept here, not just baked
+  // into renderedBody, so they stay reviewable/editable on their own
+  // after the body has been hand-edited. All optional — a template
+  // that doesn't reference these tokens, or a contract with nothing
+  // to say here, is still valid.
+  @Prop({ default: '' }) tenantCompanyJurisdiction: string;
+  @Prop({ default: '' }) clientJurisdiction: string;
+  @Prop({ default: '' }) leadProfessionalName: string;
+  @Prop({ default: '' }) leadProfessionalTitle: string;
+  @Prop({ default: '' }) clientRepresentativeName: string;
+  @Prop({ default: '' }) clientRepresentativeTitle: string;
+  @Prop({ default: null }) commencementDate: Date | null;
+  @Prop({ default: '' }) engagementDuration: string;
+
   @Prop({ default: null }) executedOn: Date | null;
   @Prop({ default: null }) effectiveOn: Date | null;
   @Prop({ required: true }) expiresOn: Date;
@@ -408,6 +426,24 @@ export enum TenantTemplateSourceType {
 //   {{effectiveDate}}  — today's date, as the contract's effective date
 //   {{expiryDate}}     — the expiry date as entered on the form
 //   {{todayDate}}      — today's date
+//   {{tenantCompanyJurisdiction}} — the firm's own jurisdiction of
+//                         incorporation, as typed on the form (e.g.
+//                         "the Republic of Rwanda") — blank if left empty
+//   {{clientJurisdiction}} — the counterparty's jurisdiction of
+//                         incorporation, as typed on the form
+//   {{leadProfessionalName}} — the individual leading this engagement
+//                         on the firm's side, as typed on the form
+//   {{leadProfessionalTitle}} — that person's title/role
+//   {{clientRepresentativeName}} — the client's authorised
+//                         representative for this engagement
+//   {{clientRepresentativeTitle}} — that person's title/role
+//   {{commencementDate}} — when the engagement starts, as picked on
+//                         the form — distinct from {{effectiveDate}}
+//                         (today) since an engagement often starts on
+//                         a different date than the contract is signed
+//   {{engagementDuration}} — free text describing how long the
+//                         engagement runs (e.g. "12 months", "until
+//                         completion of the audit")
 export const CONTRACT_MERGE_FIELDS = [
   'title',
   'counterpartyName',
@@ -420,6 +456,14 @@ export const CONTRACT_MERGE_FIELDS = [
   'effectiveDate',
   'expiryDate',
   'todayDate',
+  'tenantCompanyJurisdiction',
+  'clientJurisdiction',
+  'leadProfessionalName',
+  'leadProfessionalTitle',
+  'clientRepresentativeName',
+  'clientRepresentativeTitle',
+  'commencementDate',
+  'engagementDuration',
 ] as const;
 export type ContractMergeField = (typeof CONTRACT_MERGE_FIELDS)[number];
 

@@ -58,7 +58,10 @@ import {
 } from 'src/modules/super_admin/services/contract-template.service';
 import { ToolContractPdfService } from './contract-pdf.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
-import { renderContractBody } from 'src/common/utils/contract-fields.util';
+import {
+  renderContractBody,
+  formatScopeOfWorkList,
+} from 'src/common/utils/contract-fields.util';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
@@ -894,13 +897,21 @@ export class ContractService {
       counterpartyName: counterparty,
       recipientName: counterparty,
       recipientEmail: counterpartyEmail,
-      scopeOfWork: dto.scopeOfWork ?? '',
+      scopeOfWork: formatScopeOfWorkList(dto.scopeOfWork ?? ''),
       tenantCompanyName: businessName,
       contractValue: dto.value != null ? String(dto.value) : '',
       contractCurrency: dto.currency ?? 'USD',
       effectiveDate: new Date().toISOString().slice(0, 10),
       expiryDate: dto.expiresOn,
       todayDate: new Date().toISOString().slice(0, 10),
+      tenantCompanyJurisdiction: dto.tenantCompanyJurisdiction ?? '',
+      clientJurisdiction: dto.clientJurisdiction ?? '',
+      leadProfessionalName: dto.leadProfessionalName ?? '',
+      leadProfessionalTitle: dto.leadProfessionalTitle ?? '',
+      clientRepresentativeName: dto.clientRepresentativeName ?? '',
+      clientRepresentativeTitle: dto.clientRepresentativeTitle ?? '',
+      commencementDate: dto.commencementDate ?? '',
+      engagementDuration: dto.engagementDuration ?? '',
     };
     const renderedBody = renderContractBody(template.content, fields);
 
@@ -917,6 +928,16 @@ export class ContractService {
       value: dto.value ?? 0,
       currency: dto.currency ?? 'USD',
       scopeOfWork: dto.scopeOfWork ?? '',
+      tenantCompanyJurisdiction: dto.tenantCompanyJurisdiction ?? '',
+      clientJurisdiction: dto.clientJurisdiction ?? '',
+      leadProfessionalName: dto.leadProfessionalName ?? '',
+      leadProfessionalTitle: dto.leadProfessionalTitle ?? '',
+      clientRepresentativeName: dto.clientRepresentativeName ?? '',
+      clientRepresentativeTitle: dto.clientRepresentativeTitle ?? '',
+      commencementDate: dto.commencementDate
+        ? new Date(dto.commencementDate)
+        : null,
+      engagementDuration: dto.engagementDuration ?? '',
       expiresOn: new Date(dto.expiresOn),
       autoRenew: dto.autoRenew ?? false,
       owner: dto.owner ?? '',
