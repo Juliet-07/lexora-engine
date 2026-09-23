@@ -226,6 +226,15 @@ export class GenerateFromTemplateDto {
   @IsDateString()
   commencementDate?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() engagementDuration?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  tenantRegisteredAddress?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  clientRegisteredAddress?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() serviceCategory?: string;
   @ApiProperty() @IsDateString() expiresOn: string;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() autoRenew?: boolean;
   @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;

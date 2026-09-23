@@ -274,6 +274,9 @@ export class ToolContract {
   @Prop({ default: '' }) clientRepresentativeTitle: string;
   @Prop({ default: null }) commencementDate: Date | null;
   @Prop({ default: '' }) engagementDuration: string;
+  @Prop({ default: '' }) tenantRegisteredAddress: string;
+  @Prop({ default: '' }) clientRegisteredAddress: string;
+  @Prop({ default: '' }) serviceCategory: string;
 
   @Prop({ default: null }) executedOn: Date | null;
   @Prop({ default: null }) effectiveOn: Date | null;
@@ -444,6 +447,13 @@ export enum TenantTemplateSourceType {
 //   {{engagementDuration}} — free text describing how long the
 //                         engagement runs (e.g. "12 months", "until
 //                         completion of the audit")
+//   {{tenantRegisteredAddress}} — the firm's own registered office
+//                         address, as typed on the form
+//   {{clientRegisteredAddress}} — the counterparty's registered
+//                         office address, as typed on the form
+//   {{serviceCategory}} — the category/type of professional service
+//                         being provided (e.g. "company secretarial",
+//                         "tax advisory"), as typed on the form
 export const CONTRACT_MERGE_FIELDS = [
   'title',
   'counterpartyName',
@@ -464,6 +474,9 @@ export const CONTRACT_MERGE_FIELDS = [
   'clientRepresentativeTitle',
   'commencementDate',
   'engagementDuration',
+  'tenantRegisteredAddress',
+  'clientRegisteredAddress',
+  'serviceCategory',
 ] as const;
 export type ContractMergeField = (typeof CONTRACT_MERGE_FIELDS)[number];
 

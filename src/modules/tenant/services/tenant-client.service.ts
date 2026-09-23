@@ -169,6 +169,23 @@ export class TenantClientsService {
           clientId: String(client._id),
           expiresOn: expiresOn.toISOString(),
           origin: 'kyc_onboarding',
+          // Everything captured on the wizard's "Select Contract" step
+          // — passed straight through to the same merge-field pipeline
+          // every other contract-generation flow uses, so a template
+          // referencing any of these tokens comes out fully drafted
+          // rather than leaving the tenant to fill it in by hand.
+          scopeOfWork: dto.scopeOfWork,
+          tenantCompanyJurisdiction: dto.tenantCompanyJurisdiction,
+          clientJurisdiction: dto.clientJurisdiction,
+          leadProfessionalName: dto.leadProfessionalName,
+          leadProfessionalTitle: dto.leadProfessionalTitle,
+          clientRepresentativeName: dto.clientRepresentativeName,
+          clientRepresentativeTitle: dto.clientRepresentativeTitle,
+          commencementDate: dto.commencementDate,
+          engagementDuration: dto.engagementDuration,
+          tenantRegisteredAddress: dto.tenantRegisteredAddress,
+          clientRegisteredAddress: dto.clientRegisteredAddress,
+          serviceCategory: dto.serviceCategory,
         },
       );
 

@@ -84,6 +84,51 @@ export class CreateClientWithContractDto {
   templateSource: 'platform' | 'tenant';
   @ApiProperty() @IsString() contractTitle: string;
   @ApiPropertyOptional() @IsOptional() @IsString() contractType?: string;
+
+  // ── Additional contract-merge fields — same vocabulary
+  // GenerateFromTemplateDto accepts (see CONTRACT_MERGE_FIELDS' doc
+  // comments for what each one merges to). All optional and blank if
+  // left empty. Collected here too so the "Select Contract" step of
+  // the onboarding wizard can capture everything a template might
+  // reference up front — the whole point being that the tenant has
+  // little to nothing left to hand-edit in the generated contract
+  // afterward.
+  @ApiPropertyOptional() @IsOptional() @IsString() scopeOfWork?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  tenantCompanyJurisdiction?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() clientJurisdiction?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  leadProfessionalName?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  leadProfessionalTitle?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  clientRepresentativeName?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  clientRepresentativeTitle?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  commencementDate?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() engagementDuration?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  tenantRegisteredAddress?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  clientRegisteredAddress?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() serviceCategory?: string;
 }
 
 // ─────────────────────────────────────────────────────────────

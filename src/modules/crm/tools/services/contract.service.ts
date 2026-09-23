@@ -912,6 +912,9 @@ export class ContractService {
       clientRepresentativeTitle: dto.clientRepresentativeTitle ?? '',
       commencementDate: dto.commencementDate ?? '',
       engagementDuration: dto.engagementDuration ?? '',
+      tenantRegisteredAddress: dto.tenantRegisteredAddress ?? '',
+      clientRegisteredAddress: dto.clientRegisteredAddress ?? '',
+      serviceCategory: dto.serviceCategory ?? '',
     };
     const renderedBody = renderContractBody(template.content, fields);
 
@@ -938,6 +941,9 @@ export class ContractService {
         ? new Date(dto.commencementDate)
         : null,
       engagementDuration: dto.engagementDuration ?? '',
+      tenantRegisteredAddress: dto.tenantRegisteredAddress ?? '',
+      clientRegisteredAddress: dto.clientRegisteredAddress ?? '',
+      serviceCategory: dto.serviceCategory ?? '',
       expiresOn: new Date(dto.expiresOn),
       autoRenew: dto.autoRenew ?? false,
       owner: dto.owner ?? '',
