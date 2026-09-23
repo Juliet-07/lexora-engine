@@ -21,6 +21,22 @@ export function renderContractBody(
   });
 }
 
+// Scans a (possibly already partly-rendered) body for any `{{token}}`
+// still left literal — used to warn a tenant right after generation,
+// and by the resync action below, rather than making them spot gaps
+// by eye. Builds its own RegExp per call since PLACEHOLDER_PATTERN is
+// a shared, stateful `g`-flag instance and reusing it directly across
+// calls would corrupt its lastIndex.
+export function findUnresolvedTokens(body: string): string[] {
+  const pattern = new RegExp(PLACEHOLDER_PATTERN.source, 'g');
+  const found = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(body))) {
+    found.add(m[1]);
+  }
+  return Array.from(found);
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

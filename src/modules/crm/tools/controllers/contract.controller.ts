@@ -469,6 +469,19 @@ export class ContractController {
     return this.service.editRenderedBody(t || u, id, dto);
   }
 
+  @Post(':id/resync-merge-fields')
+  @ApiOperation({
+    summary:
+      "Re-run merge-field substitution against this contract's own saved details — fixes a contract whose rendered body still shows a literal {{token}} for a field that was added to the merge-field list after this contract was generated. Not Sent or Sent only.",
+  })
+  resyncMergeFields(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.resyncMergeFields(t || u, id);
+  }
+
   @Post(':id/countersign')
   @ApiOperation({
     summary:
