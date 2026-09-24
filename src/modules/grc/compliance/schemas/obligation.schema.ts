@@ -36,8 +36,7 @@ export enum FilingStage {
   IN_PREPARATION = 'In preparation',
   EVIDENCE_COLLECTED = 'Evidence collected',
   CERTIFIED = 'Certified',
-  SUBMITTED = 'Submitted',
-  RECEIPT_CONFIRMED = 'Receipt confirmed',
+  COMPLETED = 'Completed',
 }
 
 export const FILING_STAGE_ORDER: FilingStage[] = [
@@ -45,13 +44,21 @@ export const FILING_STAGE_ORDER: FilingStage[] = [
   FilingStage.IN_PREPARATION,
   FilingStage.EVIDENCE_COLLECTED,
   FilingStage.CERTIFIED,
-  FilingStage.SUBMITTED,
-  FilingStage.RECEIPT_CONFIRMED,
+  FilingStage.COMPLETED,
 ];
+
+export enum EvidenceCategory {
+  DOCUMENT = 'Document',
+  DECLARATION = 'Declaration',
+  PROOF_OF_PAYMENT = 'Proof of payment',
+  OTHER = 'Other',
+}
 
 @Schema({ _id: false })
 export class FilingEvidence {
   @Prop({ required: true }) name: string;
+  @Prop({ enum: EvidenceCategory, default: EvidenceCategory.DOCUMENT })
+  category: EvidenceCategory;
   @Prop({ default: null }) fileUrl: string | null;
   @Prop({ default: null }) mimeType: string | null;
   @Prop({ default: 0 }) size: number;
@@ -109,8 +116,8 @@ export class Filing {
 
   @Prop({ default: null }) certifiedBy: string | null;
   @Prop({ default: null }) certifiedAt: Date | null;
-  @Prop({ default: null }) submittedAt: Date | null;
-  @Prop({ default: null }) receiptRef: string | null;
+  @Prop({ default: null }) completedBy: string | null;
+  @Prop({ default: null }) completedAt: Date | null;
   @Prop({ default: '' }) notes: string;
 }
 export const FilingSchema = SchemaFactory.createForClass(Filing);

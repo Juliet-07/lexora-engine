@@ -5,6 +5,7 @@ import {
   Patch,
   Body,
   Param,
+  ParseIntPipe,
   UseInterceptors,
   UploadedFiles,
 } from '@nestjs/common';
@@ -16,11 +17,14 @@ import { existsSync, mkdirSync } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { ComplianceObligationService } from '../services';
+import { IncidentService } from '../services';
 import {
-  CreateObligationDto,
-  SetFilingStageDto,
-  AddEvidenceDto,
+  CreateIncidentDto,
+  UpdateIncidentFieldsDto,
+  AddIncidentFindingDto,
+  AddIncidentActionDto,
+  UpdateIncidentActionStatusDto,
+  AddIncidentLessonDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -29,11 +33,10 @@ import {
   PlatformModuleKey,
 } from 'src/common/interfaces/user-role.enum';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
-import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 
-const evidenceStorage = diskStorage({
+const incidentStorage = diskStorage({
   destination: (_req, _file, cb) => {
-    const p = join(process.cwd(), 'uploads', 'compliance', 'filings');
+    const p = join(process.cwd(), 'uploads', 'grc', 'incidents');
     if (!existsSync(p)) mkdirSync(p, { recursive: true });
     cb(null, p);
   },
@@ -45,10 +48,10 @@ const evidenceStorage = diskStorage({
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT, UserType.EMPLOYEE)
 @RequiresModule(PlatformModuleKey.GRC)
-@Controller('grc/compliance/obligations')
-export class ComplianceObligationController {
+@Controller('grc/compliance/incidents')
+export class IncidentController {
   constructor(
-    private readonly service: ComplianceObligationService,
+    private readonly service: IncidentService,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
   ) {}
 
@@ -62,13 +65,12 @@ export class ComplianceObligationController {
 
   @Post()
   async create(
-    @Body() dto: CreateObligationDto,
+    @Body() dto: CreateIncidentDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    const tenantId = t || u;
-    const businessName = await resolveBusinessName(this.userModel, tenantId);
-    return this.service.create(tenantId, dto, businessName);
+    const name = await this.currentUserName(u);
+    return this.service.create(t || u, dto, name, u);
   }
 
   @Get()
@@ -76,60 +78,73 @@ export class ComplianceObligationController {
     return this.service.getAll(t || u);
   }
 
-  @Get('filings')
-  getAllFilings(
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.getAllFilings(t || u);
-  }
-
-  @Patch('filings/:id/stage')
-  setStage(
+  @Patch(':id')
+  updateFields(
     @Param('id') id: string,
-    @Body() dto: SetFilingStageDto,
+    @Body() dto: UpdateIncidentFieldsDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.setStage(t || u, id, dto);
+    return this.service.updateFields(t || u, id, dto);
   }
 
-  @Post('filings/:id/evidence')
+  @Post(':id/findings')
+  addFinding(
+    @Param('id') id: string,
+    @Body() dto: AddIncidentFindingDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addFinding(t || u, id, dto);
+  }
+
+  @Post(':id/actions')
+  addAction(
+    @Param('id') id: string,
+    @Body() dto: AddIncidentActionDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addAction(t || u, id, dto);
+  }
+
+  @Patch(':id/actions/:index')
+  updateActionStatus(
+    @Param('id') id: string,
+    @Param('index', ParseIntPipe) index: number,
+    @Body() dto: UpdateIncidentActionStatusDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateActionStatus(t || u, id, index, dto);
+  }
+
+  @Post(':id/lessons')
+  async addLesson(
+    @Param('id') id: string,
+    @Body() dto: AddIncidentLessonDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const name = await this.currentUserName(u);
+    return this.service.addLesson(t || u, id, dto, name);
+  }
+
+  @Post(':id/files')
   @UseInterceptors(
     FilesInterceptor('files', 10, {
-      storage: evidenceStorage,
-      limits: { fileSize: 25 * 1024 * 1024 },
+      storage: incidentStorage,
+      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
   @ApiConsumes('multipart/form-data')
-  async addEvidence(
+  async addFiles(
     @Param('id') id: string,
     @UploadedFiles() files: Express.Multer.File[],
-    @Body() dto: AddEvidenceDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
     const name = await this.currentUserName(u);
-    return this.service.addEvidence(t || u, id, files, name, dto.category);
-  }
-
-  @Patch('filings/:id/certify')
-  async certify(
-    @Param('id') id: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    const name = await this.currentUserName(u);
-    return this.service.certify(t || u, id, name);
-  }
-
-  @Patch('filings/:id/complete')
-  async completeFiling(
-    @Param('id') id: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    const name = await this.currentUserName(u);
-    return this.service.completeFiling(t || u, id, name);
+    return this.service.addFiles(t || u, id, files, name);
   }
 }

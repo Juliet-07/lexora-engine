@@ -6,7 +6,12 @@ import {
   IsDateString,
   IsEmail,
 } from 'class-validator';
-import { Regulator, Frequency, FilingStage } from '../schemas';
+import {
+  Regulator,
+  Frequency,
+  FilingStage,
+  EvidenceCategory,
+} from '../schemas';
 
 export class CreateObligationDto {
   @ApiProperty() @IsString() title: string;
@@ -33,10 +38,13 @@ export class SetFilingStageDto {
   stage: FilingStage;
 }
 
-export class CertifyFilingDto {
-  @ApiProperty() @IsString() certifiedBy: string;
-}
+// Certification is attributed server-side to the logged-in user (see
+// ComplianceObligationController.currentUserName) — the client no
+// longer supplies a name, so this endpoint takes no body.
 
-export class ConfirmReceiptDto {
-  @ApiProperty() @IsString() receiptRef: string;
+export class AddEvidenceDto {
+  @ApiPropertyOptional({ enum: EvidenceCategory })
+  @IsOptional()
+  @IsEnum(EvidenceCategory)
+  category?: EvidenceCategory;
 }

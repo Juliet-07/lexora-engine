@@ -13,13 +13,9 @@ import {
   FilingDocument,
   FilingStage,
   Frequency,
+  EvidenceCategory,
 } from '../schemas';
-import {
-  CreateObligationDto,
-  SetFilingStageDto,
-  CertifyFilingDto,
-  ConfirmReceiptDto,
-} from '../dtos';
+import { CreateObligationDto, SetFilingStageDto } from '../dtos';
 
 @Injectable()
 export class ComplianceObligationService {
@@ -188,27 +184,27 @@ export class ComplianceObligationService {
     return f;
   }
 
-  // uploadedBy is resolved server-side from the obligation's OWN
-  // owner field — never trusted from the client — matching the
-  // original design's attribution-by-responsibility exactly.
+  // uploadedBy is resolved server-side from the real logged-in user
+  // (passed in by the controller) — never trusted from the client,
+  // and never the obligation's nominal owner, so "who was logged in
+  // and who did it" is the actual actor, not a configured name.
   async addEvidence(
     tenantId: string,
     id: string,
     files: Express.Multer.File[],
+    uploaderName: string,
+    category?: EvidenceCategory,
   ) {
     const f = await this.getRawFiling(tenantId, id);
-    const obligation = await this.getRawDoc(
-      tenantId,
-      f.obligationId.toString(),
-    );
     for (const file of files) {
       f.evidence.push({
         name: file.originalname,
+        category: category || EvidenceCategory.DOCUMENT,
         fileUrl: `/uploads/compliance/filings/${file.filename}`,
         mimeType: file.mimetype,
         size: file.size,
         uploadedAt: new Date(),
-        uploadedBy: obligation.owner || 'Unassigned',
+        uploadedBy: uploaderName || 'Unassigned',
       } as any);
     }
     if (f.stage === FilingStage.NOT_STARTED)
@@ -218,32 +214,36 @@ export class ComplianceObligationService {
     return f;
   }
 
-  async certify(tenantId: string, id: string, dto: CertifyFilingDto) {
+  // certifierName is resolved server-side from the real logged-in
+  // user (see controller) — real attribution, not free text.
+  async certify(tenantId: string, id: string, certifierName: string) {
     const f = await this.getRawFiling(tenantId, id);
-    f.certifiedBy = dto.certifiedBy;
+    f.certifiedBy = certifierName;
     f.certifiedAt = new Date();
     f.stage = FilingStage.CERTIFIED;
     await f.save();
     return f;
   }
 
-  // Closes the current cycle AND auto-schedules the next one —
-  // matches "Confirm receipt" exactly.
-  async confirmReceipt(tenantId: string, id: string, dto: ConfirmReceiptDto) {
+  // The tick-box that closes the current period and auto-schedules
+  // the next one — replaces the old "submission & regulator
+  // receipt" step the PO asked to remove. completerName is resolved
+  // server-side from the real logged-in user, same as certify().
+  async completeFiling(tenantId: string, id: string, completerName: string) {
     const f = await this.getRawFiling(tenantId, id);
     if (f.evidence.length === 0) {
       throw new BadRequestException(
-        'Attach evidence before confirming receipt.',
+        'Attach evidence before marking this filing complete.',
       );
     }
     if (!f.certifiedBy) {
       throw new BadRequestException(
-        'Management certification is required before confirming receipt.',
+        'Management certification is required before marking this filing complete.',
       );
     }
-    f.receiptRef = dto.receiptRef;
-    f.submittedAt = new Date();
-    f.stage = FilingStage.RECEIPT_CONFIRMED;
+    f.completedBy = completerName;
+    f.completedAt = new Date();
+    f.stage = FilingStage.COMPLETED;
     await f.save();
 
     const obligation = await this.getRawDoc(

@@ -9,6 +9,8 @@ import {
   ComplianceObligationSchema,
   Filing,
   FilingSchema,
+  Incident,
+  IncidentSchema,
   Policy,
   PolicySchema,
   RegulatoryChange,
@@ -19,6 +21,7 @@ import {
   CertificationService,
   ComplianceObligationService,
   ComplianceReminderService,
+  IncidentService,
   PolicyService,
   RegulatoryChangeService,
 } from './services';
@@ -26,10 +29,15 @@ import {
   AuditController,
   CertificationController,
   ComplianceObligationController,
+  IncidentController,
   PolicyController,
   RegulatoryChangeController,
 } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
+import {
+  Employee,
+  EmployeeSchema,
+} from 'src/modules/hr/schemas/employee.schema';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { GovernanceModule } from '../governance/governance.module';
 
@@ -43,6 +51,8 @@ import { GovernanceModule } from '../governance/governance.module';
       { name: Certification.name, schema: CertificationSchema },
       { name: AuditEngagement.name, schema: AuditEngagementSchema },
       { name: RegulatoryChange.name, schema: RegulatoryChangeSchema },
+      { name: Incident.name, schema: IncidentSchema },
+      { name: Employee.name, schema: EmployeeSchema },
     ]),
     GovernanceModule,
   ],
@@ -54,6 +64,7 @@ import { GovernanceModule } from '../governance/governance.module';
     CertificationService,
     AuditService,
     RegulatoryChangeService,
+    IncidentService,
   ],
   controllers: [
     ComplianceObligationController,
@@ -61,6 +72,7 @@ import { GovernanceModule } from '../governance/governance.module';
     CertificationController,
     AuditController,
     RegulatoryChangeController,
+    IncidentController,
   ],
   exports: [
     ComplianceObligationService,
@@ -68,6 +80,7 @@ import { GovernanceModule } from '../governance/governance.module';
     CertificationService,
     AuditService,
     RegulatoryChangeService,
+    IncidentService,
   ],
 })
 export class ComplianceModule {}
