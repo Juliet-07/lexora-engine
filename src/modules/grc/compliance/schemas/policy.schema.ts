@@ -147,6 +147,12 @@ export class Policy {
   @Prop({ type: [String], default: [] }) relatedPolicies: string[];
   @Prop({ default: null }) lastReviewed: Date | null;
   @Prop({ default: null }) nextReviewDue: Date | null;
+  // Dedup marker for PolicyReviewReminderService, same milestone
+  // pattern as ComplianceObligation.lastReminderMilestone — the
+  // smallest reminderDays value already emailed for the CURRENT
+  // nextReviewDue, so the same milestone isn't re-sent every day.
+  // Reset to null whenever nextReviewDue moves (a fresh publish).
+  @Prop({ default: null }) lastReviewReminderMilestone: number | null;
 
   // The super-admin-authored template this policy was started from,
   // if any — record-keeping only, never re-read after creation.

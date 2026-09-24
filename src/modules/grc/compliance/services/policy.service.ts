@@ -534,6 +534,7 @@ export class PolicyService {
     p.status = PolicyStatus.PUBLISHED;
     p.lastReviewed = new Date();
     p.nextReviewDue = this.nextDueAfter(new Date(), p.reviewFrequency);
+    p.lastReviewReminderMilestone = null; // fresh due date, fresh reminder window
     p.approvalHistory.push({
       version: nextVersion,
       approvedBy: approvedByName,

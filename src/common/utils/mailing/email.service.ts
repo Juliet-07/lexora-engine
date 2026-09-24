@@ -225,6 +225,10 @@ import {
   policyAcknowledgmentTemplate,
 } from './templates/policy-acknowledgment.template';
 import {
+  PolicyReviewReminderEmailData,
+  policyReviewReminderTemplate,
+} from './templates/policy-review-reminder.template';
+import {
   DataRoomDeliveryEmailData,
   dataRoomDeliveryTemplate,
 } from './templates/data-room-delivery.template';
@@ -960,6 +964,18 @@ export class EmailService {
     data: PolicyAcknowledgmentEmailData,
   ): Promise<void> {
     const { subject, html } = policyAcknowledgmentTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendPolicyReviewReminder(
+    data: PolicyReviewReminderEmailData,
+  ): Promise<void> {
+    const { subject, html } = policyReviewReminderTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

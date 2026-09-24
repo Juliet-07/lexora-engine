@@ -23,6 +23,7 @@ import {
   ComplianceReminderService,
   IncidentService,
   PolicyService,
+  PolicyReviewReminderService,
   RegulatoryChangeService,
 } from './services';
 import {
@@ -66,6 +67,7 @@ import { GovernanceModule } from '../governance/governance.module';
     ComplianceReminderService,
     EmailService,
     PolicyService,
+    PolicyReviewReminderService,
     CertificationService,
     AuditService,
     RegulatoryChangeService,
