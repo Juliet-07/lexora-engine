@@ -5,12 +5,14 @@ import {
   IsEnum,
   IsArray,
   IsDateString,
+  IsBoolean,
 } from 'class-validator';
 import {
   PolicyType,
   ReviewFrequency,
   AckRequirement,
   PolicyStatus,
+  BoardApprovalDecision,
 } from '../schemas';
 
 // ── New in-app editor flow ──────────────────────────────────────
@@ -18,10 +20,15 @@ import {
 export class CreatePolicyDto {
   @ApiProperty() @IsString() title: string;
   @ApiPropertyOptional() @IsOptional() @IsString() category?: string;
-  // Name of a starter template ("AML/CFT Policy", …) or "Custom
-  // policy" for a blank editor — resolved server-side to a starter
-  // section set, never trusted as content itself.
-  @ApiPropertyOptional() @IsOptional() @IsString() template?: string;
+  // Id of a Super-Admin-published PolicyTemplate — resolved
+  // server-side into the starter sections, never trusted as content
+  // itself. Omitted (or "Custom policy" for backward compatibility
+  // with older clients) means a blank editor.
+  @ApiPropertyOptional() @IsOptional() @IsString() templateId?: string;
+  @ApiPropertyOptional({ enum: PolicyType })
+  @IsOptional()
+  @IsEnum(PolicyType)
+  type?: PolicyType;
   @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() approvalAuthority?: string;
   @ApiPropertyOptional({ enum: ReviewFrequency })
@@ -37,6 +44,12 @@ export class CreatePolicyDto {
   @IsOptional()
   @IsString()
   linkedRegulationsOrStandards?: string;
+  // "Tenant approval only" vs "tenant approval + board sign-off" —
+  // set at creation, editable later from the Properties tab.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  boardApprovalRequired?: boolean;
 }
 
 export class UpdatePolicyPropertiesDto {
@@ -64,6 +77,14 @@ export class UpdatePolicyPropertiesDto {
   @IsOptional()
   @IsArray()
   linkedRegulationsOrStandards?: string[];
+  @ApiPropertyOptional({ enum: PolicyType })
+  @IsOptional()
+  @IsEnum(PolicyType)
+  type?: PolicyType;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  boardApprovalRequired?: boolean;
 }
 
 export class UpsertSectionDto {
@@ -77,10 +98,25 @@ export class SetPolicyStatusDto {
   status: PolicyStatus.UNDER_REVIEW | PolicyStatus.DRAFT;
 }
 
+// Used for the tenant-side "Approve" action. When the policy does
+// not require board approval this publishes immediately (unchanged
+// behaviour); when it does, this records the tenant's approval and
+// moves the policy to Pending board approval instead. approvedBy is
+// resolved server-side from the logged-in user either way.
 export class PublishPolicyDto {
   @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
 }
-// approvedBy is resolved server-side from the logged-in user.
+
+// ── Board approval (separate from post-publish acknowledgement) ─
+
+export class DecideBoardApprovalDto {
+  @ApiProperty({
+    enum: [BoardApprovalDecision.APPROVED, BoardApprovalDecision.REJECTED],
+  })
+  @IsEnum([BoardApprovalDecision.APPROVED, BoardApprovalDecision.REJECTED])
+  decision: BoardApprovalDecision.APPROVED | BoardApprovalDecision.REJECTED;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+}
 
 export class AddPolicyCommentDto {
   @ApiProperty() @IsString() content: string;

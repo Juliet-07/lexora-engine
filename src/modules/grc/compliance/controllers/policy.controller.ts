@@ -26,6 +26,7 @@ import {
   UpsertSectionDto,
   SetPolicyStatusDto,
   PublishPolicyDto,
+  DecideBoardApprovalDto,
   AddPolicyCommentDto,
   UploadPolicyDto,
   AcknowledgeEmployeePolicyDto,
@@ -177,6 +178,9 @@ export class PolicyController {
     return this.service.setStatus(t || u, id, dto.status);
   }
 
+  // Tenant approval — publishes immediately unless the policy
+  // requires board sign-off, in which case it opens a board
+  // approval round instead (see PolicyService.approve).
   @Patch(':id/publish')
   async publish(
     @Param('id') id: string,
@@ -185,7 +189,18 @@ export class PolicyController {
     @CurrentUser('tenantId') t: string,
   ) {
     const { name } = await this.currentUser(u);
-    return this.service.publish(t || u, id, dto, name);
+    return this.service.approve(t || u, id, dto, name);
+  }
+
+  @Post(':id/remind-board')
+  async sendBoardApprovalReminders(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    return this.service.sendBoardApprovalReminders(tenantId, id, businessName);
   }
 
   @Post(':id/comments')
@@ -277,5 +292,24 @@ export class PolicyController {
     @Body() dto: SubmitBoardAckDto,
   ) {
     return this.service.submitBoardAck(token, dto);
+  }
+
+  // ── Board approval — separate from acknowledgement above; this
+  // is the pre-publish sign-off a board member gives when a policy
+  // is set to require board approval ───────────────────────────
+
+  @Public()
+  @Get('board-approve/:token')
+  getBoardApprovalSnapshot(@Param('token') token: string) {
+    return this.service.getBoardApprovalSnapshot(token);
+  }
+
+  @Public()
+  @Post('board-approve/:token')
+  decideBoardApproval(
+    @Param('token') token: string,
+    @Body() dto: DecideBoardApprovalDto,
+  ) {
+    return this.service.decideBoardApproval(token, dto);
   }
 }

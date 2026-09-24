@@ -11,7 +11,16 @@ export enum PolicyType {
 export enum PolicyStatus {
   DRAFT = 'Draft',
   UNDER_REVIEW = 'Under review',
+  // Tenant has approved and (because boardApprovalRequired is set)
+  // is waiting on the board's decision — see boardApprovals below.
+  PENDING_BOARD_APPROVAL = 'Pending board approval',
   PUBLISHED = 'Published',
+}
+
+export enum BoardApprovalDecision {
+  PENDING = 'Pending',
+  APPROVED = 'Approved',
+  REJECTED = 'Rejected',
 }
 
 export enum ReviewFrequency {
@@ -76,6 +85,25 @@ export class PolicyApprovalEntry {
 export const PolicyApprovalEntrySchema =
   SchemaFactory.createForClass(PolicyApprovalEntry);
 
+// One row per board member asked to approve a policy that requires
+// board sign-off before it can publish — a lighter-weight sibling of
+// Resolution's BoardVoteRow (Approve/Reject only, no quorum/majority
+// maths: a policy needs everyone assigned to sign off, not a vote).
+@Schema({ _id: false })
+export class BoardApproval {
+  @Prop({ type: Types.ObjectId, ref: 'BoardMember', default: null })
+  boardMemberId: Types.ObjectId | null;
+  @Prop({ required: true }) name: string;
+  @Prop({ required: true, lowercase: true }) email: string;
+  @Prop({ required: true }) token: string;
+  @Prop({ enum: BoardApprovalDecision, default: BoardApprovalDecision.PENDING })
+  decision: BoardApprovalDecision;
+  @Prop({ default: '' }) notes: string;
+  @Prop({ default: null }) decidedAt: Date | null;
+  @Prop({ required: true, default: () => new Date() }) requestedAt: Date;
+}
+export const BoardApprovalSchema = SchemaFactory.createForClass(BoardApproval);
+
 @Schema({ _id: false })
 export class PolicyComment {
   @Prop({ required: true }) id: string;
@@ -94,9 +122,11 @@ export class Policy {
 
   @Prop({ required: true, trim: true }) title: string;
   @Prop({ default: '' }) category: string;
-  // organisation/board still selects which acknowledgment channel a
-  // policy uses (in-app employee roster vs. emailed board tokens) —
-  // separate axis from `status`, which tracks the document lifecycle.
+  // The acknowledgement audience: ORGANISATION means the whole
+  // tenant (employees roster in-app + board via emailed link) can
+  // see and must acknowledge it; BOARD restricts both visibility and
+  // acknowledgement to the board only. Separate axis from `status`,
+  // which tracks the document's own lifecycle.
   @Prop({ enum: PolicyType, default: PolicyType.ORGANISATION })
   type: PolicyType;
 
@@ -118,12 +148,28 @@ export class Policy {
   @Prop({ default: null }) lastReviewed: Date | null;
   @Prop({ default: null }) nextReviewDue: Date | null;
 
+  // The super-admin-authored template this policy was started from,
+  // if any — record-keeping only, never re-read after creation.
+  @Prop({ type: Types.ObjectId, ref: 'PolicyTemplate', default: null })
+  templateId: Types.ObjectId | null;
+
   @Prop({ type: [PolicySectionSchema], default: [] })
   sections: PolicySection[];
   @Prop({ type: [PolicyApprovalEntrySchema], default: [] })
   approvalHistory: PolicyApprovalEntry[];
   @Prop({ type: [PolicyCommentSchema], default: [] })
   comments: PolicyComment[];
+
+  // ── Approval workflow ─────────────────────────────────────────
+  // A tenant user always approves. When this is set, that approval
+  // is provisional until every active board member also approves
+  // (boardApprovals below) — see PolicyService.approve/decideBoardApproval.
+  @Prop({ default: false }) boardApprovalRequired: boolean;
+  @Prop({ default: '' }) tenantApprovedBy: string;
+  @Prop({ default: null }) tenantApprovedAt: Date | null;
+  @Prop({ default: '' }) tenantApprovalNotes: string;
+  @Prop({ type: [BoardApprovalSchema], default: [] })
+  boardApprovals: BoardApproval[];
 
   // Legacy single-file-upload path — still populated by the
   // original "upload a document" flow (and the board-ack-token
@@ -136,8 +182,12 @@ export class Policy {
 
   @Prop({ type: [PolicyAcknowledgmentSchema], default: [] })
   acknowledgments: PolicyAcknowledgment[];
-  // Only populated for board policies — one per current board member
-  // at publish time, matching the Meeting/Board Pack pattern.
+  // One per board member who needs to acknowledge — populated at
+  // publish time for both BOARD policies (the whole audience) and
+  // ORGANISATION policies (the board's slice of a wider audience),
+  // matching the Meeting/Board Pack pattern. A member's token is
+  // reused across versions; re-acknowledgement is computed from
+  // acknowledgments[].version the same way it is for employees.
   @Prop({ type: [PolicyAckTokenSchema], default: [] })
   ackTokens: PolicyAckToken[];
 }

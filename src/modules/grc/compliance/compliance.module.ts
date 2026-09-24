@@ -38,6 +38,10 @@ import {
   Employee,
   EmployeeSchema,
 } from 'src/modules/hr/schemas/employee.schema';
+import {
+  PolicyTemplate,
+  PolicyTemplateSchema,
+} from 'src/modules/super_admin/schemas/policy-template.schema';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { GovernanceModule } from '../governance/governance.module';
 
@@ -53,6 +57,7 @@ import { GovernanceModule } from '../governance/governance.module';
       { name: RegulatoryChange.name, schema: RegulatoryChangeSchema },
       { name: Incident.name, schema: IncidentSchema },
       { name: Employee.name, schema: EmployeeSchema },
+      { name: PolicyTemplate.name, schema: PolicyTemplateSchema },
     ]),
     GovernanceModule,
   ],

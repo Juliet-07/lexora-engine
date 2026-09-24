@@ -13,6 +13,7 @@ import {
   PolicyStatus,
   ReviewFrequency,
   AckRequirement,
+  BoardApprovalDecision,
 } from '../schemas';
 import {
   Employee,
@@ -20,27 +21,31 @@ import {
   EmploymentStatus,
 } from 'src/modules/hr/schemas/employee.schema';
 import {
+  PolicyTemplate,
+  PolicyTemplateDocument,
+  PolicyTemplateStatus,
+} from 'src/modules/super_admin/schemas/policy-template.schema';
+import {
   CreatePolicyDto,
   UpdatePolicyPropertiesDto,
   UpsertSectionDto,
   PublishPolicyDto,
+  DecideBoardApprovalDto,
   AddPolicyCommentDto,
   UploadPolicyDto,
   SubmitBoardAckDto,
 } from '../dtos';
 import { BoardMemberService } from 'src/modules/grc/governance/services';
 import { EmailService } from 'src/common/utils/mailing/email.service';
+import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 
-// Starter section sets for the common templates the "New policy or
-// procedure" dialog offers — a small, generic scaffold to write
-// into, not a substitute for the tenant's actual policy text.
-const STARTER_SECTIONS = [
-  'Purpose and scope',
-  'Regulatory framework',
-  'Definitions',
-  'Roles and responsibilities',
-  'Review and amendment',
-];
+interface RosterEntry {
+  name: string;
+  role: string;
+  email: string;
+  channel: 'employee' | 'board';
+}
 
 @Injectable()
 export class PolicyService {
@@ -48,6 +53,9 @@ export class PolicyService {
     @InjectModel(Policy.name) private readonly model: Model<PolicyDocument>,
     @InjectModel(Employee.name)
     private readonly employeeModel: Model<EmployeeDocument>,
+    @InjectModel(PolicyTemplate.name)
+    private readonly templateModel: Model<PolicyTemplateDocument>,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly boardMemberService: BoardMemberService,
     private readonly emailService: EmailService,
   ) {}
@@ -75,14 +83,35 @@ export class PolicyService {
     return d.getTime() < now.getTime();
   }
 
-  private async roster(tenantId: string, requirement: AckRequirement) {
+  // The acknowledgement audience: ORGANISATION reaches active
+  // employees (per acknowledgementRequirement) *and* the whole
+  // board; BOARD reaches only the board. "No acknowledgement
+  // required" empties the roster regardless of type.
+  private async roster(
+    tenantId: string,
+    type: PolicyType,
+    requirement: AckRequirement,
+  ): Promise<RosterEntry[]> {
     if (requirement === AckRequirement.NONE) return [];
+
+    const boardMembers = await this.boardMemberService.getAll(tenantId);
+    const boardEntries: RosterEntry[] = (boardMembers as any[])
+      .filter((b) => b.isActive)
+      .map((b) => ({
+        name: b.name,
+        role: b.role,
+        email: String(b.email).toLowerCase(),
+        channel: 'board',
+      }));
+
+    if (type === PolicyType.BOARD) return boardEntries;
+
     // "Department heads only" / "Specific roles" are tracked as a
     // scoping choice on the policy, but assignment still resolves to
-    // the tenant's active roster — a tenant this size manages that
-    // distinction by who they publish to, not a separate org chart
-    // query here.
-    return this.employeeModel
+    // the tenant's active employee roster — a tenant this size
+    // manages that distinction by who they publish to, not a
+    // separate org chart query here.
+    const employees = await this.employeeModel
       .find({
         tenantId: new Types.ObjectId(tenantId),
         employmentStatus: {
@@ -92,19 +121,31 @@ export class PolicyService {
       .select('firstName lastName email jobTitle')
       .sort({ firstName: 1 })
       .lean();
+    const employeeEntries: RosterEntry[] = employees.map((e: any) => ({
+      name: `${e.firstName} ${e.lastName}`,
+      role: e.jobTitle || '',
+      email: String(e.email).toLowerCase(),
+      channel: 'employee',
+    }));
+
+    return [...employeeEntries, ...boardEntries];
   }
 
   private async withComputedFields(tenantId: string, p: any) {
-    const roster = await this.roster(tenantId, p.acknowledgementRequirement);
+    const roster = await this.roster(
+      tenantId,
+      p.type,
+      p.acknowledgementRequirement,
+    );
     const ackByEmail = new Map(
       (p.acknowledgments ?? []).map((a: any) => [a.email, a]),
     );
-    const rosterStatus = roster.map((e: any) => {
-      const ack: any = ackByEmail.get(e.email.toLowerCase());
+    const rosterStatus = roster.map((e) => {
+      const ack: any = ackByEmail.get(e.email);
       const current = !!ack && ack.version === p.version;
       return {
-        name: `${e.firstName} ${e.lastName}`,
-        role: e.jobTitle || '',
+        name: e.name,
+        role: e.role,
         email: e.email,
         versionAcknowledged: current ? ack.version : null,
         dateAcknowledged: current ? ack.ackedAt : null,
@@ -120,6 +161,30 @@ export class PolicyService {
     const acknowledgedCount = rosterStatus.filter(
       (r) => r.status === 'Acknowledged',
     ).length;
+
+    const boardApprovalSummary = p.boardApprovalRequired
+      ? {
+          total: (p.boardApprovals ?? []).length,
+          approved: (p.boardApprovals ?? []).filter(
+            (r: any) => r.decision === BoardApprovalDecision.APPROVED,
+          ).length,
+          rejected: (p.boardApprovals ?? []).filter(
+            (r: any) => r.decision === BoardApprovalDecision.REJECTED,
+          ).length,
+          pending: (p.boardApprovals ?? []).filter(
+            (r: any) => r.decision === BoardApprovalDecision.PENDING,
+          ).length,
+          rows: (p.boardApprovals ?? []).map((r: any) => ({
+            name: r.name,
+            email: r.email,
+            decision: r.decision,
+            notes: r.notes,
+            decidedAt: r.decidedAt,
+            requestedAt: r.requestedAt,
+          })),
+        }
+      : null;
+
     return {
       ...p,
       computedOverdue: this.isOverdue(p.nextReviewDue),
@@ -129,6 +194,7 @@ export class PolicyService {
         ? Math.round((acknowledgedCount / assignedCount) * 100)
         : null,
       rosterStatus,
+      boardApprovalSummary,
     };
   }
 
@@ -136,7 +202,17 @@ export class PolicyService {
 
   async create(tenantId: string, dto: CreatePolicyDto) {
     const tId = new Types.ObjectId(tenantId);
-    const category = dto.category?.trim() || 'Uncategorised';
+
+    let template: PolicyTemplateDocument | null = null;
+    if (dto.templateId && Types.ObjectId.isValid(dto.templateId)) {
+      template = await this.templateModel.findOne({
+        _id: dto.templateId,
+        status: PolicyTemplateStatus.PUBLISHED,
+      });
+    }
+
+    const category =
+      dto.category?.trim() || template?.category || 'Uncategorised';
     const prefix =
       category
         .split(/\s+/)[0]
@@ -146,21 +222,20 @@ export class PolicyService {
     const count = await this.model.countDocuments({ tenantId: tId });
     const documentReference = `POL-${prefix}-${String(count + 1).padStart(3, '0')}`;
 
-    const isCustom = !dto.template || dto.template === 'Custom policy';
-    const sections = isCustom
-      ? []
-      : STARTER_SECTIONS.map((title, i) => ({
+    const sections = template
+      ? template.sections.map((s, i) => ({
           id: `s${i + 1}`,
-          title,
-          content: '',
+          title: s.title,
+          content: s.content ?? '',
           order: i,
-        }));
+        }))
+      : [];
 
     return this.model.create({
       tenantId: tId,
       title: dto.title,
       category,
-      type: PolicyType.ORGANISATION,
+      type: dto.type ?? PolicyType.ORGANISATION,
       status: PolicyStatus.DRAFT,
       version: 'v1',
       documentReference,
@@ -176,9 +251,12 @@ export class PolicyService {
             .map((s) => s.trim())
             .filter(Boolean)
         : [],
+      boardApprovalRequired: dto.boardApprovalRequired ?? false,
+      templateId: template?._id ?? null,
       sections,
       approvalHistory: [],
       comments: [],
+      boardApprovals: [],
       acknowledgments: [],
       ackTokens: [],
     });
@@ -308,6 +386,9 @@ export class PolicyService {
     if (dto.description !== undefined) p.description = dto.description;
     if (dto.linkedRegulationsOrStandards !== undefined)
       p.linkedRegulationsOrStandards = dto.linkedRegulationsOrStandards;
+    if (dto.type !== undefined) p.type = dto.type;
+    if (dto.boardApprovalRequired !== undefined)
+      p.boardApprovalRequired = dto.boardApprovalRequired;
     await p.save();
     return p;
   }
@@ -350,7 +431,7 @@ export class PolicyService {
   }
 
   // Draft <-> Under review — kicking off (or resuming) a review
-  // cycle. Publishing (below) is the only action that bumps the
+  // cycle. Approving (below) is the only action that bumps the
   // version and appends to approval history.
   async setStatus(tenantId: string, id: string, status: PolicyStatus) {
     const p = await this.getRawDoc(tenantId, id);
@@ -359,15 +440,91 @@ export class PolicyService {
     return p;
   }
 
+  // ── Approval (tenant, and — when required — the board) ─────────
+
   // approvedByName resolved server-side from the logged-in user —
-  // matches every other real-attribution field in this module.
-  async publish(
+  // matches every other real-attribution field in this module. When
+  // the policy doesn't require board sign-off this behaves exactly
+  // like the old single-step "publish"; when it does, it records the
+  // tenant's approval, opens board approval requests, and leaves
+  // publishing to decideBoardApproval once everyone has signed off.
+  async approve(
     tenantId: string,
     id: string,
     dto: PublishPolicyDto,
     approvedByName: string,
   ) {
     const p = await this.getRawDoc(tenantId, id);
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+
+    if (p.boardApprovalRequired) {
+      p.tenantApprovedBy = approvedByName || 'Unattributed';
+      p.tenantApprovedAt = new Date();
+      p.tenantApprovalNotes = dto.notes ?? '';
+      p.status = PolicyStatus.PENDING_BOARD_APPROVAL;
+      await this.openBoardApprovalRound(tenantId, p, businessName);
+      return p;
+    }
+
+    return this.finalizePublish(
+      tenantId,
+      p,
+      approvedByName || p.approvalAuthority || 'Unattributed',
+      dto.notes ?? '',
+      businessName,
+    );
+  }
+
+  private async openBoardApprovalRound(
+    tenantId: string,
+    p: PolicyDocument,
+    businessName: string,
+  ) {
+    const boardMembers = await this.boardMemberService.getAll(tenantId);
+    const active = (boardMembers as any[]).filter((b) => b.isActive);
+    if (!active.length) {
+      throw new BadRequestException(
+        'This policy requires board approval, but the tenant has no active board members to ask. Add board members under Board Management first.',
+      );
+    }
+    p.boardApprovals = active.map(
+      (b) =>
+        ({
+          boardMemberId: b._id,
+          name: b.name,
+          email: String(b.email).toLowerCase(),
+          token: randomBytes(24).toString('hex'),
+          decision: BoardApprovalDecision.PENDING,
+          notes: '',
+          decidedAt: null,
+          requestedAt: new Date(),
+        }) as any,
+    );
+    p.markModified('boardApprovals');
+    await p.save();
+
+    await Promise.all(
+      p.boardApprovals.map((row) =>
+        this.emailService
+          .sendPolicyForAcknowledgment({
+            to: row.email,
+            recipientName: row.name,
+            policyTitle: p.title,
+            ackLink: `${process.env.TENANT_APP_URL}/policy-approval/${row.token}`,
+            businessName,
+          })
+          .catch(() => {}),
+      ),
+    );
+  }
+
+  private async finalizePublish(
+    tenantId: string,
+    p: PolicyDocument,
+    approvedByName: string,
+    notes: string,
+    businessName: string,
+  ) {
     const wasPublishedBefore = p.approvalHistory.length > 0;
     const nextVersion = wasPublishedBefore
       ? `v${p.approvalHistory.length + 1}`
@@ -379,13 +536,169 @@ export class PolicyService {
     p.nextReviewDue = this.nextDueAfter(new Date(), p.reviewFrequency);
     p.approvalHistory.push({
       version: nextVersion,
-      approvedBy: approvedByName || p.approvalAuthority || 'Unattributed',
+      approvedBy: approvedByName,
       date: new Date(),
-      notes: dto.notes ?? '',
+      notes,
     } as any);
     p.markModified('approvalHistory');
+    await this.ensureBoardAckTokens(tenantId, p, businessName);
     await p.save();
     return p;
+  }
+
+  // Makes sure every board member currently in the acknowledgement
+  // audience has a standing ack token, and notifies them the
+  // document is ready to acknowledge — mirrors the legacy
+  // uploadDocument flow, now reused for the editor-published path
+  // for both BOARD and ORGANISATION policies.
+  private async ensureBoardAckTokens(
+    tenantId: string,
+    p: PolicyDocument,
+    businessName: string,
+  ) {
+    const roster = await this.roster(
+      tenantId,
+      p.type,
+      p.acknowledgementRequirement,
+    );
+    const boardEntries = roster.filter((r) => r.channel === 'board');
+    if (!boardEntries.length) return;
+
+    const existingByEmail = new Map(
+      p.ackTokens.map((t) => [t.recipientEmail, t]),
+    );
+    const toNotify: { email: string; name: string; token: string }[] = [];
+    boardEntries.forEach((b) => {
+      let row = existingByEmail.get(b.email);
+      if (!row) {
+        row = {
+          token: randomBytes(24).toString('hex'),
+          recipientEmail: b.email,
+          recipientName: b.name,
+          createdAt: new Date(),
+        } as any;
+        p.ackTokens.push(row as any);
+        existingByEmail.set(b.email, row!);
+      }
+      toNotify.push({ email: b.email, name: b.name, token: row!.token });
+    });
+    p.markModified('ackTokens');
+
+    await Promise.all(
+      toNotify.map(({ email, name, token }) =>
+        this.emailService
+          .sendPolicyForAcknowledgment({
+            to: email,
+            recipientName: name,
+            policyTitle: p.title,
+            ackLink: `${process.env.TENANT_APP_URL}/policy-ack/${token}`,
+            businessName,
+          })
+          .catch(() => {}),
+      ),
+    );
+  }
+
+  // Public — a board member approving or rejecting via their emailed
+  // link. Rejecting sends the policy back to Under review (with a
+  // system comment recording why); once every assigned board member
+  // has approved, this finishes the publish the tenant started.
+  async decideBoardApproval(token: string, dto: DecideBoardApprovalDto) {
+    const p = await this.model.findOne({ 'boardApprovals.token': token });
+    if (!p) throw new NotFoundException('This approval link is invalid.');
+    const row = p.boardApprovals.find((r) => r.token === token);
+    if (!row) throw new NotFoundException('This approval link is invalid.');
+    if (row.decision !== BoardApprovalDecision.PENDING) {
+      throw new BadRequestException('This approval has already been recorded.');
+    }
+
+    row.decision = dto.decision;
+    row.notes = dto.notes ?? '';
+    row.decidedAt = new Date();
+    p.markModified('boardApprovals');
+
+    if (dto.decision === BoardApprovalDecision.REJECTED) {
+      p.status = PolicyStatus.UNDER_REVIEW;
+      p.comments.push({
+        id: `c${Date.now().toString(36)}`,
+        author: row.name,
+        authorRole: 'Board',
+        date: new Date(),
+        content: row.notes
+          ? `Declined board approval: ${row.notes}`
+          : 'Declined board approval.',
+        parentId: null,
+      } as any);
+      p.markModified('comments');
+      await p.save();
+      return { success: true, outcome: 'rejected' as const };
+    }
+
+    const allApproved = p.boardApprovals.every(
+      (r) => r.decision === BoardApprovalDecision.APPROVED,
+    );
+    if (allApproved) {
+      const tenantId = p.tenantId.toString();
+      const businessName = await resolveBusinessName(this.userModel, tenantId);
+      await this.finalizePublish(
+        tenantId,
+        p,
+        p.tenantApprovedBy || 'Unattributed',
+        p.tenantApprovalNotes,
+        businessName,
+      );
+      return { success: true, outcome: 'published' as const };
+    }
+
+    await p.save();
+    return { success: true, outcome: 'pending' as const };
+  }
+
+  async getBoardApprovalSnapshot(token: string) {
+    const policy = await this.model
+      .findOne({ 'boardApprovals.token': token })
+      .lean();
+    if (!policy) throw new NotFoundException('This approval link is invalid.');
+    const row = (policy.boardApprovals as any[]).find((r) => r.token === token);
+    return {
+      title: policy.title,
+      category: policy.category,
+      description: policy.description,
+      version: policy.version,
+      sections: policy.sections ?? [],
+      fileName: policy.fileName,
+      fileUrl: policy.fileUrl,
+      mimeType: policy.mimeType,
+      prefillName: row.name,
+      decision: row.decision,
+      notes: row.notes,
+      alreadyDecided: row.decision !== BoardApprovalDecision.PENDING,
+    };
+  }
+
+  async sendBoardApprovalReminders(
+    tenantId: string,
+    id: string,
+    businessName: string,
+  ) {
+    const p = await this.getRawDoc(tenantId, id);
+    const outstanding = p.boardApprovals.filter(
+      (r) => r.decision === BoardApprovalDecision.PENDING,
+    );
+    await Promise.all(
+      outstanding.map((r) =>
+        this.emailService
+          .sendPolicyForAcknowledgment({
+            to: r.email,
+            recipientName: r.name,
+            policyTitle: p.title,
+            ackLink: `${process.env.TENANT_APP_URL}/policy-approval/${r.token}`,
+            businessName,
+          })
+          .catch(() => {}),
+      ),
+    );
+    return { remindersSent: outstanding.length };
   }
 
   async addComment(
@@ -409,26 +722,45 @@ export class PolicyService {
     return p;
   }
 
-  // Emails every roster member who has not acknowledged the current
-  // version — "Send reminders to outstanding".
+  // Emails every roster member (employee or board) who has not
+  // acknowledged the current version — "Send reminders to
+  // outstanding". Employees are pointed at their in-app policy list;
+  // board members reuse their standing ack-token link.
   async sendReminders(tenantId: string, id: string, businessName: string) {
     const p = await this.getRawDoc(tenantId, id);
-    const detail = await this.withComputedFields(tenantId, p.toObject());
-    const outstanding = detail.rosterStatus.filter(
-      (r: any) => r.status === 'Outstanding',
+    const roster = await this.roster(
+      tenantId,
+      p.type,
+      p.acknowledgementRequirement,
     );
+    const ackByEmail = new Map(p.acknowledgments.map((a) => [a.email, a]));
+    const outstanding = roster.filter((r) => {
+      const a = ackByEmail.get(r.email);
+      return !(a && a.version === p.version);
+    });
+    const tokenByEmail = new Map(
+      p.ackTokens.map((t) => [t.recipientEmail, t.token]),
+    );
+
     await Promise.all(
-      outstanding.map((r: any) =>
-        this.emailService
+      outstanding.map((r) => {
+        const ackLink =
+          r.channel === 'employee'
+            ? `${process.env.TENANT_APP_URL}/my/policies`
+            : tokenByEmail.has(r.email)
+              ? `${process.env.TENANT_APP_URL}/policy-ack/${tokenByEmail.get(r.email)}`
+              : null;
+        if (!ackLink) return Promise.resolve();
+        return this.emailService
           .sendPolicyForAcknowledgment({
             to: r.email,
             recipientName: r.name,
             policyTitle: p.title,
-            ackLink: `${process.env.TENANT_APP_URL}/grc/compliance/policies/${p._id}`,
+            ackLink,
             businessName,
           })
-          .catch(() => {}),
-      ),
+          .catch(() => {});
+      }),
     );
     return { remindersSent: outstanding.length };
   }
@@ -545,6 +877,7 @@ export class PolicyService {
       fileName: policy.fileName,
       fileUrl: policy.fileUrl,
       mimeType: policy.mimeType,
+      sections: policy.sections ?? [],
       uploadedAt: (policy as any).createdAt,
       prefillName: tokenEntry.recipientName,
       alreadyAcknowledged: already,

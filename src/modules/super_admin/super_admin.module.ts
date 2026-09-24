@@ -3,12 +3,15 @@ import { MongooseModule } from '@nestjs/mongoose';
 import {
   KnowledgeBaseAdminController,
   KnowledgeBaseController,
+  PolicyTemplateAdminController,
+  PolicyTemplateController,
   SuperAdminController,
 } from './controllers';
 import {
   SuperAdminService,
   SubscriptionExpiryService,
   KnowledgeBaseService,
+  PolicyTemplateService,
 } from './services';
 import {
   PlatformModule,
@@ -25,6 +28,8 @@ import {
   PlatformTemplateFolderSchema,
   KnowledgeEntry,
   KnowledgeEntrySchema,
+  PolicyTemplate,
+  PolicyTemplateSchema,
 } from './schemas';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import {
@@ -68,6 +73,7 @@ import { ReactivationController } from './controllers/reactivation.controller';
       },
       { name: PaymentTransaction.name, schema: PaymentTransactionSchema },
       { name: KnowledgeEntry.name, schema: KnowledgeEntrySchema },
+      { name: PolicyTemplate.name, schema: PolicyTemplateSchema },
     ]),
   ],
   controllers: [
@@ -76,6 +82,8 @@ import { ReactivationController } from './controllers/reactivation.controller';
     PlatformTemplateFolderController,
     KnowledgeBaseAdminController,
     KnowledgeBaseController,
+    PolicyTemplateAdminController,
+    PolicyTemplateController,
     ReactivationController,
   ],
   providers: [
@@ -84,6 +92,7 @@ import { ReactivationController } from './controllers/reactivation.controller';
     PlatformContractTemplateService,
     PlatformTemplateFolderService,
     KnowledgeBaseService,
+    PolicyTemplateService,
   ],
   exports: [
     SuperAdminService,
