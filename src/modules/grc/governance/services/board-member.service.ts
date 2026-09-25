@@ -163,6 +163,54 @@ export class BoardMemberService {
 
   // ── Reads ────────────────────────────────────────────────────
 
+  // .lean() skips Mongoose's schema-default hydration, so a board
+  // member created before this richer schema existed comes back with
+  // the new fields simply absent (not even `[]`/`{}`) rather than
+  // defaulted — the same gap hit earlier with audit-folders. Every
+  // consumer (list view, director detail — both read off this same
+  // getAll() result) calls .length/.map on these fields with no
+  // guard, so normalize them here rather than requiring a migration.
+  private normalize(m: any) {
+    return {
+      ...m,
+      nationality: m.nationality ?? '',
+      idNumber: m.idNumber ?? '',
+      taxResidency: m.taxResidency ?? '',
+      // A member from before lifecycle status existed was already an
+      // established appointment, not mid-onboarding — default to
+      // Active rather than Onboarding so they don't appear to
+      // regress into a checklist they never had.
+      lifecycleStatus: m.lifecycleStatus ?? BoardMemberLifecycleStatus.ACTIVE,
+      committees: m.committees ?? [],
+      attendancePercentage: m.attendancePercentage ?? 100,
+      otherDirectorships: m.otherDirectorships ?? [],
+      remuneration: {
+        annualRetainer: m.remuneration?.annualRetainer ?? 0,
+        committeeChairFee: m.remuneration?.committeeChairFee ?? 0,
+        meetingAttendanceFee: m.remuneration?.meetingAttendanceFee ?? 0,
+        lastReviewedAt: m.remuneration?.lastReviewedAt ?? null,
+      },
+      conflicts: (m.conflicts ?? []).map((c: any) => ({
+        ...c,
+        type: c.type ?? 'Standing',
+        resolved: c.resolved ?? false,
+      })),
+      training: (m.training ?? []).map((t: any) => ({
+        ...t,
+        type: t.type ?? 'Mandatory',
+        provider: t.provider ?? '',
+        hours: t.hours ?? 0,
+        expiresAt: t.expiresAt ?? null,
+      })),
+      skills: m.skills ?? [],
+      documents: m.documents ?? [],
+      onboardingChecklist: m.onboardingChecklist ?? [],
+      successionPlan: m.successionPlan ?? null,
+      offboarding: m.offboarding ?? null,
+      userId: m.userId ?? null,
+    };
+  }
+
   async getAll(tenantId: string) {
     const members = await this.boardMemberModel
       .find({ tenantId: new Types.ObjectId(tenantId) })
@@ -170,10 +218,10 @@ export class BoardMemberService {
       .populate('successorId', 'name role')
       .populate('successionPlan.riskAssessment.interimSuccessorId', 'name role')
       .lean();
-    return members.map((m) => ({
-      ...m,
-      termStatus: this.termStatus(m as any),
-    }));
+    return members.map((m) => {
+      const normalized = this.normalize(m);
+      return { ...normalized, termStatus: this.termStatus(normalized as any) };
+    });
   }
 
   async getById(tenantId: string, id: string): Promise<BoardMemberDocument> {
