@@ -5,6 +5,13 @@ export interface BoardMemberAppointedEmailData {
   businessName: string;
   appointedAt: Date;
   termEnds: Date;
+  // Present once board-member appointments create a matching Lexora
+  // User account (see board-member.service.ts#create). Optional so
+  // this template still renders for any caller that doesn't have
+  // portal credentials to send — until the dedicated board portal
+  // exists, loginUrl falls back to the tenant app.
+  tempPassword?: string;
+  loginUrl?: string;
 }
 
 export function boardMemberAppointedTemplate(
@@ -12,6 +19,42 @@ export function boardMemberAppointedTemplate(
 ): { subject: string; html: string } {
   const year = new Date().getFullYear();
   const subject = `Board Appointment — ${data.businessName}`;
+
+  const credentialsBlock =
+    data.tempPassword && data.loginUrl
+      ? `
+        <tr>
+          <td style="padding:0 48px;">
+            <table width="100%" cellpadding="0" cellspacing="0"
+              style="background-color:#f8f6f1;border-left:4px solid #c9a84c;border-radius:3px;">
+              <tr>
+                <td style="padding:24px 28px;">
+                  <p style="margin:0 0 16px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#888;font-family:Arial,sans-serif;">
+                    Your Lexora Account
+                  </p>
+                  <table cellpadding="0" cellspacing="0" width="100%">
+                    <tr>
+                      <td style="padding:6px 0;font-size:12px;color:#777;font-family:Arial,sans-serif;width:140px;">Email</td>
+                      <td style="padding:6px 0;font-size:14px;color:#2c2c2c;font-family:Arial,sans-serif;">${data.to}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;font-size:12px;color:#777;font-family:Arial,sans-serif;width:140px;">Temp Password</td>
+                      <td style="padding:6px 0;font-size:14px;color:#4B0082;font-family:'Courier New',monospace;font-weight:bold;letter-spacing:1px;">${data.tempPassword}</td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px 48px 0;">
+            <p style="margin:0;font-size:12px;color:#c97a2c;font-family:Arial,sans-serif;">
+              <strong>Note:</strong> the dedicated board member portal is being finalized — you'll be notified separately once it's ready to sign in to. Keep these credentials secure in the meantime.
+            </p>
+          </td>
+        </tr>`
+      : '';
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -37,7 +80,8 @@ export function boardMemberAppointedTemplate(
             Appointment effective ${data.appointedAt.toLocaleDateString()}, with a term running through ${data.termEnds.toLocaleDateString()}.
           </p>
         </td></tr>
-        <tr><td style="padding:0 48px 32px;border-top:1px solid #eee;">
+        ${credentialsBlock}
+        <tr><td style="padding:24px 48px 32px;border-top:1px solid #eee;">
           <p style="margin:24px 0 0;font-size:11px;color:#999;font-family:Arial,sans-serif;">
             &copy; ${year} ${data.businessName}. This is an automated notice.
           </p>

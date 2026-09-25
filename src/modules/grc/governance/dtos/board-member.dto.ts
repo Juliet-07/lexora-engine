@@ -9,8 +9,22 @@ import {
   ValidateIf,
   IsMongoId,
   IsNumber,
+  IsArray,
+  Min,
+  Max,
+  ValidateNested,
 } from 'class-validator';
-import { BoardMemberRole, SkillCategory, SkillLevel } from '../schemas';
+import { Type } from 'class-transformer';
+import {
+  BoardMemberRole,
+  BoardMemberLifecycleStatus,
+  SkillCategory,
+  SkillLevel,
+  TrainingType,
+  ConflictType,
+  SuccessionStageName,
+  SuccessionStageStatus,
+} from '../schemas';
 
 export class CreateBoardMemberDto {
   @ApiProperty() @IsString() name: string;
@@ -21,6 +35,14 @@ export class CreateBoardMemberDto {
   @ApiProperty() @IsDateString() appointedAt: string;
   @ApiProperty() @IsDateString() termEnds: string;
   @ApiPropertyOptional() @IsOptional() @IsString() bio?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() nationality?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() idNumber?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() taxResidency?: string;
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  otherDirectorships?: string[];
 }
 
 export class UpdateBoardMemberDto {
@@ -32,16 +54,33 @@ export class UpdateBoardMemberDto {
   @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() termEnds?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() bio?: string;
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() isActive?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() nationality?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() idNumber?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() taxResidency?: string;
+  @ApiPropertyOptional({ enum: BoardMemberLifecycleStatus })
+  @IsOptional()
+  @IsEnum(BoardMemberLifecycleStatus)
+  lifecycleStatus?: BoardMemberLifecycleStatus;
 }
 
 export class RecordConflictDto {
   @ApiProperty() @IsString() note: string;
+  @ApiPropertyOptional({ enum: ConflictType })
+  @IsOptional()
+  @IsEnum(ConflictType)
+  type?: ConflictType;
 }
 
 export class LogTrainingDto {
   @ApiProperty() @IsString() title: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() completedAt?: string;
+  @ApiPropertyOptional({ enum: TrainingType })
+  @IsOptional()
+  @IsEnum(TrainingType)
+  type?: TrainingType;
+  @ApiPropertyOptional() @IsOptional() @IsString() provider?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() hours?: number;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() expiresAt?: string;
 }
 
 export class SetSuccessorDto {
@@ -62,5 +101,105 @@ export class AddSkillDto {
   @ApiProperty({ enum: SkillLevel }) @IsEnum(SkillLevel) level: SkillLevel;
   @ApiPropertyOptional() @IsOptional() @IsNumber() yearsExperience?: number;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() qualified?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+}
+
+export class UpdateRemunerationDto {
+  @ApiPropertyOptional() @IsOptional() @IsNumber() annualRetainer?: number;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() committeeChairFee?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  meetingAttendanceFee?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  lastReviewedAt?: string;
+}
+
+class CommitteeMembershipDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() isChair?: boolean;
+}
+
+export class SetCommitteesDto {
+  @ApiProperty({ type: [CommitteeMembershipDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CommitteeMembershipDto)
+  committees: CommitteeMembershipDto[];
+}
+
+export class UpdateAttendanceDto {
+  @ApiProperty() @IsNumber() @Min(0) @Max(100) attendancePercentage: number;
+}
+
+export class AddOtherDirectorshipDto {
+  @ApiProperty() @IsString() value: string;
+}
+
+export class InitiateSuccessionDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() triggerType?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() triggeredBy?: string;
+}
+
+export class UpdateSuccessionStageDto {
+  @ApiProperty({ enum: SuccessionStageName })
+  @IsEnum(SuccessionStageName)
+  stageName: SuccessionStageName;
+  @ApiProperty({ enum: SuccessionStageStatus })
+  @IsEnum(SuccessionStageStatus)
+  status: SuccessionStageStatus;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+}
+
+export class UpdateRiskAssessmentDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() criticality?: string;
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  skillsAtRisk?: string[];
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  committeeRolesAtRisk?: string[];
+  @ApiPropertyOptional() @IsOptional() @IsString() regulatoryImpact?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() diversityImpact?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  institutionalKnowledgeRating?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() internalCandidates?: number;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() externalCandidates?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  timeToReplaceEstimate?: string;
+  @ApiPropertyOptional({ nullable: true })
+  @ValidateIf((o) => o.interimSuccessorId !== null)
+  @IsOptional()
+  @IsMongoId()
+  interimSuccessorId?: string | null;
+  @ApiPropertyOptional() @IsOptional() @IsString() interimNotes?: string;
+}
+
+export class AddSuccessionCandidateDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() source?: string;
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  skillsMatch?: string[];
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() bnrPreCleared?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() availability?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() assessmentStatus?: string;
+}
+
+export class InitiateOffboardingDto {
+  @ApiProperty() @IsString() reason: string;
+  @ApiProperty() @IsDateString() effectiveDate: string;
   @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
 }

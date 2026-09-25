@@ -13,6 +13,7 @@ export enum UserType {
   TENANT = 'tenant',
   CLIENT = 'client',
   EMPLOYEE = 'employee',
+  BOARD_MEMBER = 'board_member',
 }
 
 // ── SuperAdmin roles ─────────────────────────────────────────
