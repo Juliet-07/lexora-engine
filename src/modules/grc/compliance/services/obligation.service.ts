@@ -37,15 +37,48 @@ export class ComplianceObligationService {
     return Math.round((d.getTime() - now.getTime()) / 86400000);
   }
 
+  // The reminder ladder scales with how far apart renewals actually
+  // are — a 30-day heads-up on a monthly filing is basically the
+  // whole period, so monthly starts its countdown much closer in.
+  // Longer cycles reuse the same tail and just prepend a further-out
+  // first leg. Ad hoc / event-driven have no fixed period to scale
+  // off, so they keep the original flat ladder.
+  reminderLadderFor(freq: Frequency): number[] {
+    switch (freq) {
+      case Frequency.MONTHLY:
+        return [14, 7, 3];
+      case Frequency.QUARTERLY:
+        return [30, 14, 7, 3];
+      case Frequency.SEMI_ANNUAL:
+        return [90, 30, 14, 7, 3];
+      case Frequency.ANNUAL:
+        return [180, 90, 30, 14, 7, 3];
+      default:
+        return [90, 60, 30, 14, 7];
+    }
+  }
+
+  // Status only flips to Due at the *second* leg of the ladder, not
+  // the first — e.g. monthly's ladder is [14, 7, 3], so the first
+  // reminder at 14 days is a heads-up while still Compliant, and
+  // Due only kicks in from 7 days out.
+  private dueThreshold(reminderDays: number[]): number {
+    const sorted = [...(reminderDays ?? [])].sort((a, b) => b - a);
+    if (sorted.length >= 2) return sorted[1];
+    if (sorted.length === 1) return sorted[0];
+    return 30;
+  }
+
   computeStatus(o: {
     status: ObligationStatus;
     nextDueDate: Date;
+    reminderDays: number[];
   }): ObligationStatus {
     if (o.status === ObligationStatus.NOT_APPLICABLE)
       return ObligationStatus.NOT_APPLICABLE;
     const d = this.daysUntil(o.nextDueDate);
     if (d < 0) return ObligationStatus.OVERDUE;
-    if (d <= 30) return ObligationStatus.DUE;
+    if (d <= this.dueThreshold(o.reminderDays)) return ObligationStatus.DUE;
     return o.status === ObligationStatus.OVERDUE
       ? ObligationStatus.DUE
       : o.status;
@@ -65,6 +98,7 @@ export class ComplianceObligationService {
     const d = new Date(from);
     if (freq === Frequency.MONTHLY) d.setMonth(d.getMonth() + 1);
     else if (freq === Frequency.QUARTERLY) d.setMonth(d.getMonth() + 3);
+    else if (freq === Frequency.SEMI_ANNUAL) d.setMonth(d.getMonth() + 6);
     else if (freq === Frequency.ANNUAL) d.setFullYear(d.getFullYear() + 1);
     else d.setMonth(d.getMonth() + 1);
     return d;
@@ -72,6 +106,8 @@ export class ComplianceObligationService {
 
   private periodLabelFor(date: Date, freq: Frequency): string {
     if (freq === Frequency.ANNUAL) return `FY ${date.getFullYear()}`;
+    if (freq === Frequency.SEMI_ANNUAL)
+      return `${date.getMonth() < 6 ? 'H1' : 'H2'} ${date.getFullYear()}`;
     if (freq === Frequency.QUARTERLY)
       return `Q${Math.floor(date.getMonth() / 3) + 1} ${date.getFullYear()}`;
     if (freq === Frequency.MONTHLY)
@@ -107,8 +143,8 @@ export class ComplianceObligationService {
       evidenceRequirements: dto.evidenceRequirements ?? '',
       owner: dto.owner ?? '',
       certifier: dto.certifier ?? '',
-      reminderDays: [90, 60, 30, 14, 7],
-      status: ObligationStatus.DUE,
+      reminderDays: this.reminderLadderFor(dto.frequency),
+      status: ObligationStatus.COMPLIANT,
       ownerEmail: dto.ownerEmail ?? '',
       lastReminderMilestone: null,
     });
@@ -132,11 +168,22 @@ export class ComplianceObligationService {
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
-    return obligations.map((o) => ({
-      ...o,
-      computedStatus: this.computeStatus(o as any),
-      activeReminderDays: this.activeReminder(o as any),
-    }));
+    // reminderDays isn't tenant-editable, so always serve the live
+    // ladder for this obligation's frequency rather than whatever
+    // happens to be persisted — this is what makes the fix visible
+    // immediately for obligations created before this change, rather
+    // than waiting on the daily reminder cron to backfill them (see
+    // compliance-reminder.service.ts, which does that backfill for
+    // the persisted document + every other status consumer).
+    return obligations.map((o) => {
+      const reminderDays = this.reminderLadderFor(o.frequency);
+      const withLadder = { ...o, reminderDays };
+      return {
+        ...withLadder,
+        computedStatus: this.computeStatus(withLadder as any),
+        activeReminderDays: this.activeReminder(withLadder as any),
+      };
+    });
   }
 
   private async getRawDoc(
@@ -256,6 +303,7 @@ export class ComplianceObligationService {
     );
     obligation.status = ObligationStatus.COMPLIANT;
     obligation.nextDueDate = next;
+    obligation.reminderDays = this.reminderLadderFor(obligation.frequency);
     obligation.lastReminderMilestone = null;
     await obligation.save();
 

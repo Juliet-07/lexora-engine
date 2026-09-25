@@ -18,6 +18,7 @@ export enum Regulator {
 
 export enum Frequency {
   ANNUAL = 'Annual',
+  SEMI_ANNUAL = 'Semi-annual',
   QUARTERLY = 'Quarterly',
   MONTHLY = 'Monthly',
   AD_HOC = 'Ad hoc',
@@ -85,9 +86,17 @@ export class ComplianceObligation {
   @Prop({ default: '' }) owner: string;
   @Prop({ default: '' }) ownerEmail: string;
   @Prop({ default: '' }) certifier: string;
-  @Prop({ type: [Number], default: [90, 60, 30, 14, 7] })
+  // Set at creation and re-derived on every read/reminder pass from
+  // ComplianceObligationService.reminderLadderFor(frequency) — this
+  // stored value is a cache, not the source of truth, so it's safe
+  // to leave the schema-level default generic.
+  @Prop({ type: [Number], default: [30, 14, 7, 3] })
   reminderDays: number[];
-  @Prop({ enum: ObligationStatus, default: ObligationStatus.DUE })
+  // Nothing is due the moment an obligation is created — it only
+  // becomes Due once within its frequency's reminder window (see
+  // ComplianceObligationService.computeStatus). Compliant is the
+  // correct starting point.
+  @Prop({ enum: ObligationStatus, default: ObligationStatus.COMPLIANT })
   status: ObligationStatus;
   @Prop({ default: null }) lastReminderMilestone: number | null;
 }
