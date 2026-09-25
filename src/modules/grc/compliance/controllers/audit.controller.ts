@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Res,
@@ -23,6 +24,7 @@ import { AuditService } from '../services';
 import {
   CreateAuditDto,
   SetAuditStatusDto,
+  AddFolderDto,
   AddRequestDto,
   DisputeRequestDto,
   ResolveRequestDto,
@@ -159,6 +161,26 @@ export class AuditController {
   }
 
   // ── Document requests — tenant/auditor side ───────────────────
+  @Post(':id/folders')
+  addFolder(
+    @Param('id') id: string,
+    @Body() dto: AddFolderDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addFolder(t || u, id, dto);
+  }
+
+  @Delete(':id/folders/:folderId')
+  removeFolder(
+    @Param('id') id: string,
+    @Param('folderId') folderId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.removeFolder(t || u, id, folderId);
+  }
+
   @Post(':id/requests')
   addRequest(
     @Param('id') id: string,

@@ -20,6 +20,7 @@ import {
 import {
   CreateAuditDto,
   SetAuditStatusDto,
+  AddFolderDto,
   AddRequestDto,
   DisputeRequestDto,
   ResolveRequestDto,
@@ -136,10 +137,15 @@ export class AuditService {
   }
 
   async getAll(tenantId: string) {
-    return this.model
+    const list = await this.model
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
+    // .lean() skips Mongoose's schema-default hydration, so an
+    // engagement created before `folders` existed on the schema comes
+    // back with no `folders` field at all rather than `[]` — normalize
+    // it here rather than requiring a DB migration for old documents.
+    return list.map((e) => ({ ...e, folders: e.folders ?? [] }));
   }
 
   private async getRawDoc(
@@ -170,8 +176,50 @@ export class AuditService {
   // DOCUMENT REQUEST PORTAL
   // ═══════════════════════════════════════════════════════════
 
+  /** Create a folder up front, so it can be picked (not retyped) when
+   * a document request is raised — the tenant defines the folders,
+   * the request just references one. */
+  async addFolder(tenantId: string, id: string, dto: AddFolderDto) {
+    const a = await this.getRawDoc(tenantId, id);
+    const name = dto.name?.trim();
+    if (!name) throw new BadRequestException('Folder name is required.');
+    if (a.folders.some((f) => f.name.toLowerCase() === name.toLowerCase())) {
+      throw new BadRequestException('A folder with this name already exists.');
+    }
+    a.folders.push({ name } as any);
+    a.markModified('folders');
+    await a.save();
+    return a;
+  }
+
+  /** Removing a folder is blocked once a request has been raised
+   * against it — the folder name is a snapshot on those requests, so
+   * the request itself is the reason not to lose it silently. */
+  async removeFolder(tenantId: string, id: string, folderId: string) {
+    const a = await this.getRawDoc(tenantId, id);
+    const folder = (a.folders as any).id(folderId);
+    if (!folder) throw new NotFoundException('Folder not found');
+    const inUse = a.requests.some((r) => r.folder === folder.name);
+    if (inUse) {
+      throw new BadRequestException(
+        `Cannot remove "${folder.name}" — it already has document requests in it.`,
+      );
+    }
+    a.folders = a.folders.filter(
+      (f: any) => f._id.toString() !== folderId,
+    ) as any;
+    a.markModified('folders');
+    await a.save();
+    return a;
+  }
+
   async addRequest(tenantId: string, id: string, dto: AddRequestDto) {
     const a = await this.getRawDoc(tenantId, id);
+    if (!a.folders.some((f) => f.name === dto.folder)) {
+      throw new BadRequestException(
+        "Select a folder for this request — create it first under Folders if it doesn't exist yet.",
+      );
+    }
     const emp = await this.employeeModel
       .findOne({
         _id: dto.assignedToEmployeeId,
@@ -184,7 +232,7 @@ export class AuditService {
 
     a.requests.push({
       description: dto.description,
-      folder: dto.folder ?? '',
+      folder: dto.folder,
       assignedToEmployeeId: emp._id,
       assignedToName,
       dueDate: new Date(dto.dueDate),

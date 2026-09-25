@@ -48,6 +48,17 @@ export const NEXT_STATUS: Partial<
   [AuditEngagementStatus.REPORTING]: AuditEngagementStatus.CLOSED,
 };
 
+// A tenant-managed folder for an engagement's document requests —
+// created up front, then picked (not retyped) when a request is
+// raised. AuditRequest.folder stores a snapshot of the chosen
+// folder's name, so renaming/removing a folder later never rewrites
+// history on requests already raised against it.
+@Schema({ timestamps: true })
+export class AuditFolder {
+  @Prop({ required: true, trim: true }) name: string;
+}
+export const AuditFolderSchema = SchemaFactory.createForClass(AuditFolder);
+
 @Schema({ _id: false })
 export class RequestFile {
   @Prop({ required: true }) name: string;
@@ -63,11 +74,12 @@ export const RequestFileSchema = SchemaFactory.createForClass(RequestFile);
 @Schema({ timestamps: true })
 export class AuditRequest {
   @Prop({ required: true }) description: string;
-  // Tenant-typed folder label for this item (e.g. "Financial records",
-  // "HR files") — free text set when the request is created, not a
-  // separately-managed taxonomy. Requests sharing a folder name group
-  // together in the portal and in the zip download.
-  @Prop({ default: '' }) folder: string;
+  // Snapshot of the chosen AuditFolder's name at request-creation
+  // time — picked from the engagement's own folders (AuditService
+  // validates it against AuditEngagement.folders), not free text.
+  // Requests sharing a folder name group together in the portal and
+  // in the zip download.
+  @Prop({ required: true }) folder: string;
   @Prop({ type: Types.ObjectId, ref: 'Employee', required: true })
   assignedToEmployeeId: Types.ObjectId;
   // Snapshot of the assignee's name at request time, resolved
@@ -133,6 +145,11 @@ export class AuditEngagement {
   // frontend when the tenant's Risk Register is non-empty.
   @Prop({ type: [Types.ObjectId], ref: 'Risk', default: [] })
   linkedRiskIds: Types.ObjectId[];
+
+  // Tenant-created folders for this engagement's document requests —
+  // created up front (AuditService.addFolder), then picked from when
+  // raising a request. See AuditFolder above.
+  @Prop({ type: [AuditFolderSchema], default: [] }) folders: AuditFolder[];
 
   @Prop({ type: [AuditRequestSchema], default: [] }) requests: AuditRequest[];
   @Prop({ type: [AuditFindingSchema], default: [] }) findings: AuditFinding[];

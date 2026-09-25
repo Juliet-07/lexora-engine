@@ -39,9 +39,16 @@ export class SetAuditStatusDto {
   status: AuditEngagementStatus;
 }
 
+export class AddFolderDto {
+  @ApiProperty() @IsString() name: string;
+}
+
 export class AddRequestDto {
   @ApiProperty() @IsString() description: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() folder?: string;
+  // Must name one of the engagement's existing folders — validated
+  // in the service. Create the folder first (AddFolderDto) if it
+  // doesn't exist yet.
+  @ApiProperty() @IsString() folder: string;
   @ApiProperty() @IsString() assignedToEmployeeId: string;
   @ApiProperty() @IsDateString() dueDate: string;
 }
