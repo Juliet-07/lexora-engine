@@ -201,7 +201,8 @@ export class HrTenantController {
   @ApiOperation({ summary: 'Update a team' })
   updateTeam(
     @Param('id') id: string,
-    @Body() dto: { name?: string; description?: string },
+    @Body()
+    dto: { name?: string; description?: string; isAuditTeam?: boolean },
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {

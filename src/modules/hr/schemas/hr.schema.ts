@@ -20,6 +20,15 @@ export class HrTeam {
 
   @Prop({ default: true })
   isActive: boolean;
+
+  // The tenant's designated Audit team — at most one team per tenant.
+  // GRC's Audit Management module auto-assigns this team (its Head of
+  // Department as lead auditor) to every Internal audit engagement, so
+  // a tenant must flag one team here before creating an internal
+  // engagement. Enforced (only one true at a time) in
+  // EmployeeService.updateTeam.
+  @Prop({ default: false })
+  isAuditTeam: boolean;
 }
 
 export const HrTeamSchema = SchemaFactory.createForClass(HrTeam);

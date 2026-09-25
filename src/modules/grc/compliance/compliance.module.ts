@@ -39,6 +39,7 @@ import {
   Employee,
   EmployeeSchema,
 } from 'src/modules/hr/schemas/employee.schema';
+import { HrTeam, HrTeamSchema } from 'src/modules/hr/schemas/hr.schema';
 import {
   PolicyTemplate,
   PolicyTemplateSchema,
@@ -59,6 +60,7 @@ import { GovernanceModule } from '../governance/governance.module';
       { name: Incident.name, schema: IncidentSchema },
       { name: Employee.name, schema: EmployeeSchema },
       { name: PolicyTemplate.name, schema: PolicyTemplateSchema },
+      { name: HrTeam.name, schema: HrTeamSchema },
     ]),
     GovernanceModule,
   ],

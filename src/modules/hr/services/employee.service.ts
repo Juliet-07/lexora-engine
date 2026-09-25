@@ -152,10 +152,20 @@ export class EmployeeService {
   async updateTeam(
     tenantId: string,
     teamId: string,
-    dto: { name?: string; description?: string },
+    dto: { name?: string; description?: string; isAuditTeam?: boolean },
   ): Promise<HrTeamDocument> {
+    const tId = new Types.ObjectId(tenantId);
+    // At most one Audit team per tenant — unset any other team's flag
+    // first, mirroring the one-HOD-per-team invariant enforced in
+    // createEmployee.
+    if (dto.isAuditTeam === true) {
+      await this.teamModel.updateMany(
+        { tenantId: tId, _id: { $ne: teamId } },
+        { $set: { isAuditTeam: false } },
+      );
+    }
     const team = await this.teamModel.findOneAndUpdate(
-      { _id: teamId, tenantId: new Types.ObjectId(tenantId) },
+      { _id: teamId, tenantId: tId },
       { $set: dto },
       { new: true },
     );

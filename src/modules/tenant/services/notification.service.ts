@@ -71,6 +71,33 @@ interface ProbationStartedEvent {
   employeeId: string;
   probationEndDate: Date;
 }
+interface AuditDocumentRequestedEvent {
+  tenantId: string;
+  employeeUserId: string;
+  auditName: string;
+  description: string;
+  dueDate: string;
+}
+interface AuditDocumentSubmittedEvent {
+  tenantId: string;
+  recipientUserId: string;
+  auditName: string;
+  requestDescription: string;
+  submittedBy: string;
+}
+interface AuditDocumentDisputedEvent {
+  tenantId: string;
+  recipientUserId: string;
+  auditName: string;
+  requestDescription: string;
+  reason: string;
+}
+interface AuditDocumentResolvedEvent {
+  tenantId: string;
+  employeeUserId: string;
+  auditName: string;
+  requestDescription: string;
+}
 
 @Injectable()
 export class TenantNotificationService {
@@ -505,6 +532,57 @@ export class TenantNotificationService {
       'Probation period started',
       `${name}'s probation ends ${new Date(e.probationEndDate).toLocaleDateString()}.`,
       '/hr/employees',
+    );
+  }
+
+  // ── Audit Management document-request portal — real notification
+  // to whichever side didn't just act, matching the same rule as
+  // every other thread in this service. ──
+  @OnEvent('grc.audit.document_requested')
+  async onAuditDocumentRequested(e: AuditDocumentRequestedEvent) {
+    await this.create(
+      e.tenantId,
+      e.employeeUserId,
+      TenantNotificationType.DOCUMENT,
+      `Document requested — ${e.auditName}`,
+      `${e.description} (due ${new Date(e.dueDate).toLocaleDateString()}).`,
+      '/my/audit-requests',
+    );
+  }
+
+  @OnEvent('tenant.audit_document.submitted')
+  async onAuditDocumentSubmitted(e: AuditDocumentSubmittedEvent) {
+    await this.create(
+      e.tenantId,
+      e.recipientUserId,
+      TenantNotificationType.DOCUMENT,
+      `Documents submitted — ${e.auditName}`,
+      `${e.submittedBy} uploaded files for "${e.requestDescription}".`,
+      '/grc/compliance/audits',
+    );
+  }
+
+  @OnEvent('tenant.audit_document.disputed')
+  async onAuditDocumentDisputed(e: AuditDocumentDisputedEvent) {
+    await this.create(
+      e.tenantId,
+      e.recipientUserId,
+      TenantNotificationType.DOCUMENT,
+      `Document request disputed — ${e.auditName}`,
+      `"${e.requestDescription}": ${e.reason}`,
+      '/grc/compliance/audits',
+    );
+  }
+
+  @OnEvent('employee.audit_document.resolved')
+  async onAuditDocumentResolved(e: AuditDocumentResolvedEvent) {
+    await this.create(
+      e.tenantId,
+      e.employeeUserId,
+      TenantNotificationType.DOCUMENT,
+      `Request resolved — ${e.auditName}`,
+      `"${e.requestDescription}" has been marked resolved.`,
+      '/my/audit-requests',
     );
   }
 }

@@ -1,9 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsEnum, IsDateString } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsEnum,
+  IsDateString,
+  IsArray,
+} from 'class-validator';
 import {
   AuditType,
   AuditEngagementStatus,
-  RequestStatus,
   FindingSeverity,
   FindingStatus,
 } from '../schemas';
@@ -14,6 +19,18 @@ export class CreateAuditDto {
   @ApiPropertyOptional() @IsOptional() @IsString() scope?: string;
   @ApiProperty() @IsDateString() startDate: string;
   @ApiProperty() @IsDateString() endDate: string;
+  // Required when type is External — validated in the service since it
+  // depends on another field's value. Ignored for Internal engagements,
+  // which auto-resolve their team instead.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  externalAuditorName?: string;
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  linkedRiskIds?: string[];
 }
 
 export class SetAuditStatusDto {
@@ -24,14 +41,22 @@ export class SetAuditStatusDto {
 
 export class AddRequestDto {
   @ApiProperty() @IsString() description: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() assignedTo?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() folder?: string;
+  @ApiProperty() @IsString() assignedToEmployeeId: string;
   @ApiProperty() @IsDateString() dueDate: string;
 }
 
-export class SetRequestStatusDto {
-  @ApiProperty({ enum: RequestStatus })
-  @IsEnum(RequestStatus)
-  status: RequestStatus;
+export class SubmitRequestFilesDto {
+  // Files themselves arrive as multipart form data — nothing else
+  // required in the body.
+}
+
+export class DisputeRequestDto {
+  @ApiProperty() @IsString() reason: string;
+}
+
+export class ResolveRequestDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() note?: string;
 }
 
 export class AddFindingDto {
