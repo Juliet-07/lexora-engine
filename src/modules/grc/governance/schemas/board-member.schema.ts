@@ -135,6 +135,26 @@ export enum BoardOnboardingStageId {
   INDUCTION = 'induction',
 }
 
+// Fixed reference lists for the board portal's real onboarding forms
+// (lexora-board's "My Onboarding" screen) — mirrors the PO's own
+// reference build (src/data/onboardingMockData.ts there) exactly, so
+// a submission's ids always line up with what the form actually
+// showed. Kept here, not just on the frontend, so the backend can
+// validate a submission's ids/completeness itself rather than
+// trusting the client.
+export const REGULATORY_QUESTION_IDS = [
+  'sanction',
+  'bankrupt',
+  'convictions',
+] as const;
+export const COI_QUESTION_IDS = ['interest', 'related'] as const;
+export const APPOINTMENT_DOCUMENT_IDS = ['charter', 'conduct', 'nda'] as const;
+export const ONBOARDING_TRAINING_MODULE_IDS = [
+  'aml',
+  'privacy',
+  'abc',
+] as const;
+
 export const ONBOARDING_CHECKLIST_DEFAULTS: {
   label: string;
   stageId: BoardOnboardingStageId;
@@ -203,6 +223,89 @@ export class ChecklistItem {
   @Prop({ default: null }) stageId: string | null;
 }
 export const ChecklistItemSchema = SchemaFactory.createForClass(ChecklistItem);
+
+// A past directorship (regulatory Fit & Proper form) or a current one
+// (Documents & COI form) — same three-field shape the board portal's
+// own reference form uses for both, just relabeled per context there.
+@Schema({ _id: false })
+export class BoardDirectorshipEntry {
+  @Prop({ required: true }) company: string;
+  @Prop({ required: true }) position: string;
+  @Prop({ default: '' }) detail: string;
+}
+export const BoardDirectorshipEntrySchema = SchemaFactory.createForClass(
+  BoardDirectorshipEntry,
+);
+
+@Schema({ _id: false })
+export class OnboardingYesNoAnswer {
+  @Prop({ required: true }) questionId: string;
+  @Prop({ default: false }) yes: boolean;
+  @Prop({ default: '' }) detail: string;
+}
+export const OnboardingYesNoAnswerSchema = SchemaFactory.createForClass(
+  OnboardingYesNoAnswer,
+);
+
+// Step 2 of the board portal's real onboarding journey — a genuine
+// regulatory Fit & Proper declaration, not a checkbox. Submitted once,
+// server-validated to come after the appointment letter is accepted.
+@Schema({ _id: false })
+export class FitProperDeclaration {
+  @Prop({ required: true }) fullName: string;
+  @Prop({ required: true }) dob: Date;
+  @Prop({ required: true }) idNumber: string;
+  @Prop({ required: true }) nationality: string;
+  @Prop({ required: true }) address: string;
+  @Prop({ type: [BoardDirectorshipEntrySchema], default: [] })
+  directorships: BoardDirectorshipEntry[];
+  @Prop({ type: [OnboardingYesNoAnswerSchema], default: [] })
+  answers: OnboardingYesNoAnswer[];
+  @Prop({ default: '' }) referenceName: string;
+  @Prop({ default: '' }) referenceRelationship: string;
+  @Prop({ default: '' }) referenceEmail: string;
+  @Prop({ required: true, default: () => new Date() }) submittedAt: Date;
+}
+export const FitProperDeclarationSchema =
+  SchemaFactory.createForClass(FitProperDeclaration);
+
+// Step 3 — the three appointment documents (Board Charter, Code of
+// Conduct, NDA) plus the Conflict of Interest declaration, submitted
+// together as one action (matching the reference build's single
+// "Submit documents & declaration" button).
+@Schema({ _id: false })
+export class DocumentsCoiDeclaration {
+  @Prop({ type: [String], default: [] }) signedDocumentIds: string[];
+  @Prop({ default: false }) holdsOtherDirectorships: boolean;
+  @Prop({ type: [BoardDirectorshipEntrySchema], default: [] })
+  currentDirectorships: BoardDirectorshipEntry[];
+  @Prop({ type: [OnboardingYesNoAnswerSchema], default: [] })
+  answers: OnboardingYesNoAnswer[];
+  @Prop({ required: true, default: () => new Date() }) submittedAt: Date;
+}
+export const DocumentsCoiDeclarationSchema = SchemaFactory.createForClass(
+  DocumentsCoiDeclaration,
+);
+
+// Step 4 — the three mandatory training modules.
+@Schema({ _id: false })
+export class OnboardingTrainingProgress {
+  @Prop({ type: [String], default: [] }) completedModuleIds: string[];
+  @Prop({ default: null }) completedAt: Date | null;
+}
+export const OnboardingTrainingProgressSchema = SchemaFactory.createForClass(
+  OnboardingTrainingProgress,
+);
+
+// Step 5 — induction pack acknowledgement.
+@Schema({ _id: false })
+export class InductionAcknowledgement {
+  @Prop({ default: null }) scheduledDate: string | null;
+  @Prop({ required: true, default: () => new Date() }) acknowledgedAt: Date;
+}
+export const InductionAcknowledgementSchema = SchemaFactory.createForClass(
+  InductionAcknowledgement,
+);
 
 @Schema({ _id: false })
 export class ConflictDisclosure {
@@ -414,6 +517,23 @@ export class BoardMember {
 
   @Prop({ type: [ChecklistItemSchema], default: [] })
   onboardingChecklist: ChecklistItem[];
+
+  // ── Real onboarding form submissions (board portal, self-service) ──
+  // One per stage, null until that stage is actually submitted — the
+  // "My Onboarding" screen's real, persisted answers, not a checkbox.
+  // Marking the matching onboardingChecklist item(s) done happens
+  // alongside each submission (see board-member.service.ts).
+  @Prop({ type: FitProperDeclarationSchema, default: null })
+  fitProperDeclaration: FitProperDeclaration | null;
+
+  @Prop({ type: DocumentsCoiDeclarationSchema, default: null })
+  documentsCoiDeclaration: DocumentsCoiDeclaration | null;
+
+  @Prop({ type: OnboardingTrainingProgressSchema, default: () => ({}) })
+  onboardingTraining: OnboardingTrainingProgress;
+
+  @Prop({ type: InductionAcknowledgementSchema, default: null })
+  inductionAcknowledgement: InductionAcknowledgement | null;
 
   @Prop({ type: SuccessionPlanSchema, default: null })
   successionPlan: SuccessionPlan | null;

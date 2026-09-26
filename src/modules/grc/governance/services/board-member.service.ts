@@ -17,6 +17,8 @@ import {
   KNOWLEDGE_TRANSFER_CHECKLIST_DEFAULTS,
   ONBOARDING_CHECKLIST_DEFAULTS,
   OFFBOARDING_CHECKLIST_DEFAULTS,
+  APPOINTMENT_DOCUMENT_IDS,
+  ONBOARDING_TRAINING_MODULE_IDS,
 } from '../schemas';
 import {
   CreateBoardMemberDto,
@@ -34,6 +36,10 @@ import {
   UpdateRiskAssessmentDto,
   AddSuccessionCandidateDto,
   InitiateOffboardingDto,
+  SubmitFitProperDto,
+  SubmitDocumentsCoiDto,
+  SubmitOnboardingTrainingDto,
+  SubmitInductionDto,
 } from '../dtos/index.dto';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
@@ -817,6 +823,52 @@ export class BoardMemberService {
     return member;
   }
 
+  // Marks every onboardingChecklist item belonging to a given portal
+  // stage as done — used by each real self-service submission below
+  // (a stage is submitted as one action, e.g. "Submit documents &
+  // declaration", not item-by-item). Caller still calls
+  // applyOnboardingGraduation + save() itself afterward.
+  private markStageDone(
+    member: BoardMemberDocument,
+    stageId: BoardOnboardingStageId,
+  ) {
+    let changed = false;
+    for (const item of member.onboardingChecklist) {
+      if (item.stageId === stageId && !item.done) {
+        item.done = true;
+        item.completedAt = new Date();
+        changed = true;
+      }
+    }
+    if (changed) member.markModified('onboardingChecklist');
+  }
+
+  private stageDone(
+    member: BoardMemberDocument,
+    stageId: BoardOnboardingStageId,
+  ): boolean {
+    const items = member.onboardingChecklist.filter(
+      (i) => i.stageId === stageId,
+    );
+    return items.length > 0 && items.every((i) => i.done);
+  }
+
+  // Server-side step ordering — the reference build's own stepper
+  // only lets the *current* step be edited (everything after is
+  // "Locked"), so this enforces the same real gate here rather than
+  // trusting the frontend to keep the user in order.
+  private requireStageDone(
+    member: BoardMemberDocument,
+    stageId: BoardOnboardingStageId,
+    whatComesFirst: string,
+  ) {
+    if (!this.stageDone(member, stageId)) {
+      throw new BadRequestException(
+        `Please ${whatComesFirst} before this step.`,
+      );
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════
   // BOARD PORTAL — self-service (the board member's own view of
   // their onboarding, reached via lexora-board, UserType.BOARD_MEMBER)
@@ -845,12 +897,15 @@ export class BoardMemberService {
     };
   }
 
-  // Real onboarding state for the "My Onboarding" screen — the six
-  // portal stages (BoardOnboardingStageId) plus the real checklist,
-  // each item tagged with the stage it belongs to. No dummy/mock
-  // data: a member fresh out of createWithContract genuinely has
-  // every item undone except once their appointment letter is
-  // countersigned (see onAppointmentContractCountersigned).
+  // Real onboarding state for the "My Onboarding" screen — the real
+  // checklist (each item tagged with the stage it belongs to) plus,
+  // for each of the five real stages, whether it's done and — for the
+  // four that collect real data — the actual submission on file, so a
+  // reload shows what was really submitted rather than losing it to
+  // browser-only state. No dummy/mock data: a member fresh out of
+  // createWithContract genuinely has every item undone except once
+  // their appointment letter is countersigned (see
+  // onAppointmentContractCountersigned).
   async getMyOnboarding(userId: string) {
     const member = await this.getByUserId(userId);
     const checklist = member.onboardingChecklist;
@@ -872,32 +927,135 @@ export class BoardMemberService {
       doneItems: done.length,
       startedAt,
       completedAt,
+      stages: {
+        accept: { done: this.stageDone(member, BoardOnboardingStageId.ACCEPT) },
+        fitProper: {
+          done: this.stageDone(member, BoardOnboardingStageId.FIT_PROPER),
+          submission: member.fitProperDeclaration ?? null,
+        },
+        documentsCoi: {
+          done: this.stageDone(member, BoardOnboardingStageId.SIGN_DOCS),
+          submission: member.documentsCoiDeclaration ?? null,
+        },
+        training: {
+          done: this.stageDone(member, BoardOnboardingStageId.TRAINING),
+          completedModuleIds:
+            member.onboardingTraining?.completedModuleIds ?? [],
+        },
+        induction: {
+          done: this.stageDone(member, BoardOnboardingStageId.INDUCTION),
+          acknowledgement: member.inductionAcknowledgement ?? null,
+        },
+      },
     };
   }
 
-  // A board member can only ever mark an item DONE, never undone —
-  // matches KYC onboarding's own self-service semantics (a client
-  // can't un-submit a section either). The one "accept" item
-  // (appointment letter) is intentionally excluded — it can only be
-  // completed by actually countersigning the contract, which is a
-  // different, already-existing flow (ContractController's
-  // sign/countersign endpoints), not a checkbox.
-  async completeMyOnboardingItem(userId: string, index: number) {
+  // ── Step 2 — Regulatory Fit & Proper declaration ────────────────
+  async submitFitProper(userId: string, dto: SubmitFitProperDto) {
     const member = await this.getByUserId(userId);
-    const item = member.onboardingChecklist[index];
-    if (!item) throw new NotFoundException('Onboarding item not found');
-    if (item.stageId === BoardOnboardingStageId.ACCEPT) {
-      throw new BadRequestException(
-        'This step is completed automatically once your appointment letter is countersigned.',
-      );
-    }
-    if (item.done) return member;
-    item.done = true;
-    item.completedAt = new Date();
-    member.markModified('onboardingChecklist');
+    this.requireStageDone(
+      member,
+      BoardOnboardingStageId.ACCEPT,
+      'accept your appointment letter',
+    );
+    member.fitProperDeclaration = {
+      fullName: dto.fullName,
+      dob: new Date(dto.dob),
+      idNumber: dto.idNumber,
+      nationality: dto.nationality,
+      address: dto.address,
+      directorships: dto.directorships ?? [],
+      answers: dto.answers ?? [],
+      referenceName: dto.referenceName ?? '',
+      referenceRelationship: dto.referenceRelationship ?? '',
+      referenceEmail: dto.referenceEmail ?? '',
+      submittedAt: new Date(),
+    } as any;
+    this.markStageDone(member, BoardOnboardingStageId.FIT_PROPER);
     this.applyOnboardingGraduation(member);
     await member.save();
-    return member;
+    return this.getMyOnboarding(userId);
+  }
+
+  // ── Step 3 — Documents & Conflict of Interest declaration ───────
+  async submitDocumentsCoi(userId: string, dto: SubmitDocumentsCoiDto) {
+    const member = await this.getByUserId(userId);
+    this.requireStageDone(
+      member,
+      BoardOnboardingStageId.FIT_PROPER,
+      'submit your Fit & Proper declaration',
+    );
+    const missing = APPOINTMENT_DOCUMENT_IDS.filter(
+      (id) => !dto.signedDocumentIds.includes(id),
+    );
+    if (missing.length) {
+      throw new BadRequestException(
+        `All appointment documents must be signed first (missing: ${missing.join(', ')}).`,
+      );
+    }
+    member.documentsCoiDeclaration = {
+      signedDocumentIds: dto.signedDocumentIds,
+      holdsOtherDirectorships: dto.holdsOtherDirectorships,
+      currentDirectorships: dto.currentDirectorships ?? [],
+      answers: dto.answers ?? [],
+      submittedAt: new Date(),
+    } as any;
+    this.markStageDone(member, BoardOnboardingStageId.SIGN_DOCS);
+    this.applyOnboardingGraduation(member);
+    await member.save();
+    return this.getMyOnboarding(userId);
+  }
+
+  // ── Step 4 — Mandatory training ──────────────────────────────────
+  async submitOnboardingTraining(
+    userId: string,
+    dto: SubmitOnboardingTrainingDto,
+  ) {
+    const member = await this.getByUserId(userId);
+    this.requireStageDone(
+      member,
+      BoardOnboardingStageId.SIGN_DOCS,
+      'sign your appointment documents',
+    );
+    const missing = ONBOARDING_TRAINING_MODULE_IDS.filter(
+      (id) => !dto.completedModuleIds.includes(id),
+    );
+    if (missing.length) {
+      throw new BadRequestException(
+        `All mandatory modules must be completed first (missing: ${missing.join(', ')}).`,
+      );
+    }
+    member.onboardingTraining = {
+      completedModuleIds: dto.completedModuleIds,
+      completedAt: new Date(),
+    } as any;
+    member.markModified('onboardingTraining');
+    this.markStageDone(member, BoardOnboardingStageId.TRAINING);
+    this.applyOnboardingGraduation(member);
+    await member.save();
+    return this.getMyOnboarding(userId);
+  }
+
+  // ── Step 5 — Induction pack acknowledgement ─────────────────────
+  // The last real step — applyOnboardingGraduation flips lifecycleStatus
+  // to Active here the moment every checklist item is done, exactly
+  // like the reference build's Step 6 (portal activation) happening
+  // "automatically" the instant Step 5 is confirmed.
+  async submitInduction(userId: string, dto: SubmitInductionDto) {
+    const member = await this.getByUserId(userId);
+    this.requireStageDone(
+      member,
+      BoardOnboardingStageId.TRAINING,
+      'complete your mandatory training',
+    );
+    member.inductionAcknowledgement = {
+      scheduledDate: dto.scheduledDate ?? null,
+      acknowledgedAt: new Date(),
+    } as any;
+    this.markStageDone(member, BoardOnboardingStageId.INDUCTION);
+    this.applyOnboardingGraduation(member);
+    await member.save();
+    return this.getMyOnboarding(userId);
   }
 
   // ── Succession planning ──────────────────────────────────────

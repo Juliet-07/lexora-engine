@@ -280,3 +280,79 @@ export class InitiateOffboardingDto {
   @ApiProperty() @IsDateString() effectiveDate: string;
   @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
 }
+
+// ═══════════════════════════════════════════════════════════════
+// BOARD PORTAL — self-service onboarding form submissions. Mirrors
+// the PO's own reference build (lexora-board's onboardingMockData.ts)
+// field-for-field: a past directorship (Fit & Proper) or a current
+// one (Documents & COI) share this same three-field shape there too.
+// ═══════════════════════════════════════════════════════════════
+
+export class BoardDirectorshipEntryDto {
+  @ApiProperty() @IsString() company: string;
+  @ApiProperty() @IsString() position: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() detail?: string;
+}
+
+export class OnboardingYesNoAnswerDto {
+  @ApiProperty() @IsString() questionId: string;
+  @ApiProperty() @IsBoolean() yes: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() detail?: string;
+}
+
+export class SubmitFitProperDto {
+  @ApiProperty() @IsString() fullName: string;
+  @ApiProperty() @IsDateString() dob: string;
+  @ApiProperty() @IsString() idNumber: string;
+  @ApiProperty() @IsString() nationality: string;
+  @ApiProperty() @IsString() address: string;
+  @ApiPropertyOptional({ type: [BoardDirectorshipEntryDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BoardDirectorshipEntryDto)
+  directorships?: BoardDirectorshipEntryDto[];
+  @ApiPropertyOptional({ type: [OnboardingYesNoAnswerDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OnboardingYesNoAnswerDto)
+  answers?: OnboardingYesNoAnswerDto[];
+  @ApiPropertyOptional() @IsOptional() @IsString() referenceName?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  referenceRelationship?: string;
+  @ApiPropertyOptional() @IsOptional() @IsEmail() referenceEmail?: string;
+}
+
+export class SubmitDocumentsCoiDto {
+  @ApiProperty({ type: [String], description: "'charter' | 'conduct' | 'nda'" })
+  @IsArray()
+  @IsString({ each: true })
+  signedDocumentIds: string[];
+  @ApiProperty() @IsBoolean() holdsOtherDirectorships: boolean;
+  @ApiPropertyOptional({ type: [BoardDirectorshipEntryDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BoardDirectorshipEntryDto)
+  currentDirectorships?: BoardDirectorshipEntryDto[];
+  @ApiPropertyOptional({ type: [OnboardingYesNoAnswerDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OnboardingYesNoAnswerDto)
+  answers?: OnboardingYesNoAnswerDto[];
+}
+
+export class SubmitOnboardingTrainingDto {
+  @ApiProperty({ type: [String], description: "'aml' | 'privacy' | 'abc'" })
+  @IsArray()
+  @IsString({ each: true })
+  completedModuleIds: string[];
+}
+
+export class SubmitInductionDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() scheduledDate?: string;
+}
