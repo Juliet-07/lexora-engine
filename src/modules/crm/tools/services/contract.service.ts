@@ -66,6 +66,7 @@ import {
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+import { UserType } from 'src/common/interfaces/user-role.enum';
 import {
   ClientProfileRecord,
   ClientProfileDocument,
@@ -1017,49 +1018,59 @@ export class ContractService {
     } as any);
 
     // Three real, distinct delivery paths:
-    //  1. A registered, already ACTIVE client signs through their
-    //     own authenticated client-app portal — no token needed.
-    //  2. A client linked to this contract but still genuinely
-    //     PENDING (never activated — the real KYC-onboarding case,
-    //     where they have no usable credentials yet) gets a real,
-    //     token-gated public link, but hosted on the CLIENT app —
-    //     that's their own eventual home, not the internal tenant
-    //     app, even before they can log in.
-    //  3. An external party with no client relationship at all (no
-    //     clientId) has no connection to the client app whatsoever,
-    //     so they keep the real, token-gated public link on the
-    //     TENANT app instead.
+    //  1. A registered, already ACTIVE client (or board member) signs
+    //     through their own authenticated app portal — no token
+    //     needed.
+    //  2. A linked user still genuinely PENDING (never activated —
+    //     the real KYC-onboarding / board-onboarding case, where
+    //     they have no usable credentials yet) gets a real,
+    //     token-gated public link, but hosted on THEIR OWN eventual
+    //     app (client app for a client, board app for a board
+    //     member) — that's their own eventual home, not the internal
+    //     tenant app, even before they can log in.
+    //  3. An external party with no linked-user relationship at all
+    //     (no clientId) has no connection to either app, so they keep
+    //     the real, token-gated public link on the TENANT app
+    //     instead.
     let isActiveRegisteredClient = false;
     let isPendingClient = false;
+    let isBoardMember = false;
     if (contract.clientId) {
       const linkedClient = await this.userModel
         .findById(contract.clientId)
-        .select('status')
+        .select('status userType')
         .lean();
       isActiveRegisteredClient = linkedClient?.status === 'active';
       isPendingClient = !isActiveRegisteredClient && !!linkedClient;
+      isBoardMember = linkedClient?.userType === UserType.BOARD_MEMBER;
     }
+    const linkedAppBaseUrl = isBoardMember
+      ? process.env.BOARD_APP_URL
+      : process.env.CLIENT_APP_URL;
+    const linkedAppEnvVarName = isBoardMember
+      ? 'BOARD_APP_URL'
+      : 'CLIENT_APP_URL';
     let signingUrl: string;
     if (isActiveRegisteredClient) {
-      const clientBaseUrl = process.env.CLIENT_APP_URL;
-      if (!clientBaseUrl) {
+      if (!linkedAppBaseUrl) {
         throw new Error(
-          'CLIENT_APP_URL is not configured — cannot build a valid contract link',
+          `${linkedAppEnvVarName} is not configured — cannot build a valid contract link`,
         );
       }
-      signingUrl = `${clientBaseUrl}/contracts`;
+      signingUrl = isBoardMember
+        ? `${linkedAppBaseUrl}/onboarding`
+        : `${linkedAppBaseUrl}/contracts`;
     } else if (isPendingClient) {
-      const clientBaseUrl = process.env.CLIENT_APP_URL;
-      if (!clientBaseUrl) {
+      if (!linkedAppBaseUrl) {
         throw new Error(
-          'CLIENT_APP_URL is not configured — cannot build a valid signing link',
+          `${linkedAppEnvVarName} is not configured — cannot build a valid signing link`,
         );
       }
       const token = await this.issueSigningToken(
         contract,
         dto.expiresInHours ?? DEFAULT_SIGNING_EXPIRY_HOURS,
       );
-      signingUrl = `${clientBaseUrl}/sign-contract/${token}`;
+      signingUrl = `${linkedAppBaseUrl}/sign-contract/${token}`;
     } else {
       const tenantBaseUrl = process.env.TENANT_APP_URL;
       if (!tenantBaseUrl) {

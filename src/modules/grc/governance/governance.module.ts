@@ -24,11 +24,19 @@ import {
   MeetingController,
   CommitteeController,
   BoardMemberController,
+  BoardPortalController,
   GovernanceCodeController,
 } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { ResolutionController } from './controllers/resolution.controller';
+import {
+  ToolContract,
+  ToolContractSchema,
+  TenantContractTemplate,
+  TenantContractTemplateSchema,
+} from 'src/modules/crm/tools/schemas';
+import { SuperAdminModule } from 'src/modules/super_admin/super_admin.module';
 
 @Module({
   imports: [
@@ -39,7 +47,19 @@ import { ResolutionController } from './controllers/resolution.controller';
       { name: GovernanceCode.name, schema: GovernanceCodeSchema },
       { name: User.name, schema: UserSchema },
       { name: Resolution.name, schema: ResolutionSchema },
+      // Registered directly here (not imported via ToolsModule) to
+      // avoid a circular module dependency — see the constructor
+      // comment on BoardMemberService for the full explanation.
+      { name: ToolContract.name, schema: ToolContractSchema },
+      {
+        name: TenantContractTemplate.name,
+        schema: TenantContractTemplateSchema,
+      },
     ]),
+    // For PlatformContractTemplateService only — SuperAdminModule has
+    // no path back into GovernanceModule/ComplianceModule/ToolsModule,
+    // so this import is safe and creates no cycle.
+    SuperAdminModule,
   ],
   providers: [
     MeetingService,
@@ -54,6 +74,7 @@ import { ResolutionController } from './controllers/resolution.controller';
     MeetingController,
     CommitteeController,
     BoardMemberController,
+    BoardPortalController,
     GovernanceCodeController,
     ResolutionController,
   ],

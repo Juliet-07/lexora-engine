@@ -122,15 +122,60 @@ export const KNOWLEDGE_TRANSFER_CHECKLIST_DEFAULTS: string[] = [
   'Board document handover to Company Secretary',
 ];
 
-export const ONBOARDING_CHECKLIST_DEFAULTS: string[] = [
-  'Appointment letter issued and signed',
-  'Board Charter received and acceptance signed',
-  'Code of Conduct and Ethics signed',
-  'Confidentiality and non-disclosure agreement signed',
-  'Declaration of interests filed',
-  'Fit-and-proper declaration / BNR notification submitted',
-  'Induction pack provided (strategy docs, financials, org chart, policies)',
-  'Mandatory training completed (AML, Data Protection, ABC)',
+// The board portal's own onboarding journey is organised into six
+// named stages (the lexora-board "My Onboarding" screen); "Active" is
+// deliberately excluded here — it isn't a checklist stage, it's the
+// BoardMemberLifecycleStatus a member graduates to once every item
+// below is done (see toggleOnboardingItem/completeMyOnboardingItem).
+export enum BoardOnboardingStageId {
+  ACCEPT = 'accept',
+  FIT_PROPER = 'fit-proper',
+  SIGN_DOCS = 'sign-docs',
+  TRAINING = 'training',
+  INDUCTION = 'induction',
+}
+
+export const ONBOARDING_CHECKLIST_DEFAULTS: {
+  label: string;
+  stageId: BoardOnboardingStageId;
+}[] = [
+  // Auto-completed the moment the board member countersigns their
+  // appointment letter (see BoardMemberService's
+  // onAppointmentContractCountersigned listener) — never manually
+  // toggled by anyone.
+  {
+    label: 'Appointment letter issued and signed',
+    stageId: BoardOnboardingStageId.ACCEPT,
+  },
+  {
+    label: 'Board Charter received and acceptance signed',
+    stageId: BoardOnboardingStageId.SIGN_DOCS,
+  },
+  {
+    label: 'Code of Conduct and Ethics signed',
+    stageId: BoardOnboardingStageId.SIGN_DOCS,
+  },
+  {
+    label: 'Confidentiality and non-disclosure agreement signed',
+    stageId: BoardOnboardingStageId.SIGN_DOCS,
+  },
+  {
+    label: 'Declaration of interests filed',
+    stageId: BoardOnboardingStageId.SIGN_DOCS,
+  },
+  {
+    label: 'Fit-and-proper declaration / BNR notification submitted',
+    stageId: BoardOnboardingStageId.FIT_PROPER,
+  },
+  {
+    label:
+      'Induction pack provided (strategy docs, financials, org chart, policies)',
+    stageId: BoardOnboardingStageId.INDUCTION,
+  },
+  {
+    label: 'Mandatory training completed (AML, Data Protection, ABC)',
+    stageId: BoardOnboardingStageId.TRAINING,
+  },
 ];
 
 export const OFFBOARDING_CHECKLIST_DEFAULTS: string[] = [
@@ -150,6 +195,12 @@ export class ChecklistItem {
   @Prop({ required: true }) label: string;
   @Prop({ default: false }) done: boolean;
   @Prop({ default: null }) completedAt: Date | null;
+  // Which of the board portal's six named onboarding stages this
+  // item belongs to (see BoardOnboardingStageId below) — null for a
+  // checklist that isn't the onboarding one (e.g. the offboarding /
+  // knowledge-transfer checklists reuse this same class but have no
+  // portal stage to map to).
+  @Prop({ default: null }) stageId: string | null;
 }
 export const ChecklistItemSchema = SchemaFactory.createForClass(ChecklistItem);
 
@@ -377,5 +428,13 @@ export class BoardMember {
   // future backfill endpoint can create accounts for the null ones.
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   userId: Types.ObjectId | null;
+
+  // The real appointment-letter contract generated at creation time
+  // (a ToolContract, origin 'board_onboarding') — lets both the
+  // tenant view ("view appointment letter") and the auto-graduation
+  // listener resolve straight back to this board member without a
+  // reverse lookup by email.
+  @Prop({ type: Types.ObjectId, ref: 'ToolContract', default: null })
+  contractId: Types.ObjectId | null;
 }
 export const BoardMemberSchema = SchemaFactory.createForClass(BoardMember);

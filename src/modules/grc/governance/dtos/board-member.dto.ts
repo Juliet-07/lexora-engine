@@ -45,6 +45,83 @@ export class CreateBoardMemberDto {
   otherDirectorships?: string[];
 }
 
+// ── Real, atomic appointment: creates the board member's own login
+// AND generates their appointment-letter contract together, in one
+// backend transaction — the exact same discipline
+// CreateClientWithContractDto/createClientWithContract already
+// enforces for a client (see tenant/services/tenant-client.service.ts),
+// now mirrored for a director. A board member is never left behind
+// without a contract already generated for them to sign.
+export class CreateBoardMemberWithContractDto {
+  @ApiProperty() @IsString() name: string;
+  @ApiProperty({ enum: BoardMemberRole })
+  @IsEnum(BoardMemberRole)
+  role: BoardMemberRole;
+  @ApiProperty() @IsEmail() email: string;
+  @ApiProperty() @IsDateString() appointedAt: string;
+  @ApiProperty() @IsDateString() termEnds: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() bio?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() nationality?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() idNumber?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() taxResidency?: string;
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  otherDirectorships?: string[];
+
+  // ── Contract template selection — same picker
+  // (GET /tools/contract-templates/available) the KYC onboarding
+  // wizard uses.
+  @ApiProperty() @IsMongoId() templateId: string;
+  @ApiProperty({ enum: ['platform', 'tenant'] })
+  @IsEnum(['platform', 'tenant'])
+  templateSource: 'platform' | 'tenant';
+  @ApiProperty() @IsString() contractTitle: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) value?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+
+  // ── Additional contract-merge fields — same vocabulary
+  // CONTRACT_MERGE_FIELDS declares (see contract.schema.ts). All
+  // optional and blank if left empty.
+  @ApiPropertyOptional() @IsOptional() @IsString() scopeOfWork?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  tenantCompanyJurisdiction?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() clientJurisdiction?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  leadProfessionalName?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  leadProfessionalTitle?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  clientRepresentativeName?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  clientRepresentativeTitle?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  commencementDate?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() engagementDuration?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  tenantRegisteredAddress?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  clientRegisteredAddress?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() serviceCategory?: string;
+}
+
 export class UpdateBoardMemberDto {
   @ApiPropertyOptional() @IsOptional() @IsString() name?: string;
   @ApiPropertyOptional({ enum: BoardMemberRole })

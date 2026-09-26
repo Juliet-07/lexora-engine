@@ -7,10 +7,12 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
+import { OnEvent } from '@nestjs/event-emitter';
 import {
   BoardMember,
   BoardMemberDocument,
   BoardMemberLifecycleStatus,
+  BoardOnboardingStageId,
   SUCCESSION_STAGE_DEFS,
   KNOWLEDGE_TRANSFER_CHECKLIST_DEFAULTS,
   ONBOARDING_CHECKLIST_DEFAULTS,
@@ -18,6 +20,7 @@ import {
 } from '../schemas';
 import {
   CreateBoardMemberDto,
+  CreateBoardMemberWithContractDto,
   UpdateBoardMemberDto,
   RecordConflictDto,
   LogTrainingDto,
@@ -35,6 +38,22 @@ import {
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { UserType, AccountStatus } from 'src/common/interfaces/user-role.enum';
+import {
+  ToolContract,
+  ToolContractDocument_,
+  ContractType,
+  ContractStage,
+  SignatureStatus,
+  TenantContractTemplate,
+  TenantContractTemplateDocument,
+  type ContractMergeField,
+} from 'src/modules/crm/tools/schemas';
+import { PlatformContractTemplateService } from 'src/modules/super_admin/services/contract-template.service';
+import {
+  renderContractBody,
+  formatScopeOfWorkList,
+} from 'src/common/utils/contract-fields.util';
+import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 
 const TERM_EXPIRING_WINDOW_DAYS = 180;
 
@@ -45,6 +64,23 @@ export class BoardMemberService {
     private readonly boardMemberModel: Model<BoardMemberDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    // ── Direct model injection, not a ContractService import ───────
+    // GovernanceModule cannot import ToolsModule: ToolsModule already
+    // imports ComplianceModule, which imports GovernanceModule —
+    // importing ToolsModule here would close that cycle. Registering
+    // these two schemas directly (governance.module.ts) creates no
+    // module dependency edge, so the appointment-letter contract is
+    // generated with a small, local copy of
+    // ContractService.generateFromTemplate's logic instead. Sending
+    // it for signature and countersigning it, however, both happen
+    // through the ordinary, unmodified ToolContract endpoints
+    // (ContractController) — no circularity risk there since those
+    // aren't reached through GovernanceModule at all.
+    @InjectModel(ToolContract.name)
+    private readonly toolContractModel: Model<ToolContractDocument_>,
+    @InjectModel(TenantContractTemplate.name)
+    private readonly tenantTemplateModel: Model<TenantContractTemplateDocument>,
+    private readonly platformTemplateService: PlatformContractTemplateService,
     private readonly emailService: EmailService,
   ) {}
 
@@ -134,8 +170,9 @@ export class BoardMemberService {
       taxResidency: dto.taxResidency ?? '',
       otherDirectorships: dto.otherDirectorships ?? [],
       lifecycleStatus: BoardMemberLifecycleStatus.ONBOARDING,
-      onboardingChecklist: ONBOARDING_CHECKLIST_DEFAULTS.map((label) => ({
-        label,
+      onboardingChecklist: ONBOARDING_CHECKLIST_DEFAULTS.map((d) => ({
+        label: d.label,
+        stageId: d.stageId,
         done: false,
         completedAt: null,
       })),
@@ -159,6 +196,291 @@ export class BoardMemberService {
       .catch(() => {});
 
     return member;
+  }
+
+  // ── Create with appointment contract (the real, current flow) ──
+  // Mirrors TenantClientsService.createClientWithContract exactly:
+  // the director's own login and their appointment-letter contract
+  // are created together, atomically. If contract generation fails
+  // for any reason, the just-created user is rolled back — a board
+  // member is never left behind without a contract already generated
+  // for them to sign. Credentials stay unusable (placeholder
+  // password, PENDING) until the appointment letter is actually
+  // countersigned — see onAppointmentContractCountersigned below.
+  async createWithContract(
+    tenantId: string,
+    dto: CreateBoardMemberWithContractDto,
+    addedBy: string,
+  ) {
+    const tId = new Types.ObjectId(tenantId);
+    const email = dto.email.toLowerCase();
+
+    const emailTaken = await this.userModel.findOne({ email });
+    if (emailTaken) {
+      throw new ConflictException(
+        'This email is already registered on the platform',
+      );
+    }
+
+    const [firstName, ...rest] = dto.name.trim().split(/\s+/);
+    const lastName = rest.join(' ') || firstName;
+
+    // Real, genuinely unusable placeholder — nobody can log in with
+    // this. A real password is only ever set once, by
+    // onAppointmentContractCountersigned below.
+    const placeholderPassword = await bcrypt.hash(
+      `placeholder-${Date.now()}-${Math.random()}`,
+      12,
+    );
+
+    const user = await this.userModel.create({
+      userType: UserType.BOARD_MEMBER,
+      firstName: firstName || dto.name,
+      lastName,
+      email,
+      password: placeholderPassword,
+      status: AccountStatus.PENDING,
+      tenantId: tId,
+      createdBy: new Types.ObjectId(addedBy),
+      mustChangePassword: true,
+    });
+
+    try {
+      const member = await this.boardMemberModel.create({
+        tenantId: tId,
+        name: dto.name,
+        role: dto.role,
+        email,
+        appointedAt: new Date(dto.appointedAt),
+        termEnds: new Date(dto.termEnds),
+        bio: dto.bio ?? '',
+        nationality: dto.nationality ?? '',
+        idNumber: dto.idNumber ?? '',
+        taxResidency: dto.taxResidency ?? '',
+        otherDirectorships: dto.otherDirectorships ?? [],
+        lifecycleStatus: BoardMemberLifecycleStatus.ONBOARDING,
+        onboardingChecklist: ONBOARDING_CHECKLIST_DEFAULTS.map((d) => ({
+          label: d.label,
+          stageId: d.stageId,
+          done: false,
+          completedAt: null,
+        })),
+        conflicts: [],
+        training: [],
+        userId: user._id,
+      });
+
+      const contract = await this.generateAppointmentContract(
+        tId,
+        user._id,
+        member,
+        dto,
+      );
+
+      member.contractId = contract._id as any;
+      await member.save();
+
+      const obj = user.toObject();
+      delete (obj as any).password;
+      return {
+        success: true,
+        message: 'Board member created and appointment letter generated.',
+        data: obj,
+        member,
+        contract,
+      };
+    } catch (err) {
+      // Real rollback — a board member is never left behind without
+      // the appointment contract that was supposed to come with it.
+      await this.userModel.deleteOne({ _id: user._id });
+      await this.boardMemberModel.deleteOne({ userId: user._id });
+      throw err;
+    }
+  }
+
+  private async nextContractRef(tenantId: Types.ObjectId): Promise<string> {
+    const year = new Date().getFullYear();
+    const count = await this.toolContractModel.countDocuments({
+      tenantId,
+      ref: new RegExp(`^CTR-${year}-`),
+    });
+    return `CTR-${year}-${String(count + 1).padStart(2, '0')}`;
+  }
+
+  // A small, local copy of ContractService.generateFromTemplate,
+  // scoped to what an appointment letter actually needs — see the
+  // constructor comment for why this can't just call
+  // ContractService directly. The counterparty is always the board
+  // member themselves (a real, already-registered user by this
+  // point), so this skips resolveCounterparty's client/vendor/
+  // external-party branching entirely.
+  private async generateAppointmentContract(
+    tenantId: Types.ObjectId,
+    boardMemberUserId: Types.ObjectId,
+    member: BoardMemberDocument,
+    dto: CreateBoardMemberWithContractDto,
+  ): Promise<ToolContractDocument_> {
+    let template: any;
+    if (dto.templateSource === 'tenant') {
+      template = await this.tenantTemplateModel
+        .findOne({ _id: dto.templateId, tenantId })
+        .lean();
+      if (!template) throw new NotFoundException('Template not found');
+    } else {
+      template = await this.platformTemplateService.getById(dto.templateId);
+      if (template.status !== 'Published') {
+        throw new BadRequestException(
+          'This platform template is not published and cannot be used.',
+        );
+      }
+    }
+
+    const businessName = await resolveBusinessName(
+      this.userModel,
+      String(tenantId),
+    );
+
+    const fields: Record<ContractMergeField, string> = {
+      title: dto.contractTitle,
+      counterpartyName: member.name,
+      recipientName: member.name,
+      recipientEmail: member.email,
+      scopeOfWork: formatScopeOfWorkList(dto.scopeOfWork ?? ''),
+      tenantCompanyName: businessName,
+      contractValue: dto.value != null ? String(dto.value) : '',
+      contractCurrency: dto.currency ?? 'USD',
+      effectiveDate: new Date().toISOString().slice(0, 10),
+      expiryDate: member.termEnds.toISOString().slice(0, 10),
+      todayDate: new Date().toISOString().slice(0, 10),
+      tenantCompanyJurisdiction: dto.tenantCompanyJurisdiction ?? '',
+      clientJurisdiction: dto.clientJurisdiction ?? '',
+      leadProfessionalName: dto.leadProfessionalName ?? '',
+      leadProfessionalTitle: dto.leadProfessionalTitle ?? '',
+      clientRepresentativeName: dto.clientRepresentativeName ?? '',
+      clientRepresentativeTitle: dto.clientRepresentativeTitle ?? '',
+      commencementDate: dto.commencementDate ?? '',
+      engagementDuration: dto.engagementDuration ?? '',
+      tenantRegisteredAddress: dto.tenantRegisteredAddress ?? '',
+      clientRegisteredAddress: dto.clientRegisteredAddress ?? '',
+      serviceCategory: dto.serviceCategory ?? '',
+    };
+    const renderedBody = renderContractBody(template.content, fields);
+
+    const ref = await this.nextContractRef(tenantId);
+
+    return this.toolContractModel.create({
+      tenantId,
+      ref,
+      title: dto.contractTitle,
+      counterparty: member.name,
+      counterpartyEmail: member.email,
+      type: ContractType.BOARD_APPOINTMENT,
+      stage: ContractStage.DRAFT,
+      value: dto.value ?? 0,
+      currency: dto.currency ?? 'USD',
+      scopeOfWork: dto.scopeOfWork ?? '',
+      tenantCompanyJurisdiction: dto.tenantCompanyJurisdiction ?? '',
+      clientJurisdiction: dto.clientJurisdiction ?? '',
+      leadProfessionalName: dto.leadProfessionalName ?? '',
+      leadProfessionalTitle: dto.leadProfessionalTitle ?? '',
+      clientRepresentativeName: dto.clientRepresentativeName ?? '',
+      clientRepresentativeTitle: dto.clientRepresentativeTitle ?? '',
+      commencementDate: dto.commencementDate
+        ? new Date(dto.commencementDate)
+        : null,
+      engagementDuration: dto.engagementDuration ?? '',
+      tenantRegisteredAddress: dto.tenantRegisteredAddress ?? '',
+      clientRegisteredAddress: dto.clientRegisteredAddress ?? '',
+      serviceCategory: dto.serviceCategory ?? '',
+      expiresOn: member.termEnds,
+      autoRenew: false,
+      owner: '',
+      clientId: boardMemberUserId,
+      vendorId: null,
+      mandateId: null,
+      mandateName: '',
+      templateId: dto.templateSource === 'tenant' ? template._id : null,
+      templateName: template.title,
+      renderedBody,
+      requiresSignature: true,
+      signatureStatus: SignatureStatus.NOT_SENT,
+      origin: 'board_onboarding',
+    });
+  }
+
+  // Real, filtered list for the Board Management module's own
+  // Contracting view — every appointment-letter contract actually
+  // issued to a board member, by the real origin marker set at
+  // generation time.
+  async getOnboardingContracts(tenantId: string) {
+    return this.toolContractModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        origin: 'board_onboarding',
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  // ── Real activation on appointment-letter countersign ──────────
+  // Reacts to the same 'client.document.countersigned' event
+  // ContractService.countersign already emits for any clientId-linked
+  // contract (crm/tools) — no change needed there. Gated to
+  // UserType.BOARD_MEMBER so an unrelated client contract
+  // countersigned around the same time never touches a board member,
+  // and only ever activates one still genuinely PENDING.
+  @OnEvent('client.document.countersigned')
+  async onAppointmentContractCountersigned(e: {
+    tenantId: string;
+    clientUserId: string;
+    contractId: string;
+    title: string;
+  }) {
+    const user = await this.userModel.findById(e.clientUserId);
+    if (!user || user.userType !== UserType.BOARD_MEMBER) return;
+    if (user.status !== AccountStatus.PENDING) return;
+
+    const member = await this.boardMemberModel.findOne({
+      userId: user._id,
+      tenantId: user.tenantId,
+    });
+    if (!member) return;
+
+    const tempPassword = this.generateTempPassword();
+    const hashedPassword = await bcrypt.hash(tempPassword, 12);
+
+    user.password = hashedPassword;
+    user.status = AccountStatus.ACTIVE;
+    user.mustChangePassword = true;
+    await user.save();
+
+    // Auto-complete the one checklist item nobody self-services —
+    // the appointment letter is exactly what was just countersigned.
+    const acceptItem = member.onboardingChecklist.find(
+      (i) => i.stageId === BoardOnboardingStageId.ACCEPT,
+    );
+    if (acceptItem && !acceptItem.done) {
+      acceptItem.done = true;
+      acceptItem.completedAt = new Date();
+      member.markModified('onboardingChecklist');
+      this.applyOnboardingGraduation(member);
+      await member.save();
+    }
+
+    const businessName = await resolveBusinessName(this.userModel, e.tenantId);
+
+    await this.emailService
+      .sendBoardMemberAppointed({
+        to: user.email,
+        memberName: member.name,
+        role: member.role,
+        businessName,
+        appointedAt: member.appointedAt,
+        termEnds: member.termEnds,
+        tempPassword,
+        loginUrl: `${process.env.BOARD_APP_URL || 'http://localhost:8083'}/login`,
+      })
+      .catch(() => {});
   }
 
   // ── Reads ────────────────────────────────────────────────────
@@ -208,6 +530,7 @@ export class BoardMemberService {
       successionPlan: m.successionPlan ?? null,
       offboarding: m.offboarding ?? null,
       userId: m.userId ?? null,
+      contractId: m.contractId ?? null,
     };
   }
 
@@ -461,16 +784,13 @@ export class BoardMemberService {
 
   // ── Onboarding ───────────────────────────────────────────────
 
-  async toggleOnboardingItem(tenantId: string, id: string, index: number) {
-    const member = await this.getById(tenantId, id);
-    const item = member.onboardingChecklist[index];
-    if (!item) throw new NotFoundException('Onboarding item not found');
-    item.done = !item.done;
-    item.completedAt = item.done ? new Date() : null;
-    member.markModified('onboardingChecklist');
-
-    // Auto-graduate out of "Onboarding" once every item is checked —
-    // matches the reference prototype's induction checklist behaviour.
+  // Shared by the tenant-side toggle below, the self-service board
+  // portal completion method, and the countersign listener — auto-
+  // graduates out of "Onboarding" once every item is checked, and
+  // regresses back if one is somehow unchecked again. Matches the
+  // reference prototype's induction checklist behaviour. Caller is
+  // responsible for markModified('onboardingChecklist') and save().
+  private applyOnboardingGraduation(member: BoardMemberDocument) {
     const allDone = member.onboardingChecklist.every((i) => i.done);
     if (
       allDone &&
@@ -483,7 +803,99 @@ export class BoardMemberService {
     ) {
       member.lifecycleStatus = BoardMemberLifecycleStatus.ONBOARDING;
     }
+  }
 
+  async toggleOnboardingItem(tenantId: string, id: string, index: number) {
+    const member = await this.getById(tenantId, id);
+    const item = member.onboardingChecklist[index];
+    if (!item) throw new NotFoundException('Onboarding item not found');
+    item.done = !item.done;
+    item.completedAt = item.done ? new Date() : null;
+    member.markModified('onboardingChecklist');
+    this.applyOnboardingGraduation(member);
+    await member.save();
+    return member;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // BOARD PORTAL — self-service (the board member's own view of
+  // their onboarding, reached via lexora-board, UserType.BOARD_MEMBER)
+  // ═══════════════════════════════════════════════════════════
+
+  private async getByUserId(userId: string): Promise<BoardMemberDocument> {
+    const member = await this.boardMemberModel.findOne({
+      userId: new Types.ObjectId(userId),
+    });
+    if (!member) {
+      throw new NotFoundException('No board member record for this account');
+    }
+    return member;
+  }
+
+  async getMyProfile(userId: string) {
+    const member = await this.getByUserId(userId);
+    return {
+      id: member._id,
+      name: member.name,
+      role: member.role,
+      email: member.email,
+      appointedAt: member.appointedAt,
+      termEnds: member.termEnds,
+      lifecycleStatus: member.lifecycleStatus,
+    };
+  }
+
+  // Real onboarding state for the "My Onboarding" screen — the six
+  // portal stages (BoardOnboardingStageId) plus the real checklist,
+  // each item tagged with the stage it belongs to. No dummy/mock
+  // data: a member fresh out of createWithContract genuinely has
+  // every item undone except once their appointment letter is
+  // countersigned (see onAppointmentContractCountersigned).
+  async getMyOnboarding(userId: string) {
+    const member = await this.getByUserId(userId);
+    const checklist = member.onboardingChecklist;
+    const done = checklist.filter((i) => i.done);
+    const startedAt = member.appointedAt;
+    const completedAt =
+      member.lifecycleStatus === BoardMemberLifecycleStatus.ACTIVE
+        ? (done
+            .map((i) => i.completedAt)
+            .filter(Boolean)
+            .sort(
+              (a, b) => new Date(b!).getTime() - new Date(a!).getTime(),
+            )[0] ?? null)
+        : null;
+    return {
+      lifecycleStatus: member.lifecycleStatus,
+      checklist,
+      totalItems: checklist.length,
+      doneItems: done.length,
+      startedAt,
+      completedAt,
+    };
+  }
+
+  // A board member can only ever mark an item DONE, never undone —
+  // matches KYC onboarding's own self-service semantics (a client
+  // can't un-submit a section either). The one "accept" item
+  // (appointment letter) is intentionally excluded — it can only be
+  // completed by actually countersigning the contract, which is a
+  // different, already-existing flow (ContractController's
+  // sign/countersign endpoints), not a checkbox.
+  async completeMyOnboardingItem(userId: string, index: number) {
+    const member = await this.getByUserId(userId);
+    const item = member.onboardingChecklist[index];
+    if (!item) throw new NotFoundException('Onboarding item not found');
+    if (item.stageId === BoardOnboardingStageId.ACCEPT) {
+      throw new BadRequestException(
+        'This step is completed automatically once your appointment letter is countersigned.',
+      );
+    }
+    if (item.done) return member;
+    item.done = true;
+    item.completedAt = new Date();
+    member.markModified('onboardingChecklist');
+    this.applyOnboardingGraduation(member);
     await member.save();
     return member;
   }

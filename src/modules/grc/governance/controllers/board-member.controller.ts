@@ -23,6 +23,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { BoardMemberService } from '../services';
 import {
   CreateBoardMemberDto,
+  CreateBoardMemberWithContractDto,
   UpdateBoardMemberDto,
   RecordConflictDto,
   LogTrainingDto,
@@ -93,6 +94,36 @@ export class BoardMemberController {
     const tenantId = t || u;
     const businessName = await resolveBusinessName(this.userModel, tenantId);
     return this.boardMemberService.create(tenantId, dto, businessName);
+  }
+
+  // Real, atomic appointment — creates the director's login and
+  // generates their appointment-letter contract together, the same
+  // process a client goes through on the "Add Client" wizard. This is
+  // now the real path Board Management's "New Director" flow uses.
+  @Post('create-with-contract')
+  @ApiOperation({
+    summary:
+      'Create a board member and generate their appointment-letter contract in one step',
+  })
+  createWithContract(
+    @Body() dto: CreateBoardMemberWithContractDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    return this.boardMemberService.createWithContract(tenantId, dto, u);
+  }
+
+  // Registered before ':id' so "contracts" is never mistaken for an id.
+  @Get('contracts')
+  @ApiOperation({
+    summary: 'Every appointment-letter contract issued to a board member',
+  })
+  getOnboardingContracts(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.boardMemberService.getOnboardingContracts(t || u);
   }
 
   @Get()
