@@ -356,8 +356,64 @@ export class BoardDocument {
   @Prop({ required: true, default: () => new Date() }) uploadedAt: Date;
   @Prop({ default: '' }) uploadedBy: string;
   @Prop({ default: null }) signedAt: Date | null;
+  // Snapshot of the chosen BoardDocumentFolder's name at upload time
+  // (see BoardDocumentFolder below) — '' means "Uncategorized". Mirrors
+  // AuditRequest.folder: a name snapshot, never a foreign key, so
+  // renaming/removing a folder never rewrites documents already filed
+  // in it.
+  @Prop({ default: '' }) folder: string;
 }
 export const BoardDocumentSchema = SchemaFactory.createForClass(BoardDocument);
+
+// A tenant-managed folder for a director's document repository —
+// created up front, then picked (not retyped) when a document is
+// uploaded. Mirrors compliance/schemas/audit.schema.ts's AuditFolder
+// exactly, including the name-snapshot relationship to BoardDocument.
+@Schema({ timestamps: true })
+export class BoardDocumentFolder {
+  @Prop({ required: true, trim: true }) name: string;
+}
+export const BoardDocumentFolderSchema =
+  SchemaFactory.createForClass(BoardDocumentFolder);
+
+// A document the director must review and sign during onboarding
+// (Step 3 — "Documents & declarations"), e.g. the Board Charter or
+// Code of Conduct. The tenant assigns these at director-creation time
+// (or later, from Board Management) by picking from their published
+// Governance Codes (see GovernanceCode); this is a snapshot of that
+// code at assignment time — title/category/fileUrl/version — not a
+// live reference, so a later edit or new version of the source code
+// never silently changes what a director already saw and signed.
+// sourceCodeId is kept only to let the tenant see where it came from.
+@Schema({ timestamps: true })
+export class BoardSignableDocument {
+  @Prop({ required: true, trim: true }) title: string;
+  @Prop({ default: '' }) category: string;
+  @Prop({ type: Types.ObjectId, ref: 'GovernanceCode', default: null })
+  sourceCodeId: Types.ObjectId | null;
+  @Prop({ default: null }) fileUrl: string | null;
+  @Prop({ default: 1 }) version: number;
+}
+export const BoardSignableDocumentSchema = SchemaFactory.createForClass(
+  BoardSignableDocument,
+);
+
+// One file in a director's induction pack (Step 5) — real, tenant-
+// uploaded files rather than the static reference checklist. The
+// tenant sends the pack by uploading files here (at director-creation
+// time or any time before the director reaches Step 5); the director
+// then sees and downloads the real files in the board portal and
+// acknowledges receipt (submitInduction).
+@Schema({ timestamps: true })
+export class InductionPackItem {
+  @Prop({ required: true }) name: string;
+  @Prop({ default: null }) fileUrl: string | null;
+  @Prop({ default: null }) mimeType: string | null;
+  @Prop({ default: 0 }) size: number;
+  @Prop({ default: '' }) uploadedBy: string;
+}
+export const InductionPackItemSchema =
+  SchemaFactory.createForClass(InductionPackItem);
 
 // Committee membership is intentionally denormalized here as a plain
 // name + chair flag rather than a hard ref into the Committees module
@@ -514,6 +570,25 @@ export class BoardMember {
 
   @Prop({ type: [BoardDocumentSchema], default: [] })
   documents: BoardDocument[];
+
+  // Tenant-created folders for this director's document repository —
+  // created up front (BoardMemberService.addDocumentFolder), then
+  // picked from when uploading a document. See BoardDocumentFolder.
+  @Prop({ type: [BoardDocumentFolderSchema], default: [] })
+  documentFolders: BoardDocumentFolder[];
+
+  // Documents the tenant has set up for this director to sign during
+  // onboarding (Step 3) — e.g. Board Charter, Code of Conduct. Set at
+  // director-creation time (CreateBoardMemberWithContractDto.documentIds)
+  // or later via setDocumentsToSign. Empty means the tenant hasn't set
+  // any up yet, in which case Step 3 has nothing it requires signed.
+  @Prop({ type: [BoardSignableDocumentSchema], default: [] })
+  documentsToSign: BoardSignableDocument[];
+
+  // The real files making up this director's induction pack (Step 5),
+  // sent by the tenant uploading them here — see InductionPackItem.
+  @Prop({ type: [InductionPackItemSchema], default: [] })
+  inductionPack: InductionPackItem[];
 
   @Prop({ type: [ChecklistItemSchema], default: [] })
   onboardingChecklist: ChecklistItem[];

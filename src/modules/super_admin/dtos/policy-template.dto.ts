@@ -9,7 +9,7 @@ import {
   ArrayMinSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { PolicyTemplateStatus } from '../schemas';
+import { PolicyTemplateStatus, PolicyTemplateAppliesTo } from '../schemas';
 
 export class PolicyTemplateSectionDto {
   @ApiProperty() @IsString() title: string;
@@ -31,6 +31,11 @@ export class UpsertPolicyTemplateDto {
   @ApiProperty({ enum: PolicyTemplateStatus })
   @IsEnum(PolicyTemplateStatus)
   status: PolicyTemplateStatus;
+
+  @ApiPropertyOptional({ enum: PolicyTemplateAppliesTo })
+  @IsOptional()
+  @IsEnum(PolicyTemplateAppliesTo)
+  appliesTo?: PolicyTemplateAppliesTo;
 }
 
 export class SetPolicyTemplateStatusDto {

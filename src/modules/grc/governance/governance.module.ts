@@ -37,6 +37,10 @@ import {
   TenantContractTemplateSchema,
 } from 'src/modules/crm/tools/schemas';
 import { SuperAdminModule } from 'src/modules/super_admin/super_admin.module';
+import {
+  PolicyTemplate,
+  PolicyTemplateSchema,
+} from 'src/modules/super_admin/schemas/policy-template.schema';
 
 @Module({
   imports: [
@@ -55,6 +59,11 @@ import { SuperAdminModule } from 'src/modules/super_admin/super_admin.module';
         name: TenantContractTemplate.name,
         schema: TenantContractTemplateSchema,
       },
+      // Registered directly here too (same pattern as ComplianceModule)
+      // so GovernanceCodeService can build a code's body from a
+      // published Governance-Code-flagged template — see its
+      // constructor comment.
+      { name: PolicyTemplate.name, schema: PolicyTemplateSchema },
     ]),
     // For PlatformContractTemplateService only — SuperAdminModule has
     // no path back into GovernanceModule/ComplianceModule/ToolsModule,

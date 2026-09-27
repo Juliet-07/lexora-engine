@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { BoardMemberService } from '../services';
+import { BoardMemberService, GovernanceCodeService } from '../services';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import { UserType } from 'src/common/interfaces/user-role.enum';
 import {
@@ -8,6 +8,7 @@ import {
   SubmitDocumentsCoiDto,
   SubmitOnboardingTrainingDto,
   SubmitInductionDto,
+  DecideCodeBoardApprovalDto,
 } from '../dtos/index.dto';
 
 // ── Board portal, self-service ──────────────────────────────────
@@ -23,7 +24,10 @@ import {
 @UserTypes(UserType.BOARD_MEMBER)
 @Controller('board-portal')
 export class BoardPortalController {
-  constructor(private readonly boardMemberService: BoardMemberService) {}
+  constructor(
+    private readonly boardMemberService: BoardMemberService,
+    private readonly governanceCodeService: GovernanceCodeService,
+  ) {}
 
   @Get('me')
   @ApiOperation({ summary: "The signed-in board member's own profile" })
@@ -84,5 +88,26 @@ export class BoardPortalController {
     @CurrentUser('sub') userId: string,
   ) {
     return this.boardMemberService.submitInduction(userId, dto);
+  }
+
+  // ── Governance Codes — codes this director has been asked to
+  // approve, decided in-app rather than via an emailed link. ───────
+
+  @Get('governance-codes')
+  @ApiOperation({
+    summary: 'Governance codes this director has been asked to approve',
+  })
+  getGovernanceCodes(@CurrentUser('sub') userId: string) {
+    return this.governanceCodeService.getPendingForBoardMember(userId);
+  }
+
+  @Post('governance-codes/:id/decide')
+  @ApiOperation({ summary: 'Approve or reject a governance code' })
+  decideGovernanceCode(
+    @Param('id') id: string,
+    @Body() dto: DecideCodeBoardApprovalDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.governanceCodeService.decideBoardApproval(userId, id, dto);
   }
 }

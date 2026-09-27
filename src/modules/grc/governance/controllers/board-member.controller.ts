@@ -38,6 +38,8 @@ import {
   UpdateRiskAssessmentDto,
   AddSuccessionCandidateDto,
   InitiateOffboardingDto,
+  AddDocumentFolderDto,
+  SetDocumentsToSignDto,
 } from '../dtos/index.dto';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -58,6 +60,22 @@ const documentStorage = diskStorage({
       'grc',
       'board-members',
       'documents',
+    );
+    if (!existsSync(uploadPath)) mkdirSync(uploadPath, { recursive: true });
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) =>
+    cb(null, `${uuidv4()}${extname(file.originalname)}`),
+});
+
+const inductionStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(
+      process.cwd(),
+      'uploads',
+      'grc',
+      'board-members',
+      'induction',
     );
     if (!existsSync(uploadPath)) mkdirSync(uploadPath, { recursive: true });
     cb(null, uploadPath);
@@ -334,6 +352,7 @@ export class BoardMemberController {
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
     @Body('category') category: string,
+    @Body('folder') folder: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
@@ -344,6 +363,7 @@ export class BoardMemberController {
       file,
       category,
       uploaderName,
+      folder || undefined,
     );
   }
 
@@ -355,6 +375,90 @@ export class BoardMemberController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.boardMemberService.removeDocument(t || u, id, Number(index));
+  }
+
+  // ── Document folders — same tenant-defined-folders pattern as Audit
+  // engagements (AuditFolder), applied to a director's document repo.
+
+  @Post(':id/document-folders')
+  @ApiOperation({ summary: "Create a folder in this director's document repo" })
+  addDocumentFolder(
+    @Param('id') id: string,
+    @Body() dto: AddDocumentFolderDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.boardMemberService.addDocumentFolder(t || u, id, dto);
+  }
+
+  @Delete(':id/document-folders/:folderId')
+  removeDocumentFolder(
+    @Param('id') id: string,
+    @Param('folderId') folderId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.boardMemberService.removeDocumentFolder(t || u, id, folderId);
+  }
+
+  // ── Documents to sign — the tenant assigns which of their published
+  // Governance Codes (Board Charter, Code of Conduct, etc.) this
+  // director must sign during onboarding Step 3. Also settable at
+  // creation time via CreateBoardMemberWithContractDto.documentIds.
+
+  @Patch(':id/documents-to-sign')
+  @ApiOperation({
+    summary:
+      'Set which published Governance Codes this director must sign during onboarding',
+  })
+  setDocumentsToSign(
+    @Param('id') id: string,
+    @Body() dto: SetDocumentsToSignDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.boardMemberService.setDocumentsToSign(t || u, id, dto);
+  }
+
+  // ── Induction pack — how the tenant sends it: uploading the real
+  // files here, which the director then sees in the board portal.
+
+  @Post(':id/induction-pack')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: inductionStorage,
+      limits: { fileSize: 25 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: "Add a file to this director's induction pack" })
+  async addInductionPackItem(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const uploaderName = await this.currentUserName(u);
+    return this.boardMemberService.addInductionPackItem(
+      t || u,
+      id,
+      file,
+      uploaderName,
+    );
+  }
+
+  @Delete(':id/induction-pack/:index')
+  removeInductionPackItem(
+    @Param('id') id: string,
+    @Param('index') index: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.boardMemberService.removeInductionPackItem(
+      t || u,
+      id,
+      Number(index),
+    );
   }
 
   // ── Onboarding ───────────────────────────────────────────────

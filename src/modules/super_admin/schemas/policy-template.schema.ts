@@ -8,6 +8,19 @@ export enum PolicyTemplateStatus {
   PUBLISHED = 'Published',
 }
 
+// Which tenant-side feature this template is selectable from. Kept
+// deliberately as one shared catalogue (not a second model) — a
+// template is just reusable title+sections content, and Policies and
+// Governance Codes both consume it the same way. Defaults to POLICY
+// so every template created before this field existed keeps behaving
+// exactly as it did (see PolicyTemplateService.getPublished for how
+// that default is honored on documents that literally have no
+// `appliesTo` stored yet).
+export enum PolicyTemplateAppliesTo {
+  POLICY = 'Policy',
+  GOVERNANCE_CODE = 'Governance Code',
+}
+
 @Schema({ _id: false })
 export class PolicyTemplateSection {
   @Prop({ required: true, trim: true }) title: string;
@@ -48,6 +61,13 @@ export class PolicyTemplate {
   status: PolicyTemplateStatus;
 
   @Prop({ default: null }) publishedAt: Date | null;
+
+  @Prop({
+    enum: PolicyTemplateAppliesTo,
+    default: PolicyTemplateAppliesTo.POLICY,
+    index: true,
+  })
+  appliesTo: PolicyTemplateAppliesTo;
 }
 export const PolicyTemplateSchema =
   SchemaFactory.createForClass(PolicyTemplate);

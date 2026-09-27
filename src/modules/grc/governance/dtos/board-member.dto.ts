@@ -43,6 +43,14 @@ export class CreateBoardMemberDto {
   @IsArray()
   @IsString({ each: true })
   otherDirectorships?: string[];
+  // Published GovernanceCode ids (Board Charter, Code of Conduct, etc.)
+  // the tenant is setting up for this director to sign during
+  // onboarding — see BoardMemberService.resolveDocumentsToSign.
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  documentIds?: string[];
 }
 
 // ── Real, atomic appointment: creates the board member's own login
@@ -69,6 +77,15 @@ export class CreateBoardMemberWithContractDto {
   @IsArray()
   @IsString({ each: true })
   otherDirectorships?: string[];
+
+  // Published GovernanceCode ids (Board Charter, Code of Conduct, etc.)
+  // the tenant is setting up for this director to sign during
+  // onboarding — see BoardMemberService.resolveDocumentsToSign.
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  documentIds?: string[];
 
   // ── Contract template selection — same picker
   // (GET /tools/contract-templates/available) the KYC onboarding
@@ -281,6 +298,19 @@ export class InitiateOffboardingDto {
   @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
 }
 
+// ── Documents ────────────────────────────────────────────────────
+
+export class AddDocumentFolderDto {
+  @ApiProperty() @IsString() name: string;
+}
+
+export class SetDocumentsToSignDto {
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @IsMongoId({ each: true })
+  documentIds: string[];
+}
+
 // ═══════════════════════════════════════════════════════════════
 // BOARD PORTAL — self-service onboarding form submissions. Mirrors
 // the PO's own reference build (lexora-board's onboardingMockData.ts)
@@ -327,7 +357,11 @@ export class SubmitFitProperDto {
 }
 
 export class SubmitDocumentsCoiDto {
-  @ApiProperty({ type: [String], description: "'charter' | 'conduct' | 'nda'" })
+  @ApiProperty({
+    type: [String],
+    description:
+      '_id of each BoardMember.documentsToSign entry the director has signed',
+  })
   @IsArray()
   @IsString({ each: true })
   signedDocumentIds: string[];

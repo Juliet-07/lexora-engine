@@ -5,6 +5,7 @@ import {
   PolicyTemplate,
   PolicyTemplateDocument,
   PolicyTemplateStatus,
+  PolicyTemplateAppliesTo,
 } from '../schemas';
 import { UpsertPolicyTemplateDto } from '../dtos';
 
@@ -69,11 +70,24 @@ export class PolicyTemplateService {
 
   // ── Tenant-facing — published only, optionally by category ────
 
-  async getPublished(category?: string) {
+  // appliesTo defaults to POLICY when omitted — but templates created
+  // before this field existed have no `appliesTo` stored at all, so
+  // "wants Policy templates" matches anything NOT explicitly flagged
+  // Governance-Code-only (never breaks the existing Policy template
+  // picker), while "wants Governance Code templates" matches only
+  // documents explicitly flagged that way (a legacy/undefined
+  // document was never authored for Governance Codes, so it correctly
+  // stays out of that list).
+  async getPublished(category?: string, appliesTo?: PolicyTemplateAppliesTo) {
     const filter: Record<string, unknown> = {
       status: PolicyTemplateStatus.PUBLISHED,
     };
     if (category) filter.category = category;
+    if (appliesTo === PolicyTemplateAppliesTo.GOVERNANCE_CODE) {
+      filter.appliesTo = PolicyTemplateAppliesTo.GOVERNANCE_CODE;
+    } else {
+      filter.appliesTo = { $ne: PolicyTemplateAppliesTo.GOVERNANCE_CODE };
+    }
     return this.model.find(filter).sort({ category: 1, title: 1 }).lean();
   }
 }

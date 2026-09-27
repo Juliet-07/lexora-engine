@@ -13,12 +13,15 @@ import {
   BoardMemberDocument,
   BoardMemberLifecycleStatus,
   BoardOnboardingStageId,
+  BoardSignableDocument,
   SUCCESSION_STAGE_DEFS,
   KNOWLEDGE_TRANSFER_CHECKLIST_DEFAULTS,
   ONBOARDING_CHECKLIST_DEFAULTS,
   OFFBOARDING_CHECKLIST_DEFAULTS,
-  APPOINTMENT_DOCUMENT_IDS,
   ONBOARDING_TRAINING_MODULE_IDS,
+  GovernanceCode,
+  GovernanceCodeDocument,
+  GovernanceCodeStatus,
 } from '../schemas';
 import {
   CreateBoardMemberDto,
@@ -40,6 +43,8 @@ import {
   SubmitDocumentsCoiDto,
   SubmitOnboardingTrainingDto,
   SubmitInductionDto,
+  AddDocumentFolderDto,
+  SetDocumentsToSignDto,
 } from '../dtos/index.dto';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
@@ -86,9 +91,45 @@ export class BoardMemberService {
     private readonly toolContractModel: Model<ToolContractDocument_>,
     @InjectModel(TenantContractTemplate.name)
     private readonly tenantTemplateModel: Model<TenantContractTemplateDocument>,
+    // Same module (governance.module.ts already registers this schema
+    // for GovernanceCodeService), so no circularity risk injecting it
+    // directly here — lets a director's documentsToSign be resolved
+    // from the tenant's published Governance Codes without importing
+    // GovernanceCodeService itself.
+    @InjectModel(GovernanceCode.name)
+    private readonly governanceCodeModel: Model<GovernanceCodeDocument>,
     private readonly platformTemplateService: PlatformContractTemplateService,
     private readonly emailService: EmailService,
   ) {}
+
+  // ── Resolve tenant-picked Governance Code ids into signable-document
+  // snapshots (title/category/fileUrl/version) at the moment they're
+  // assigned to a director — see BoardSignableDocument. Only currently
+  // Published codes belonging to this tenant are eligible; anything
+  // else in the list is silently dropped rather than erroring, so a
+  // code someone unpublished between selection and submission doesn't
+  // block appointing the director.
+  private async resolveDocumentsToSign(
+    tenantId: Types.ObjectId,
+    documentIds: string[] | undefined,
+  ): Promise<BoardSignableDocument[]> {
+    if (!documentIds?.length) return [];
+    const codes = await this.governanceCodeModel.find({
+      _id: { $in: documentIds.map((id) => new Types.ObjectId(id)) },
+      tenantId,
+      status: GovernanceCodeStatus.PUBLISHED,
+    });
+    return codes.map(
+      (c) =>
+        ({
+          title: c.title,
+          category: c.category,
+          sourceCodeId: c._id,
+          fileUrl: c.documents?.[0]?.fileUrl ?? null,
+          version: c.version,
+        }) as any,
+    );
+  }
 
   private generateTempPassword(): string {
     const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -163,6 +204,11 @@ export class BoardMemberService {
       mustChangePassword: true,
     });
 
+    const documentsToSign = await this.resolveDocumentsToSign(
+      tId,
+      dto.documentIds,
+    );
+
     const member = await this.boardMemberModel.create({
       tenantId: tId,
       name: dto.name,
@@ -175,6 +221,7 @@ export class BoardMemberService {
       idNumber: dto.idNumber ?? '',
       taxResidency: dto.taxResidency ?? '',
       otherDirectorships: dto.otherDirectorships ?? [],
+      documentsToSign,
       lifecycleStatus: BoardMemberLifecycleStatus.ONBOARDING,
       onboardingChecklist: ONBOARDING_CHECKLIST_DEFAULTS.map((d) => ({
         label: d.label,
@@ -252,6 +299,11 @@ export class BoardMemberService {
     });
 
     try {
+      const documentsToSign = await this.resolveDocumentsToSign(
+        tId,
+        dto.documentIds,
+      );
+
       const member = await this.boardMemberModel.create({
         tenantId: tId,
         name: dto.name,
@@ -264,6 +316,7 @@ export class BoardMemberService {
         idNumber: dto.idNumber ?? '',
         taxResidency: dto.taxResidency ?? '',
         otherDirectorships: dto.otherDirectorships ?? [],
+        documentsToSign,
         lifecycleStatus: BoardMemberLifecycleStatus.ONBOARDING,
         onboardingChecklist: ONBOARDING_CHECKLIST_DEFAULTS.map((d) => ({
           label: d.label,
@@ -531,7 +584,13 @@ export class BoardMemberService {
         expiresAt: t.expiresAt ?? null,
       })),
       skills: m.skills ?? [],
-      documents: m.documents ?? [],
+      documents: (m.documents ?? []).map((d: any) => ({
+        ...d,
+        folder: d.folder ?? '',
+      })),
+      documentFolders: m.documentFolders ?? [],
+      documentsToSign: m.documentsToSign ?? [],
+      inductionPack: m.inductionPack ?? [],
       onboardingChecklist: m.onboardingChecklist ?? [],
       successionPlan: m.successionPlan ?? null,
       offboarding: m.offboarding ?? null,
@@ -809,8 +868,15 @@ export class BoardMemberService {
     file: Express.Multer.File,
     category: string | undefined,
     uploaderName: string,
+    folder?: string,
   ) {
     const member = await this.getById(tenantId, id);
+    let folderName = '';
+    if (folder) {
+      const f = member.documentFolders.find((fo: any) => fo.name === folder);
+      if (!f) throw new BadRequestException('Unknown folder.');
+      folderName = f.name;
+    }
     member.documents.push({
       name: file.originalname,
       category: category || 'Governance Document',
@@ -820,6 +886,7 @@ export class BoardMemberService {
       uploadedAt: new Date(),
       uploadedBy: uploaderName || 'Unassigned',
       signedAt: null,
+      folder: folderName,
     } as any);
     member.markModified('documents');
     await member.save();
@@ -830,6 +897,102 @@ export class BoardMemberService {
     const member = await this.getById(tenantId, id);
     member.documents.splice(index, 1);
     member.markModified('documents');
+    await member.save();
+    return member;
+  }
+
+  // ── Document folders — mirrors AuditService.addFolder/removeFolder
+  // exactly: a folder is created up front, then picked (not retyped)
+  // when uploading; BoardDocument.folder stores a name snapshot, so
+  // removal is blocked while any document still references it. ──────
+
+  async addDocumentFolder(
+    tenantId: string,
+    id: string,
+    dto: AddDocumentFolderDto,
+  ) {
+    const member = await this.getById(tenantId, id);
+    const name = dto.name?.trim();
+    if (!name) throw new BadRequestException('Folder name is required.');
+    if (
+      member.documentFolders.some(
+        (f: any) => f.name.toLowerCase() === name.toLowerCase(),
+      )
+    ) {
+      throw new BadRequestException('A folder with this name already exists.');
+    }
+    member.documentFolders.push({ name } as any);
+    member.markModified('documentFolders');
+    await member.save();
+    return member;
+  }
+
+  async removeDocumentFolder(tenantId: string, id: string, folderId: string) {
+    const member = await this.getById(tenantId, id);
+    const folder = (member.documentFolders as any).id(folderId);
+    if (!folder) throw new NotFoundException('Folder not found');
+    const inUse = member.documents.some((d: any) => d.folder === folder.name);
+    if (inUse) {
+      throw new BadRequestException(
+        `Cannot remove "${folder.name}" — it already has documents in it.`,
+      );
+    }
+    member.documentFolders = member.documentFolders.filter(
+      (f: any) => f._id.toString() !== folderId,
+    ) as any;
+    member.markModified('documentFolders');
+    await member.save();
+    return member;
+  }
+
+  // ── Documents to sign (Step 3 of onboarding) ────────────────────
+  // Lets the tenant (re)configure which of their published Governance
+  // Codes this director must sign, any time — not just at creation.
+
+  async setDocumentsToSign(
+    tenantId: string,
+    id: string,
+    dto: SetDocumentsToSignDto,
+  ) {
+    const member = await this.getById(tenantId, id);
+    member.documentsToSign = (await this.resolveDocumentsToSign(
+      new Types.ObjectId(tenantId),
+      dto.documentIds,
+    )) as any;
+    member.markModified('documentsToSign');
+    await member.save();
+    return member;
+  }
+
+  // ── Induction pack (Step 5) — how the tenant actually sends it: by
+  // uploading the real files here. They appear to the director in the
+  // board portal's Step 5 as soon as they're uploaded, whenever that
+  // is relative to the rest of onboarding; the director downloads and
+  // then acknowledges receipt (submitInduction). ─────────────────────
+
+  async addInductionPackItem(
+    tenantId: string,
+    id: string,
+    file: Express.Multer.File,
+    uploaderName: string,
+  ) {
+    const member = await this.getById(tenantId, id);
+    member.inductionPack.push({
+      name: file.originalname,
+      fileUrl: `/uploads/grc/board-members/induction/${file.filename}`,
+      mimeType: file.mimetype,
+      size: file.size,
+      uploadedBy: uploaderName || 'Unassigned',
+    } as any);
+    member.markModified('inductionPack');
+    await member.save();
+    return member;
+  }
+
+  async removeInductionPackItem(tenantId: string, id: string, index: number) {
+    const member = await this.getById(tenantId, id);
+    member.inductionPack.splice(index, 1);
+    member.markModified('inductionPack');
     await member.save();
     return member;
   }
@@ -930,6 +1093,22 @@ export class BoardMemberService {
     return member;
   }
 
+  // Small public resolver for other governance services that need to
+  // scope a board-portal request to the caller's own board member
+  // record and tenant — e.g. GovernanceCodeService.decideBoardApproval,
+  // which (unlike this service's own onboarding endpoints) needs the
+  // tenantId too since it queries the GovernanceCode collection
+  // directly rather than through BoardMemberService.
+  async resolveBoardMember(
+    userId: string,
+  ): Promise<{ boardMemberId: string; tenantId: string }> {
+    const member = await this.getByUserId(userId);
+    return {
+      boardMemberId: member._id.toString(),
+      tenantId: member.tenantId.toString(),
+    };
+  }
+
   async getMyProfile(userId: string) {
     const member = await this.getByUserId(userId);
     return {
@@ -940,6 +1119,13 @@ export class BoardMemberService {
       appointedAt: member.appointedAt,
       termEnds: member.termEnds,
       lifecycleStatus: member.lifecycleStatus,
+      // Tenant-provided at creation time — surfaced here so the board
+      // portal's own onboarding form can prefill Step 2 with these
+      // instead of asking the director to retype what the tenant
+      // already captured. Blank when the tenant genuinely left them
+      // empty at creation.
+      nationality: member.nationality ?? '',
+      idNumber: member.idNumber ?? '',
     };
   }
 
@@ -982,6 +1168,10 @@ export class BoardMemberService {
         documentsCoi: {
           done: this.stageDone(member, BoardOnboardingStageId.SIGN_DOCS),
           submission: member.documentsCoiDeclaration ?? null,
+          // The real documents the tenant set up for this director to
+          // sign (Board Charter, Code of Conduct, etc.) — empty if the
+          // tenant hasn't configured any yet. See BoardSignableDocument.
+          documents: member.documentsToSign ?? [],
         },
         training: {
           done: this.stageDone(member, BoardOnboardingStageId.TRAINING),
@@ -991,6 +1181,9 @@ export class BoardMemberService {
         induction: {
           done: this.stageDone(member, BoardOnboardingStageId.INDUCTION),
           acknowledgement: member.inductionAcknowledgement ?? null,
+          // The real files making up the induction pack the tenant has
+          // sent so far — empty until the tenant uploads something.
+          pack: member.inductionPack ?? [],
         },
       },
     };
@@ -1031,12 +1224,21 @@ export class BoardMemberService {
       BoardOnboardingStageId.FIT_PROPER,
       'submit your Fit & Proper declaration',
     );
-    const missing = APPOINTMENT_DOCUMENT_IDS.filter(
+    // Required documents are whatever the tenant actually set up for
+    // this director (BoardSignableDocument snapshots, assigned at
+    // creation time or later via setDocumentsToSign) — not a fixed
+    // list. A director with none configured has nothing blocking them
+    // here, same as complaint #1's "unless the tenant didn't fill it
+    // in" rule for prefilled fields.
+    const requiredIds = (member.documentsToSign ?? []).map((d: any) =>
+      d._id.toString(),
+    );
+    const missing = requiredIds.filter(
       (id) => !dto.signedDocumentIds.includes(id),
     );
     if (missing.length) {
       throw new BadRequestException(
-        `All appointment documents must be signed first (missing: ${missing.join(', ')}).`,
+        'All required governance documents must be signed first.',
       );
     }
     member.documentsCoiDeclaration = {

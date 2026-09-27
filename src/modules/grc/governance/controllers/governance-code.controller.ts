@@ -140,6 +140,29 @@ export class GovernanceCodeController {
     return this.codeService.publish(t || u, id);
   }
 
+  @Post(':id/send-for-review')
+  @ApiOperation({ summary: 'Draft -> Internal review' })
+  sendForReview(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.codeService.sendForReview(t || u, id);
+  }
+
+  @Post(':id/send-for-board-approval')
+  @ApiOperation({
+    summary:
+      'Internal review -> Board / Committee approval (or straight to Published — see service for the Board Charter bootstrap exception)',
+  })
+  sendForBoardApproval(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.codeService.sendForBoardApproval(t || u, id);
+  }
+
   @Post(':id/new-version')
   startNewVersion(
     @Param('id') id: string,
