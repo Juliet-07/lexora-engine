@@ -553,6 +553,52 @@ export class BoardMemberService {
     });
   }
 
+  // A member's `accept` checklist item can only ever be completed by
+  // onAppointmentContractCountersigned below (see requireStageDone's
+  // caller in submitFitProper etc.) — so "accept not yet done" is
+  // exactly "still waiting on the appointment letter to be signed",
+  // and "accept done" is exactly "account activated, now filling in
+  // the rest of onboarding themselves". Operates on the same plain,
+  // normalize()'d shape getAll() already returns (not a Mongoose
+  // document), so the two listing endpoints below can just filter
+  // getAll()'s result rather than re-querying/re-normalizing.
+  private acceptStageDone(m: {
+    onboardingChecklist: { stageId: string | null; done: boolean }[];
+  }): boolean {
+    const items = m.onboardingChecklist.filter((i) => i.stageId === 'accept');
+    return items.length > 0 && items.every((i) => i.done);
+  }
+
+  // ── Board Onboarding monitoring page — mirrors
+  // TenantClientService#getPendingApprovals/getOnboardingInProgress
+  // for Client KYC onboarding, per the PO's explicit ask to replicate
+  // that flow here. Board membership has no pre-creation "not started"
+  // state the way a client record does (a director isn't created
+  // until the appointment wizard runs, at which point their contract
+  // already exists) — so "awaiting appointment" is this feature's
+  // equivalent of "Not Started": the contract has been generated but
+  // not yet countersigned, so the account isn't active and nothing
+  // else can happen yet. Both are tenant counts across the whole
+  // board, not paginated — a board is a handful of directors, never
+  // client-collection scale.
+  async getAwaitingAppointment(tenantId: string) {
+    const all = await this.getAll(tenantId);
+    return all.filter(
+      (m) =>
+        m.lifecycleStatus === BoardMemberLifecycleStatus.ONBOARDING &&
+        !this.acceptStageDone(m),
+    );
+  }
+
+  async getOnboardingInProgress(tenantId: string) {
+    const all = await this.getAll(tenantId);
+    return all.filter(
+      (m) =>
+        m.lifecycleStatus === BoardMemberLifecycleStatus.ONBOARDING &&
+        this.acceptStageDone(m),
+    );
+  }
+
   async getById(tenantId: string, id: string): Promise<BoardMemberDocument> {
     const member = await this.boardMemberModel.findOne({
       _id: id,

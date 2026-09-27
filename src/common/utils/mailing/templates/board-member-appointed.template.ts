@@ -48,9 +48,17 @@ export function boardMemberAppointedTemplate(
           </td>
         </tr>
         <tr>
-          <td style="padding:16px 48px 0;">
-            <p style="margin:0;font-size:12px;color:#c97a2c;font-family:Arial,sans-serif;">
-              <strong>Note:</strong> the dedicated board member portal is being finalized — you'll be notified separately once it's ready to sign in to. Keep these credentials secure in the meantime.
+          <td style="padding:24px 48px 0;text-align:center;">
+            <a href="${data.loginUrl}"
+              style="display:inline-block;background-color:#4B0082;color:#ffffff;text-decoration:none;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;letter-spacing:0.5px;padding:13px 36px;border-radius:4px;border:1px solid #4B0082;">
+              Go to Board Portal
+            </a>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:12px 48px 0;">
+            <p style="margin:0;font-size:11px;color:#999;font-family:Arial,sans-serif;text-align:center;">
+              Or copy this link: <a href="${data.loginUrl}" style="color:#4B0082;">${data.loginUrl}</a>
             </p>
           </td>
         </tr>`

@@ -126,6 +126,35 @@ export class BoardMemberController {
     return this.boardMemberService.getOnboardingContracts(t || u);
   }
 
+  // ── Board Onboarding monitoring page — mirrors the Client
+  // Onboarding page's pending-approvals/onboarding split, per the
+  // PO's explicit ask to replicate that flow for board onboarding.
+  // Both are multi-segment paths, so neither collides with the
+  // single-segment `GET :id` below regardless of declaration order.
+  @Get('onboarding/awaiting-appointment')
+  @ApiOperation({
+    summary:
+      'Directors whose appointment contract has not yet been countersigned',
+  })
+  getAwaitingAppointment(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.boardMemberService.getAwaitingAppointment(t || u);
+  }
+
+  @Get('onboarding/in-progress')
+  @ApiOperation({
+    summary:
+      'Directors with an active board-portal account still completing onboarding',
+  })
+  getOnboardingInProgress(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.boardMemberService.getOnboardingInProgress(t || u);
+  }
+
   @Get()
   getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
     return this.boardMemberService.getAll(t || u);
