@@ -34,6 +34,8 @@ import {
   SubmitAckDto,
   PostponeMeetingDto,
   SubmitMinutesReviewDto,
+  AddActionItemDto,
+  SetActionItemStatusDto,
 } from '../dtos/index.dto';
 import { CurrentUser, Public, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -288,6 +290,42 @@ export class MeetingController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.meetingService.resumeMeeting(t || u, id);
+  }
+
+  @Post(':id/action-items')
+  addActionItem(
+    @Param('id') id: string,
+    @Body() dto: AddActionItemDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.meetingService.addActionItem(t || u, id, dto);
+  }
+
+  @Delete(':id/action-items/:actionItemId')
+  removeActionItem(
+    @Param('id') id: string,
+    @Param('actionItemId') actionItemId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.meetingService.removeActionItem(t || u, id, actionItemId);
+  }
+
+  @Patch(':id/action-items/:actionItemId/status')
+  setActionItemStatus(
+    @Param('id') id: string,
+    @Param('actionItemId') actionItemId: string,
+    @Body() dto: SetActionItemStatusDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.meetingService.setActionItemStatus(
+      t || u,
+      id,
+      actionItemId,
+      dto,
+    );
   }
 
   @Public()

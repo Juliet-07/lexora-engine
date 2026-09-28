@@ -1,6 +1,10 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { BoardMemberService, GovernanceCodeService } from '../services';
+import {
+  BoardMemberService,
+  GovernanceCodeService,
+  MeetingService,
+} from '../services';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import { UserType } from 'src/common/interfaces/user-role.enum';
 import {
@@ -9,6 +13,8 @@ import {
   SubmitOnboardingTrainingDto,
   SubmitInductionDto,
   DecideCodeBoardApprovalDto,
+  SubmitBoardMemberAckDto,
+  SetActionItemStatusDto,
 } from '../dtos/index.dto';
 
 // ── Board portal, self-service ──────────────────────────────────
@@ -27,6 +33,7 @@ export class BoardPortalController {
   constructor(
     private readonly boardMemberService: BoardMemberService,
     private readonly governanceCodeService: GovernanceCodeService,
+    private readonly meetingService: MeetingService,
   ) {}
 
   @Get('me')
@@ -60,6 +67,69 @@ export class BoardPortalController {
   })
   getBoardOverview(@CurrentUser('sub') userId: string) {
     return this.boardMemberService.getBoardOverview(userId);
+  }
+
+  // ── Meetings — "receive everything pertaining to it... on their
+  // board portal": every real meeting this director is an attendee
+  // of, plus a lightweight in-app RSVP/acknowledgement and the
+  // ability to mark their own action items done, so a director isn't
+  // limited to the emailed ack-token link. ─────────────────────────
+
+  @Get('meetings')
+  @ApiOperation({
+    summary:
+      'Meetings this director is invited to, with their own attendance/RSVP and action items',
+  })
+  async getMyMeetings(@CurrentUser('sub') userId: string) {
+    const { boardMemberId, tenantId, email } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.meetingService.getForBoardMemberPortal(
+      tenantId,
+      boardMemberId,
+      email,
+    );
+  }
+
+  @Post('meetings/:id/ack')
+  @ApiOperation({
+    summary: 'RSVP / acknowledge a meeting agenda in-app',
+  })
+  async submitMeetingAck(
+    @Param('id') id: string,
+    @Body() dto: SubmitBoardMemberAckDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { tenantId, name, email } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.meetingService.submitBoardMemberAck(
+      tenantId,
+      id,
+      email,
+      name,
+      dto,
+    );
+  }
+
+  @Patch('meetings/:id/action-items/:actionItemId/status')
+  @ApiOperation({
+    summary: "Mark one of the director's own meeting action items Open/Done",
+  })
+  async setMyMeetingActionItemStatus(
+    @Param('id') id: string,
+    @Param('actionItemId') actionItemId: string,
+    @Body() dto: SetActionItemStatusDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { boardMemberId, tenantId, email } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.meetingService.setMyActionItemStatus(
+      tenantId,
+      boardMemberId,
+      email,
+      id,
+      actionItemId,
+      dto,
+    );
   }
 
   // ── Real onboarding form submissions — one per step, each

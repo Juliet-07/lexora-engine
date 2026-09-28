@@ -117,6 +117,39 @@ export class MinutesReview {
 }
 export const MinutesReviewSchema = SchemaFactory.createForClass(MinutesReview);
 
+export enum MeetingActionItemStatus {
+  OPEN = 'Open',
+  DONE = 'Done',
+}
+
+// A real action item arising from a meeting — replaces the tenant
+// frontend's previous hardcoded/local-only "action items" concept.
+// The assignee is a snapshot of one of the meeting's own attendees
+// (name/email), not a manual free-text entry, and is best-effort
+// linked to a real BoardMember (assigneeBoardMemberId, nullable —
+// an Employee or guest attendee has no BoardMember record) so a
+// director's own "My action items" view on the board portal can
+// filter to items assigned to them specifically.
+@Schema()
+export class MeetingActionItem {
+  @Prop({ required: true, trim: true }) title: string;
+  @Prop({ default: '' }) description: string;
+  @Prop({ required: true }) assigneeName: string;
+  @Prop({ default: '', lowercase: true, trim: true }) assigneeEmail: string;
+  @Prop({ type: Types.ObjectId, ref: 'BoardMember', default: null })
+  assigneeBoardMemberId: Types.ObjectId | null;
+  @Prop({ default: null }) dueDate: Date | null;
+  @Prop({
+    enum: MeetingActionItemStatus,
+    default: MeetingActionItemStatus.OPEN,
+  })
+  status: MeetingActionItemStatus;
+  @Prop({ default: null }) completedAt: Date | null;
+  @Prop({ required: true, default: () => new Date() }) createdAt: Date;
+}
+export const MeetingActionItemSchema =
+  SchemaFactory.createForClass(MeetingActionItem);
+
 @Schema({ timestamps: true, collection: 'grc_governance_meetings' })
 export class GovernanceMeeting {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -208,6 +241,9 @@ export class GovernanceMeeting {
   minutesReviewTokens: MinutesReviewToken[];
   @Prop({ type: [MinutesReviewSchema], default: [] })
   minutesReviews: MinutesReview[];
+
+  @Prop({ type: [MeetingActionItemSchema], default: [] })
+  actionItems: MeetingActionItem[];
 }
 export const GovernanceMeetingSchema =
   SchemaFactory.createForClass(GovernanceMeeting);

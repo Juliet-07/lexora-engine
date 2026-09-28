@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -11,6 +12,7 @@ import {
   GovernanceMeetingDocument,
   MeetingMode,
   MeetingStatus,
+  MeetingActionItemStatus,
 } from '../schemas';
 import {
   CreateMeetingDto,
@@ -21,6 +23,9 @@ import {
   RecordAttendanceDto,
   SubmitAckDto,
   SubmitMinutesReviewDto,
+  AddActionItemDto,
+  SetActionItemStatusDto,
+  SubmitBoardMemberAckDto,
 } from '../dtos/index.dto';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { join } from 'path';
@@ -85,10 +90,16 @@ export class MeetingService {
   }
 
   async getAll(tenantId: string) {
-    return this.meetingModel
+    const meetings = await this.meetingModel
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ date: -1 })
       .lean();
+    // .lean() skips schema-default hydration, so a meeting created
+    // before `actionItems` existed on the schema comes back with the
+    // field simply absent rather than `[]` — same read-path-
+    // normalization fix used throughout this codebase (audit folders,
+    // Board Management fields, Governance Codes boardApprovals, …).
+    return meetings.map((m) => ({ ...m, actionItems: m.actionItems ?? [] }));
   }
 
   async getById(
@@ -216,6 +227,19 @@ export class MeetingService {
       recipients.push({ name: meeting.chair, email: chairEmail });
     }
 
+    // Recipients who are also real board members get a second CTA to
+    // their board portal — where this same meeting now shows up
+    // in-app (see BoardPortalController#getMyMeetings) — alongside the
+    // existing email-only acknowledgement link, matching the
+    // "receive everything pertaining to it... both via email and on
+    // their board portal" pattern already used for committees.
+    const boardMembers = await this.boardMemberService.getAll(tenantId);
+    const boardMemberEmails = new Set(
+      (boardMembers as any[])
+        .map((b) => b.email?.toLowerCase())
+        .filter(Boolean),
+    );
+
     // A real, unguessable token per recipient — persisted BEFORE any
     // email goes out, so tokens exist even if a send fails partway
     // through. Reused rather than regenerated if dispatch is somehow
@@ -249,6 +273,9 @@ export class MeetingService {
               })),
               boardPackNames: meeting.boardPack.map((d) => d.name),
               ackLink: ackLinkByEmail.get(r.email.toLowerCase())!,
+              boardPortalLink: boardMemberEmails.has(r.email.toLowerCase())
+                ? `${process.env.BOARD_APP_URL}/meetings`
+                : null,
               businessName,
             },
             attachments,
@@ -424,6 +451,237 @@ export class MeetingService {
     meeting.status = MeetingStatus.DRAFT;
     meeting.postponementReason = null;
     meeting.postponedAt = null;
+    await meeting.save();
+    return meeting;
+  }
+
+  // ── Action items — real, per-meeting, assigned to a real attendee
+  // (never free text). Replaces the tenant frontend's previous
+  // hardcoded/local-only "action items" concept. ────────────────────
+
+  async addActionItem(tenantId: string, id: string, dto: AddActionItemDto) {
+    const meeting = await this.getById(tenantId, id);
+    const attendee = meeting.attendees.find(
+      (a) => a.email.toLowerCase() === dto.assigneeEmail.toLowerCase(),
+    );
+    if (!attendee) {
+      throw new BadRequestException(
+        'The assignee must already be an attendee of this meeting — add them under Attendees first.',
+      );
+    }
+    // Best-effort link to a real BoardMember, so a director's own
+    // "My action items" view on the board portal can filter to items
+    // assigned to them — null for an Employee/guest attendee, who has
+    // no BoardMember record.
+    const boardMembers = await this.boardMemberService.getAll(tenantId);
+    const boardMatch = (boardMembers as any[]).find(
+      (b) => b.email?.toLowerCase() === attendee.email.toLowerCase(),
+    );
+    meeting.actionItems.push({
+      title: dto.title,
+      description: dto.description ?? '',
+      assigneeName: attendee.name,
+      assigneeEmail: attendee.email,
+      assigneeBoardMemberId: boardMatch ? boardMatch._id : null,
+      dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+      status: MeetingActionItemStatus.OPEN,
+      completedAt: null,
+      createdAt: new Date(),
+    } as any);
+    meeting.markModified('actionItems');
+    await meeting.save();
+    return meeting;
+  }
+
+  async removeActionItem(tenantId: string, id: string, actionItemId: string) {
+    const meeting = await this.getById(tenantId, id);
+    const before = meeting.actionItems.length;
+    meeting.actionItems = meeting.actionItems.filter(
+      (a: any) => a._id.toString() !== actionItemId,
+    ) as any;
+    if (meeting.actionItems.length === before) {
+      throw new NotFoundException('Action item not found');
+    }
+    meeting.markModified('actionItems');
+    await meeting.save();
+    return meeting;
+  }
+
+  async setActionItemStatus(
+    tenantId: string,
+    id: string,
+    actionItemId: string,
+    dto: SetActionItemStatusDto,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const item = (meeting.actionItems as any[]).find(
+      (a) => a._id.toString() === actionItemId,
+    );
+    if (!item) throw new NotFoundException('Action item not found');
+    item.status = dto.status;
+    item.completedAt =
+      dto.status === MeetingActionItemStatus.DONE ? new Date() : null;
+    meeting.markModified('actionItems');
+    await meeting.save();
+    return meeting;
+  }
+
+  // ── Board portal, self-service — everything a director sees on
+  // "My Meetings": the real meetings they're actually invited to
+  // (attendee email match), gated to Sent/Held/Postponed so a
+  // still-drafting meeting they haven't been notified of isn't
+  // visible early, plus their own attendance/RSVP/action items. ────
+
+  async getForBoardMemberPortal(
+    tenantId: string,
+    boardMemberId: string,
+    email: string,
+  ) {
+    const lowerEmail = email.toLowerCase();
+    const meetings = await this.meetingModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        status: { $ne: MeetingStatus.DRAFT },
+        'attendees.email': lowerEmail,
+      })
+      .sort({ date: -1 })
+      .lean();
+
+    return meetings.map((m: any) => {
+      const idx = (m.attendees ?? []).findIndex(
+        (a: any) => a.email?.toLowerCase() === lowerEmail,
+      );
+      const myAttendance = m.attendanceRecordedAt
+        ? m.attendanceAllPresent
+          ? true
+          : (m.attendancePresentIndices ?? []).includes(idx)
+        : null;
+      const myAck =
+        (m.acknowledgments ?? []).find(
+          (a: any) => a.attendeeEmail?.toLowerCase() === lowerEmail,
+        ) ?? null;
+      const myActionItems = (m.actionItems ?? []).filter(
+        (a: any) =>
+          (a.assigneeBoardMemberId &&
+            a.assigneeBoardMemberId.toString() === boardMemberId) ||
+          a.assigneeEmail?.toLowerCase() === lowerEmail,
+      );
+      // Minutes are only shown once formally sent — a director isn't
+      // shown a draft/unsent minutes text.
+      const minutesReady = !!m.minutesSentAt;
+      return {
+        _id: m._id,
+        title: m.title,
+        type: m.type,
+        committeeId: m.committeeId ?? null,
+        date: m.date,
+        mode: m.mode,
+        location: m.location,
+        chair: m.chair,
+        status: m.status,
+        agenda: m.agenda ?? [],
+        boardPack: m.boardPack ?? [],
+        minutes: minutesReady ? (m.minutes ?? null) : null,
+        minutesPdfUrl: minutesReady ? (m.minutesPdfUrl ?? null) : null,
+        minutesSentAt: m.minutesSentAt ?? null,
+        myAttendance,
+        myAck: myAck
+          ? {
+              agendaConfirmed: myAck.agendaConfirmed,
+              confirmedAt: myAck.confirmedAt,
+            }
+          : null,
+        actionItems: myActionItems.map((a: any) => ({
+          _id: a._id,
+          title: a.title,
+          description: a.description,
+          dueDate: a.dueDate ?? null,
+          status: a.status,
+          completedAt: a.completedAt ?? null,
+        })),
+      };
+    });
+  }
+
+  // A lightweight in-app RSVP, reusing the same MeetingAcknowledgment
+  // shape the public emailed-link flow (submitAck) writes to, but
+  // simplified: no per-document sign-off and no typed signature,
+  // since the director is already an authenticated portal caller —
+  // their own real name is used as the signature, never client-typed.
+  // Re-submitting (e.g. changing Decline to Confirm) replaces this
+  // director's existing entry rather than duplicating it, matching
+  // the "re-signing replaces" convention used for CodeAcknowledgement.
+  async submitBoardMemberAck(
+    tenantId: string,
+    id: string,
+    email: string,
+    name: string,
+    dto: SubmitBoardMemberAckDto,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const lowerEmail = email.toLowerCase();
+    const isAttendee = meeting.attendees.some(
+      (a) => a.email.toLowerCase() === lowerEmail,
+    );
+    if (!isAttendee) {
+      throw new BadRequestException(
+        'You are not listed as an attendee of this meeting.',
+      );
+    }
+    if (meeting.status === MeetingStatus.DRAFT) {
+      throw new BadRequestException('This meeting has not been sent yet.');
+    }
+    const existingIdx = meeting.acknowledgments.findIndex(
+      (a) => a.attendeeEmail.toLowerCase() === lowerEmail,
+    );
+    const entry = {
+      attendeeName: name,
+      attendeeEmail: lowerEmail,
+      agendaConfirmed: dto.agendaConfirmed,
+      documents: [],
+      confirmedAt: new Date(),
+      signature: name,
+    };
+    if (existingIdx >= 0) {
+      meeting.acknowledgments[existingIdx] = entry as any;
+    } else {
+      meeting.acknowledgments.push(entry as any);
+    }
+    meeting.markModified('acknowledgments');
+    await meeting.save();
+    return meeting;
+  }
+
+  // Board portal, self-service — lets a director toggle one of their
+  // own meeting action items (assigned to them via assigneeBoardMemberId
+  // or, for an item that predates that link, their own email) Open/Done.
+  // Reuses the same status/completedAt logic as the tenant-side
+  // setActionItemStatus above, with an ownership check added so a
+  // director can never touch an action item that isn't theirs.
+  async setMyActionItemStatus(
+    tenantId: string,
+    boardMemberId: string,
+    email: string,
+    id: string,
+    actionItemId: string,
+    dto: SetActionItemStatusDto,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const item = (meeting.actionItems as any[]).find(
+      (a) => a._id.toString() === actionItemId,
+    );
+    if (!item) throw new NotFoundException('Action item not found');
+    const isMine =
+      (item.assigneeBoardMemberId &&
+        item.assigneeBoardMemberId.toString() === boardMemberId) ||
+      item.assigneeEmail?.toLowerCase() === email.toLowerCase();
+    if (!isMine) {
+      throw new ForbiddenException('This action item is not assigned to you.');
+    }
+    item.status = dto.status;
+    item.completedAt =
+      dto.status === MeetingActionItemStatus.DONE ? new Date() : null;
+    meeting.markModified('actionItems');
     await meeting.save();
     return meeting;
   }

@@ -95,3 +95,28 @@ export class SubmitMinutesReviewDto {
   decision: string;
   @ApiPropertyOptional() @IsOptional() @IsString() comment?: string;
 }
+
+// The assignee is picked from the meeting's own real attendees
+// (never typed free text) — the server resolves the matching
+// attendee's name (and, where possible, a real BoardMember id) from
+// this email rather than trusting a client-supplied name.
+export class AddActionItemDto {
+  @ApiProperty() @IsString() title: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
+  @ApiProperty() @IsEmail() assigneeEmail: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() dueDate?: string;
+}
+
+export class SetActionItemStatusDto {
+  @ApiProperty({ enum: ['Open', 'Done'] })
+  @IsEnum(['Open', 'Done'])
+  status: 'Open' | 'Done';
+}
+
+// Board portal, self-service — a lightweight in-app RSVP/acknowledgment
+// (reuses the same MeetingAcknowledgment shape the public emailed-link
+// flow writes to, but simplified: no per-document sign-off or typed
+// signature, since the director is already authenticated).
+export class SubmitBoardMemberAckDto {
+  @ApiProperty() @IsBoolean() agendaConfirmed: boolean;
+}

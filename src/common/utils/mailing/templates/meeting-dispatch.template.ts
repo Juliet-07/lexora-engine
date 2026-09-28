@@ -9,6 +9,11 @@ export interface MeetingDispatchEmailData {
   agenda: { title: string; presenter: string; durationMinutes: number }[];
   boardPackNames: string[];
   ackLink: string;
+  // Set only when this recipient is a real board member — a second
+  // CTA into their board portal, where this meeting now also shows
+  // up in-app (agenda, board pack, minutes once sent, and their own
+  // action items), not just via this emailed link.
+  boardPortalLink: string | null;
   businessName: string;
 }
 
@@ -51,6 +56,11 @@ export function meetingDispatchTemplate(data: MeetingDispatchEmailData): {
           ${packHtml}
           <div style="margin-top:24px;text-align:center;">
             <a href="${data.ackLink}" style="display:inline-block;background:#4B0082;color:#fff;text-decoration:none;padding:12px 28px;border-radius:6px;font-size:14px;">Acknowledge Receipt</a>
+            ${
+              data.boardPortalLink
+                ? `<a href="${data.boardPortalLink}" style="display:inline-block;background:#fff;color:#4B0082;text-decoration:none;padding:11px 28px;border-radius:6px;font-size:14px;border:1px solid #4B0082;margin-left:10px;">View in Board Portal</a>`
+                : ''
+            }
           </div>
         </td></tr>
         <tr><td style="padding:0 48px 32px;border-top:1px solid #eee;">

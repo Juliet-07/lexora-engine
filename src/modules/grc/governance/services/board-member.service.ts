@@ -1253,14 +1253,22 @@ export class BoardMemberService {
   // record and tenant — e.g. GovernanceCodeService.decideBoardApproval,
   // which (unlike this service's own onboarding endpoints) needs the
   // tenantId too since it queries the GovernanceCode collection
-  // directly rather than through BoardMemberService.
-  async resolveBoardMember(
-    userId: string,
-  ): Promise<{ boardMemberId: string; tenantId: string }> {
+  // directly rather than through BoardMemberService. `name`/`email`
+  // added for MeetingService's board-portal endpoints, which need the
+  // caller's own identity to match against a meeting's attendees/
+  // action-item assignees — never trusted from the request body.
+  async resolveBoardMember(userId: string): Promise<{
+    boardMemberId: string;
+    tenantId: string;
+    name: string;
+    email: string;
+  }> {
     const member = await this.getByUserId(userId);
     return {
       boardMemberId: member._id.toString(),
       tenantId: member.tenantId.toString(),
+      name: member.name,
+      email: member.email,
     };
   }
 
