@@ -381,7 +381,11 @@ export class SubmitDocumentsCoiDto {
 }
 
 export class SubmitOnboardingTrainingDto {
-  @ApiProperty({ type: [String], description: "'aml' | 'privacy' | 'abc'" })
+  @ApiProperty({
+    type: [String],
+    description:
+      "_id of each of the tenant's real BoardTrainingModule records completed",
+  })
   @IsArray()
   @IsString({ each: true })
   completedModuleIds: string[];
@@ -389,4 +393,12 @@ export class SubmitOnboardingTrainingDto {
 
 export class SubmitInductionDto {
   @ApiPropertyOptional() @IsOptional() @IsString() scheduledDate?: string;
+  @ApiProperty({
+    type: [String],
+    description:
+      '_id of each BoardMember.documents entry the director has reviewed and acknowledged',
+  })
+  @IsArray()
+  @IsString({ each: true })
+  acknowledgedDocumentIds: string[];
 }

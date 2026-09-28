@@ -18,10 +18,11 @@ import {
   KNOWLEDGE_TRANSFER_CHECKLIST_DEFAULTS,
   ONBOARDING_CHECKLIST_DEFAULTS,
   OFFBOARDING_CHECKLIST_DEFAULTS,
-  ONBOARDING_TRAINING_MODULE_IDS,
   GovernanceCode,
   GovernanceCodeDocument,
   GovernanceCodeStatus,
+  BoardTrainingModule,
+  BoardTrainingModuleDocument,
 } from '../schemas';
 import {
   CreateBoardMemberDto,
@@ -98,6 +99,12 @@ export class BoardMemberService {
     // GovernanceCodeService itself.
     @InjectModel(GovernanceCode.name)
     private readonly governanceCodeModel: Model<GovernanceCodeDocument>,
+    // Same module (governance.module.ts registers this schema too), so
+    // no circularity risk — lets Step 4's required-module list and
+    // validation come from the tenant's own real training catalog
+    // instead of the old fixed 3-item id list.
+    @InjectModel(BoardTrainingModule.name)
+    private readonly trainingModuleModel: Model<BoardTrainingModuleDocument>,
     private readonly platformTemplateService: PlatformContractTemplateService,
     private readonly emailService: EmailService,
   ) {}
@@ -591,6 +598,13 @@ export class BoardMemberService {
       documentFolders: m.documentFolders ?? [],
       documentsToSign: m.documentsToSign ?? [],
       inductionPack: m.inductionPack ?? [],
+      inductionAcknowledgement: m.inductionAcknowledgement
+        ? {
+            ...m.inductionAcknowledgement,
+            acknowledgedDocumentIds:
+              m.inductionAcknowledgement.acknowledgedDocumentIds ?? [],
+          }
+        : null,
       onboardingChecklist: m.onboardingChecklist ?? [],
       successionPlan: m.successionPlan ?? null,
       offboarding: m.offboarding ?? null,
@@ -1129,6 +1143,45 @@ export class BoardMemberService {
     };
   }
 
+  // The director's real induction pack (Step 5) — every entry in
+  // BoardMember.documents (whichever tab the tenant uploaded it
+  // through: "Documents" or the "Induction pack" card both write
+  // there now), plus anything left over in the legacy `inductionPack`
+  // array from before that unification. See the schema comments on
+  // BoardDocument/InductionPackItem for why. Shape matches what the
+  // board portal has always rendered here.
+  private effectiveInductionPack(member: {
+    documents: {
+      _id?: any;
+      name: string;
+      fileUrl: string | null;
+      mimeType: string | null;
+      size: number;
+      uploadedBy: string;
+    }[];
+    inductionPack: {
+      _id?: any;
+      name: string;
+      fileUrl: string | null;
+      mimeType: string | null;
+      size: number;
+      uploadedBy: string;
+    }[];
+  }) {
+    const map = (d: any) => ({
+      _id: d._id?.toString?.() ?? '',
+      name: d.name,
+      fileUrl: d.fileUrl,
+      mimeType: d.mimeType,
+      size: d.size,
+      uploadedBy: d.uploadedBy,
+    });
+    return [
+      ...(member.documents ?? []).map(map),
+      ...(member.inductionPack ?? []).map(map),
+    ];
+  }
+
   // Real onboarding state for the "My Onboarding" screen — the real
   // checklist (each item tagged with the stage it belongs to) plus,
   // for each of the five real stages, whether it's done and — for the
@@ -1140,6 +1193,12 @@ export class BoardMemberService {
   // onAppointmentContractCountersigned).
   async getMyOnboarding(userId: string) {
     const member = await this.getByUserId(userId);
+    // Real, tenant-authored training modules (Step 4) — whatever the
+    // tenant currently has configured, not a fixed reference list.
+    const trainingModules = await this.trainingModuleModel
+      .find({ tenantId: member.tenantId })
+      .sort({ order: 1, createdAt: 1 })
+      .lean();
     const checklist = member.onboardingChecklist;
     const done = checklist.filter((i) => i.done);
     const startedAt = member.appointedAt;
@@ -1177,13 +1236,17 @@ export class BoardMemberService {
           done: this.stageDone(member, BoardOnboardingStageId.TRAINING),
           completedModuleIds:
             member.onboardingTraining?.completedModuleIds ?? [],
+          // The tenant's real mandatory-training catalog — empty until
+          // the tenant creates modules under Board Training Modules.
+          modules: trainingModules,
         },
         induction: {
           done: this.stageDone(member, BoardOnboardingStageId.INDUCTION),
           acknowledgement: member.inductionAcknowledgement ?? null,
-          // The real files making up the induction pack the tenant has
-          // sent so far — empty until the tenant uploads something.
-          pack: member.inductionPack ?? [],
+          // The real induction pack the tenant has sent so far — see
+          // effectiveInductionPack() for where this actually comes from
+          // (documents + the legacy inductionPack array).
+          pack: this.effectiveInductionPack(member as any),
         },
       },
     };
@@ -1265,12 +1328,20 @@ export class BoardMemberService {
       BoardOnboardingStageId.SIGN_DOCS,
       'sign your appointment documents',
     );
-    const missing = ONBOARDING_TRAINING_MODULE_IDS.filter(
+    // Required modules are whatever the tenant has actually configured
+    // (BoardTrainingModule), not a fixed reference list — a tenant
+    // with none set up yet has nothing blocking this step, same rule
+    // as documentsToSign.
+    const modules = await this.trainingModuleModel
+      .find({ tenantId: member.tenantId })
+      .lean();
+    const requiredIds = modules.map((m) => m._id.toString());
+    const missing = requiredIds.filter(
       (id) => !dto.completedModuleIds.includes(id),
     );
     if (missing.length) {
       throw new BadRequestException(
-        `All mandatory modules must be completed first (missing: ${missing.join(', ')}).`,
+        'All mandatory training modules must be completed first.',
       );
     }
     member.onboardingTraining = {
@@ -1288,7 +1359,10 @@ export class BoardMemberService {
   // The last real step — applyOnboardingGraduation flips lifecycleStatus
   // to Active here the moment every checklist item is done, exactly
   // like the reference build's Step 6 (portal activation) happening
-  // "automatically" the instant Step 5 is confirmed.
+  // "automatically" the instant Step 5 is confirmed. Per the PO's
+  // explicit ask, unlike documentsToSign/training this step is NOT
+  // skippable when nothing is configured — a director can't complete
+  // onboarding without a real induction pack from the tenant.
   async submitInduction(userId: string, dto: SubmitInductionDto) {
     const member = await this.getByUserId(userId);
     this.requireStageDone(
@@ -1296,8 +1370,23 @@ export class BoardMemberService {
       BoardOnboardingStageId.TRAINING,
       'complete your mandatory training',
     );
+    const pack = this.effectiveInductionPack(member as any);
+    if (pack.length === 0) {
+      throw new BadRequestException(
+        "Your Company Secretary hasn't sent an induction pack yet — induction can't be completed until they do.",
+      );
+    }
+    const missing = pack.filter(
+      (p) => !dto.acknowledgedDocumentIds.includes(p._id),
+    );
+    if (missing.length) {
+      throw new BadRequestException(
+        'Please review and acknowledge every document in your induction pack first.',
+      );
+    }
     member.inductionAcknowledgement = {
       scheduledDate: dto.scheduledDate ?? null,
+      acknowledgedDocumentIds: dto.acknowledgedDocumentIds,
       acknowledgedAt: new Date(),
     } as any;
     this.markStageDone(member, BoardOnboardingStageId.INDUCTION);

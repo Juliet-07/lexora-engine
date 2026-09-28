@@ -1,4 +1,5 @@
 export * from './board-member.service';
+export * from './board-training-module.service';
 export * from './committee.service';
 export * from './governance-code.service';
 export * from './meeting-ack-reminder.service';

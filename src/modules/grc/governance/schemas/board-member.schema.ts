@@ -149,11 +149,10 @@ export const REGULATORY_QUESTION_IDS = [
 ] as const;
 export const COI_QUESTION_IDS = ['interest', 'related'] as const;
 export const APPOINTMENT_DOCUMENT_IDS = ['charter', 'conduct', 'nda'] as const;
-export const ONBOARDING_TRAINING_MODULE_IDS = [
-  'aml',
-  'privacy',
-  'abc',
-] as const;
+// The fixed 3-module training id list this used to be is gone — the
+// mandatory-training catalog is now the tenant's own real
+// BoardTrainingModule records (see board-training-module.schema.ts),
+// so there's no fixed id set to validate against any more.
 
 export const ONBOARDING_CHECKLIST_DEFAULTS: {
   label: string;
@@ -297,10 +296,16 @@ export const OnboardingTrainingProgressSchema = SchemaFactory.createForClass(
   OnboardingTrainingProgress,
 );
 
-// Step 5 — induction pack acknowledgement.
+// Step 5 — induction pack acknowledgement. Per-document, not a single
+// blanket flag: the director must acknowledge every item in their
+// induction pack (BoardMember.documents — see the note above
+// BoardDocument) one at a time before the whole step can be
+// confirmed. acknowledgedDocumentIds holds the _id of each
+// BoardDocument entry acknowledged so far.
 @Schema({ _id: false })
 export class InductionAcknowledgement {
   @Prop({ default: null }) scheduledDate: string | null;
+  @Prop({ type: [String], default: [] }) acknowledgedDocumentIds: string[];
   @Prop({ required: true, default: () => new Date() }) acknowledgedAt: Date;
 }
 export const InductionAcknowledgementSchema = SchemaFactory.createForClass(
@@ -342,7 +347,13 @@ export class BoardSkill {
 }
 export const BoardSkillSchema = SchemaFactory.createForClass(BoardSkill);
 
-@Schema({ _id: false })
+// Real _id per entry (not { _id: false }, unlike most other plain
+// subdocuments on this schema) — needed so BoardMemberService can
+// address one specific document for per-document induction-pack
+// acknowledgement (see InductionAcknowledgement.acknowledgedDocumentIds
+// and effectiveInductionPack() below); the tenant's own delete route
+// stays index-based, unaffected by this.
+@Schema()
 export class BoardDocument {
   @Prop({ required: true }) name: string;
   @Prop({
@@ -398,12 +409,17 @@ export const BoardSignableDocumentSchema = SchemaFactory.createForClass(
   BoardSignableDocument,
 );
 
-// One file in a director's induction pack (Step 5) — real, tenant-
-// uploaded files rather than the static reference checklist. The
-// tenant sends the pack by uploading files here (at director-creation
-// time or any time before the director reaches Step 5); the director
-// then sees and downloads the real files in the board portal and
-// acknowledges receipt (submitInduction).
+// One file in a director's induction pack (Step 5) — LEGACY. The
+// induction pack the director actually sees is now every entry in
+// BoardMember.documents (see effectiveInductionPack() in
+// board-member.service.ts): the tenant's "Documents" tab and the
+// dedicated "Induction pack" card both write to that one array now,
+// after a real bug where a tenant uploading via "Documents" (the more
+// prominent of the two tabs) had those files silently invisible to
+// the board member, who only ever saw this separate inductionPack
+// array. This type/field are kept only so induction-pack files
+// uploaded before that fix still show up (merged in read-only by
+// effectiveInductionPack) — new uploads never write here.
 @Schema({ timestamps: true })
 export class InductionPackItem {
   @Prop({ required: true }) name: string;
@@ -568,6 +584,10 @@ export class BoardMember {
   @Prop({ type: [BoardSkillSchema], default: [] })
   skills: BoardSkill[];
 
+  // Signed governance documents, regulatory filings, and — since every
+  // entry here now doubles as the director's induction pack (see
+  // effectiveInductionPack() in board-member.service.ts) — anything
+  // the tenant uploads for the director to review during onboarding.
   @Prop({ type: [BoardDocumentSchema], default: [] })
   documents: BoardDocument[];
 
@@ -585,8 +605,9 @@ export class BoardMember {
   @Prop({ type: [BoardSignableDocumentSchema], default: [] })
   documentsToSign: BoardSignableDocument[];
 
-  // The real files making up this director's induction pack (Step 5),
-  // sent by the tenant uploading them here — see InductionPackItem.
+  // LEGACY — see the note above InductionPackItem. New induction-pack
+  // uploads go through `documents` now; this only holds items uploaded
+  // before that fix, merged in read-only by effectiveInductionPack().
   @Prop({ type: [InductionPackItemSchema], default: [] })
   inductionPack: InductionPackItem[];
 
