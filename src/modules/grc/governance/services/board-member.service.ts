@@ -24,6 +24,7 @@ import {
   GovernanceCodeCategory,
   BoardTrainingModule,
   BoardTrainingModuleDocument,
+  TrainingType,
 } from '../schemas';
 import {
   CreateBoardMemberDto,
@@ -167,6 +168,38 @@ export class BoardMemberService {
         `Set up ${missing.join(' and ')} before appointing a director (Board Onboarding → Training Modules, and Governance → Codes).`,
       );
     }
+  }
+
+  // Dropped from ONBOARDING_CHECKLIST_DEFAULTS at the PO's request —
+  // kept here (not just deleted from the defaults) so a board member
+  // whose checklist was already seeded with one of these before this
+  // change can have it pruned on next read, with no DB migration
+  // needed. Same read-path-normalization pattern used throughout this
+  // codebase for a schema/content change that already-existing data
+  // predates (the reminder ladder, the isActive fix, etc.).
+  private static readonly RETIRED_ONBOARDING_CHECKLIST_LABELS = [
+    'Code of Conduct and Ethics signed',
+    'Confidentiality and non-disclosure agreement signed',
+  ];
+
+  // Removes any retired checklist item still present on this member,
+  // marking the document modified if it changed anything. Does not
+  // save — callers that only read (getByUserId/getById) save it
+  // themselves so the prune persists past this one request; callers
+  // that go on to make their own changes fold it into their own save.
+  private pruneRetiredChecklistItems(member: BoardMemberDocument): boolean {
+    const before = member.onboardingChecklist.length;
+    member.onboardingChecklist = member.onboardingChecklist.filter(
+      (i) =>
+        !BoardMemberService.RETIRED_ONBOARDING_CHECKLIST_LABELS.includes(
+          i.label,
+        ),
+    ) as any;
+    if (member.onboardingChecklist.length !== before) {
+      member.markModified('onboardingChecklist');
+      return true;
+    }
+    return false;
   }
 
   private generateTempPassword(): string {
@@ -644,7 +677,16 @@ export class BoardMemberService {
               m.inductionAcknowledgement.acknowledgedDocumentIds ?? [],
           }
         : null,
-      onboardingChecklist: m.onboardingChecklist ?? [],
+      // Filters out the two retired items even before a member's own
+      // document has been individually opened (and so actually
+      // pruned+saved by getById/getByUserId) — display-only here,
+      // since this read goes through .lean() and is never saved.
+      onboardingChecklist: (m.onboardingChecklist ?? []).filter(
+        (i: any) =>
+          !BoardMemberService.RETIRED_ONBOARDING_CHECKLIST_LABELS.includes(
+            i.label,
+          ),
+      ),
       successionPlan: m.successionPlan ?? null,
       offboarding: m.offboarding ?? null,
       userId: m.userId ?? null,
@@ -730,6 +772,10 @@ export class BoardMemberService {
       tenantId: new Types.ObjectId(tenantId),
     });
     if (!member) throw new NotFoundException('Board member not found');
+    if (this.pruneRetiredChecklistItems(member)) {
+      this.applyOnboardingGraduation(member);
+      await member.save();
+    }
     return member;
   }
 
@@ -1156,6 +1202,10 @@ export class BoardMemberService {
     if (!member) {
       throw new NotFoundException('No board member record for this account');
     }
+    if (this.pruneRetiredChecklistItems(member)) {
+      this.applyOnboardingGraduation(member);
+      await member.save();
+    }
     return member;
   }
 
@@ -1177,6 +1227,10 @@ export class BoardMemberService {
 
   async getMyProfile(userId: string) {
     const member = await this.getByUserId(userId);
+    const tenantCompanyName = await resolveBusinessName(
+      this.userModel,
+      member.tenantId.toString(),
+    );
     return {
       id: member._id,
       name: member.name,
@@ -1192,6 +1246,12 @@ export class BoardMemberService {
       // empty at creation.
       nationality: member.nationality ?? '',
       idNumber: member.idNumber ?? '',
+      // The real tenant that appointed this director — the board
+      // portal's onboarding questions/declarations reference this by
+      // name instead of the platform's own name ("Lexora Africa"),
+      // since the director is being onboarded by, and declaring to,
+      // this specific tenant, not the platform itself.
+      tenantCompanyName,
     };
   }
 
@@ -1439,6 +1499,35 @@ export class BoardMemberService {
       throw new BadRequestException(
         'All mandatory training modules must be completed first.',
       );
+    }
+    // Also record each newly-completed module in the member's real
+    // Training & CPD log (member.training) — completing onboarding
+    // training is real training, and previously only showed up on the
+    // onboarding stage itself, never under the director's own
+    // Training & CPD tab. Skips anything already logged from a prior
+    // submission (checked against the previously-saved
+    // completedModuleIds, not member.training itself) so a
+    // resubmission never duplicates an entry.
+    const alreadyLogged = new Set(
+      member.onboardingTraining?.completedModuleIds ?? [],
+    );
+    const newlyCompleted = modules.filter(
+      (m) =>
+        dto.completedModuleIds.includes(m._id.toString()) &&
+        !alreadyLogged.has(m._id.toString()),
+    );
+    if (newlyCompleted.length) {
+      for (const m of newlyCompleted) {
+        member.training.push({
+          title: m.title,
+          completedAt: new Date(),
+          type: TrainingType.MANDATORY,
+          provider: '',
+          hours: 0,
+          expiresAt: null,
+        } as any);
+      }
+      member.markModified('training');
     }
     member.onboardingTraining = {
       completedModuleIds: dto.completedModuleIds,

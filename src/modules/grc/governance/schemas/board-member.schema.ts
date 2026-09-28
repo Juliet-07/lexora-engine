@@ -171,14 +171,6 @@ export const ONBOARDING_CHECKLIST_DEFAULTS: {
     stageId: BoardOnboardingStageId.SIGN_DOCS,
   },
   {
-    label: 'Code of Conduct and Ethics signed',
-    stageId: BoardOnboardingStageId.SIGN_DOCS,
-  },
-  {
-    label: 'Confidentiality and non-disclosure agreement signed',
-    stageId: BoardOnboardingStageId.SIGN_DOCS,
-  },
-  {
     label: 'Declaration of interests filed',
     stageId: BoardOnboardingStageId.SIGN_DOCS,
   },
