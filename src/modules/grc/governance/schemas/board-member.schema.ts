@@ -392,16 +392,22 @@ export const BoardDocumentFolderSchema =
 // Code of Conduct. The tenant assigns these at director-creation time
 // (or later, from Board Management) by picking from their published
 // Governance Codes (see GovernanceCode); this is a snapshot of that
-// code at assignment time — title/category/fileUrl/version — not a
-// live reference, so a later edit or new version of the source code
+// code at assignment time — title/category/body/fileUrl/version — not
+// a live reference, so a later edit or new version of the source code
 // never silently changes what a director already saw and signed.
 // sourceCodeId is kept only to let the tenant see where it came from.
+// `body` is the code's rich-text content at assignment time: codes are
+// authored in-app (Codes.tsx), not uploaded as files, so most have no
+// fileUrl at all — body is what actually lets the director read and
+// review what they're signing; fileUrl stays as an optional extra
+// when the code also has an uploaded attachment.
 @Schema({ timestamps: true })
 export class BoardSignableDocument {
   @Prop({ required: true, trim: true }) title: string;
   @Prop({ default: '' }) category: string;
   @Prop({ type: Types.ObjectId, ref: 'GovernanceCode', default: null })
   sourceCodeId: Types.ObjectId | null;
+  @Prop({ default: '' }) body: string;
   @Prop({ default: null }) fileUrl: string | null;
   @Prop({ default: 1 }) version: number;
 }

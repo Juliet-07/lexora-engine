@@ -21,6 +21,7 @@ import {
   GovernanceCode,
   GovernanceCodeDocument,
   GovernanceCodeStatus,
+  GovernanceCodeCategory,
   BoardTrainingModule,
   BoardTrainingModuleDocument,
 } from '../schemas';
@@ -110,12 +111,12 @@ export class BoardMemberService {
   ) {}
 
   // ── Resolve tenant-picked Governance Code ids into signable-document
-  // snapshots (title/category/fileUrl/version) at the moment they're
-  // assigned to a director — see BoardSignableDocument. Only currently
-  // Published codes belonging to this tenant are eligible; anything
-  // else in the list is silently dropped rather than erroring, so a
-  // code someone unpublished between selection and submission doesn't
-  // block appointing the director.
+  // snapshots (title/category/body/fileUrl/version) at the moment
+  // they're assigned to a director — see BoardSignableDocument. Only
+  // currently Published codes belonging to this tenant are eligible;
+  // anything else in the list is silently dropped rather than
+  // erroring, so a code someone unpublished between selection and
+  // submission doesn't block appointing the director.
   private async resolveDocumentsToSign(
     tenantId: Types.ObjectId,
     documentIds: string[] | undefined,
@@ -132,10 +133,40 @@ export class BoardMemberService {
           title: c.title,
           category: c.category,
           sourceCodeId: c._id,
+          body: c.body ?? '',
           fileUrl: c.documents?.[0]?.fileUrl ?? null,
           version: c.version,
         }) as any,
     );
+  }
+
+  // ── Gate: a director shouldn't be appointed into an onboarding
+  // journey with nothing real to complete. Per explicit product
+  // requirement, both a training catalog and a published Board
+  // Charter must exist before a new director can be created — a
+  // training-less Step 4 or a document-less Step 3 would otherwise
+  // silently skip themselves ("nothing configured, nothing
+  // required"), which is fine for later additions but not for the
+  // very first director. Enforced here (both create paths) as well
+  // as client-side on the New Director entry point, so this can never
+  // be bypassed by calling the API directly.
+  private async assertOnboardingPrerequisites(tenantId: Types.ObjectId) {
+    const [trainingCount, hasBoardCharter] = await Promise.all([
+      this.trainingModuleModel.countDocuments({ tenantId }),
+      this.governanceCodeModel.exists({
+        tenantId,
+        category: GovernanceCodeCategory.BOARD_CHARTER,
+        status: GovernanceCodeStatus.PUBLISHED,
+      }),
+    ]);
+    const missing: string[] = [];
+    if (!trainingCount) missing.push('at least one mandatory training module');
+    if (!hasBoardCharter) missing.push('a published Board Charter');
+    if (missing.length) {
+      throw new BadRequestException(
+        `Set up ${missing.join(' and ')} before appointing a director (Board Onboarding → Training Modules, and Governance → Codes).`,
+      );
+    }
   }
 
   private generateTempPassword(): string {
@@ -181,6 +212,7 @@ export class BoardMemberService {
     businessName: string,
   ) {
     const tId = new Types.ObjectId(tenantId);
+    await this.assertOnboardingPrerequisites(tId);
     const email = dto.email.toLowerCase();
 
     const emailTaken = await this.userModel.findOne({ email });
@@ -273,6 +305,7 @@ export class BoardMemberService {
     addedBy: string,
   ) {
     const tId = new Types.ObjectId(tenantId);
+    await this.assertOnboardingPrerequisites(tId);
     const email = dto.email.toLowerCase();
 
     const emailTaken = await this.userModel.findOne({ email });
@@ -596,7 +629,13 @@ export class BoardMemberService {
         folder: d.folder ?? '',
       })),
       documentFolders: m.documentFolders ?? [],
-      documentsToSign: m.documentsToSign ?? [],
+      // `body` is new on this snapshot — a director assigned a
+      // document before this round has none stored, so back it in
+      // with an empty string rather than leaving it undefined.
+      documentsToSign: (m.documentsToSign ?? []).map((d: any) => ({
+        ...d,
+        body: d.body ?? '',
+      })),
       inductionPack: m.inductionPack ?? [],
       inductionAcknowledgement: m.inductionAcknowledgement
         ? {
@@ -622,7 +661,20 @@ export class BoardMemberService {
       .lean();
     return members.map((m) => {
       const normalized = this.normalize(m);
-      return { ...normalized, termStatus: this.termStatus(normalized as any) };
+      return {
+        ...normalized,
+        termStatus: this.termStatus(normalized as any),
+        // Real "active board member" flag — GovernanceCodeService and
+        // PolicyService both already filter this list by `.isActive`
+        // for their board-approval gates, but it was never actually
+        // populated here, so every such filter silently saw zero
+        // active members regardless of real board size (Board Charter
+        // always bootstrap-published, every other category always
+        // blocked). Fixed as part of this round's bootstrap-publish
+        // work — "active" mirrors getCurrentChair()'s own definition.
+        isActive:
+          normalized.lifecycleStatus !== BoardMemberLifecycleStatus.OFFBOARDED,
+      };
     });
   }
 
@@ -1314,7 +1366,51 @@ export class BoardMemberService {
     this.markStageDone(member, BoardOnboardingStageId.SIGN_DOCS);
     this.applyOnboardingGraduation(member);
     await member.save();
+    // "Sign now" on a document here is the director's real signature
+    // on the source Governance Code — the tenant previously had no
+    // way to see that this happened at all. Recorded against every
+    // signed document's sourceCodeId, not just markStageDone above.
+    await this.recordCodeAcknowledgements(member, dto.signedDocumentIds);
     return this.getMyOnboarding(userId);
+  }
+
+  // Records (or, on resubmission, refreshes) a real acknowledgement
+  // against each signed document's source Governance Code, keyed by
+  // this board member so re-signing never creates a duplicate row.
+  // Silently skips a document with no sourceCodeId (nothing to record
+  // against) or whose source code no longer exists.
+  private async recordCodeAcknowledgements(
+    member: BoardMemberDocument,
+    signedDocumentIds: string[],
+  ) {
+    const signed = new Set(signedDocumentIds);
+    const codeIds = [
+      ...new Set(
+        (member.documentsToSign ?? [])
+          .filter((d: any) => signed.has(d._id.toString()) && d.sourceCodeId)
+          .map((d: any) => d.sourceCodeId.toString()),
+      ),
+    ];
+    if (!codeIds.length) return;
+    await Promise.all(
+      codeIds.map(async (codeId) => {
+        const code = await this.governanceCodeModel.findOne({
+          _id: codeId,
+          tenantId: member.tenantId,
+        });
+        if (!code) return;
+        code.acknowledgedBy = (code.acknowledgedBy ?? []).filter(
+          (a: any) => a.boardMemberId?.toString() !== member._id.toString(),
+        );
+        code.acknowledgedBy.push({
+          boardMemberId: member._id,
+          name: member.name,
+          acknowledgedAt: new Date(),
+        } as any);
+        code.markModified('acknowledgedBy');
+        await code.save();
+      }),
+    );
   }
 
   // ── Step 4 — Mandatory training ──────────────────────────────────

@@ -1,98 +1,349 @@
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import {
+  GovernanceCode,
+  GovernanceCodeDocument,
+  GovernanceCodeStatus,
+  GovernanceCodeCategory,
+  CodeApprovalDecision,
+} from '../schemas';
+import {
+  CreateGovernanceCodeDto,
+  UpdateCodeBodyDto,
+  DecideCodeBoardApprovalDto,
+} from '../dtos/index.dto';
+import {
+  PolicyTemplate,
+  PolicyTemplateDocument,
+  PolicyTemplateStatus,
+  PolicyTemplateAppliesTo,
+} from 'src/modules/super_admin/schemas/policy-template.schema';
+import { BoardMemberService } from './board-member.service';
+import { EmailService } from 'src/common/utils/mailing/email.service';
+import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 
-export type GovernanceCodeDocument = GovernanceCode & Document;
+@Injectable()
+export class GovernanceCodeService {
+  constructor(
+    @InjectModel(GovernanceCode.name)
+    private readonly codeModel: Model<GovernanceCodeDocument>,
+    @InjectModel(PolicyTemplate.name)
+    private readonly templateModel: Model<PolicyTemplateDocument>,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    private readonly boardMemberService: BoardMemberService,
+    private readonly emailService: EmailService,
+  ) {}
 
-export enum GovernanceCodeCategory {
-  CODE_OF_CONDUCT = 'Code of Conduct',
-  GOVERNANCE_CHARTER = 'Governance Charter',
-  BOARD_CHARTER = 'Board Charter',
-  ETHICS = 'Ethics',
-  OTHER = 'Other',
+  private sectionsToBody(
+    title: string,
+    sections: { title: string; content: string }[],
+  ): string {
+    const heading = `<h2>${title.toUpperCase()}</h2>`;
+    const body = sections
+      .map((s, i) => `<h3>${i + 1}. ${s.title}</h3>${s.content || ''}`)
+      .join('');
+    return heading + body;
+  }
+
+  async create(tenantId: string, dto: CreateGovernanceCodeDto) {
+    let body = dto.body ?? '';
+    let templateId: Types.ObjectId | null = null;
+
+    if (dto.templateId && Types.ObjectId.isValid(dto.templateId)) {
+      const template = await this.templateModel.findOne({
+        _id: dto.templateId,
+        status: PolicyTemplateStatus.PUBLISHED,
+        appliesTo: PolicyTemplateAppliesTo.GOVERNANCE_CODE,
+      });
+      if (template) {
+        body = this.sectionsToBody(dto.title, template.sections);
+        templateId = template._id as Types.ObjectId;
+      }
+    }
+
+    return this.codeModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      title: dto.title,
+      category: dto.category,
+      body,
+      documents: [],
+      version: 1,
+      status: GovernanceCodeStatus.DRAFT,
+      templateId,
+      boardApprovals: [],
+    });
+  }
+
+  // .lean() reads skip schema defaults for fields a document simply
+  // doesn't have stored yet — real for any code created before this
+  // round added boardApprovals/templateId. Backfilled here so the
+  // frontend never has to guard against a missing array.
+  private normalize(c: any) {
+    return {
+      ...c,
+      boardApprovals: c.boardApprovals ?? [],
+      acknowledgedBy: c.acknowledgedBy ?? [],
+      templateId: c.templateId ?? null,
+    };
+  }
+
+  async getAll(tenantId: string) {
+    const codes = await this.codeModel
+      .find({ tenantId: new Types.ObjectId(tenantId) })
+      .sort({ updatedAt: -1 })
+      .lean();
+    return codes.map((c) => this.normalize(c));
+  }
+
+  async getById(tenantId: string, id: string): Promise<GovernanceCodeDocument> {
+    const code = await this.codeModel.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!code) throw new NotFoundException('Governance code not found');
+    return code;
+  }
+
+  async updateBody(tenantId: string, id: string, dto: UpdateCodeBodyDto) {
+    const code = await this.getById(tenantId, id);
+    code.body = dto.body;
+    await code.save();
+    return code;
+  }
+
+  async addDocument(tenantId: string, id: string, file: Express.Multer.File) {
+    const code = await this.getById(tenantId, id);
+    code.documents.push({
+      name: file.originalname,
+      fileUrl: `/uploads/grc/governance-codes/${file.filename}`,
+      mimeType: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date(),
+    } as any);
+    code.markModified('documents');
+    await code.save();
+    return code;
+  }
+
+  async removeDocument(tenantId: string, id: string, index: number) {
+    const code = await this.getById(tenantId, id);
+    code.documents.splice(index, 1);
+    code.markModified('documents');
+    await code.save();
+    return code;
+  }
+
+  async publish(tenantId: string, id: string) {
+    const code = await this.getById(tenantId, id);
+    if (code.status !== GovernanceCodeStatus.DRAFT) {
+      throw new BadRequestException('Only a draft can be published.');
+    }
+    code.status = GovernanceCodeStatus.PUBLISHED;
+    await code.save();
+    return code;
+  }
+
+  // ── Approval workflow ───────────────────────────────────────────
+  // Draft -> Internal review -> Board / Committee approval -> Published.
+  // A code cannot skip straight from Draft/Internal review to
+  // Published via `publish()` above in normal use — the tenant UI now
+  // drives codes through sendForReview/sendForBoardApproval instead.
+
+  async sendForReview(tenantId: string, id: string) {
+    const code = await this.getById(tenantId, id);
+    if (code.status !== GovernanceCodeStatus.DRAFT) {
+      throw new BadRequestException(
+        'Only a draft can be sent for internal review.',
+      );
+    }
+    // Bootstrap shortcut, Board Charter only: a charter drafted before
+    // any board member exists has no board to review or approve it —
+    // it's often the very document that establishes one — so it skips
+    // Internal review and Board / Committee approval entirely and
+    // publishes straight from Draft. Any other category, or a tenant
+    // that already has active board members, goes through the normal
+    // two-step pipeline below. Mirrors sendForBoardApproval's own
+    // bootstrap exception so the two can never disagree about when it
+    // applies.
+    if (code.category === GovernanceCodeCategory.BOARD_CHARTER) {
+      const boardMembers = await this.boardMemberService.getAll(tenantId);
+      const active = (boardMembers as any[]).filter((b) => b.isActive);
+      if (!active.length) {
+        return this.finalizePublish(code);
+      }
+    }
+    code.status = GovernanceCodeStatus.INTERNAL_REVIEW;
+    await code.save();
+    return code;
+  }
+
+  private async finalizePublish(code: GovernanceCodeDocument) {
+    code.status = GovernanceCodeStatus.PUBLISHED;
+    await code.save();
+    return code;
+  }
+
+  // Opens a board approval round — one row per currently-active board
+  // member, decided in-app from the Board Portal. Exception: a Board
+  // Charter with no active board members yet publishes immediately
+  // instead of blocking, since there's no board to ask (the charter
+  // is often what establishes one in the first place). Every other
+  // category with zero active board members is blocked, same as
+  // Policy's equivalent guard.
+  async sendForBoardApproval(tenantId: string, id: string) {
+    const code = await this.getById(tenantId, id);
+    if (code.status !== GovernanceCodeStatus.INTERNAL_REVIEW) {
+      throw new BadRequestException(
+        'Only a code under internal review can be sent for board approval.',
+      );
+    }
+
+    const boardMembers = await this.boardMemberService.getAll(tenantId);
+    const active = (boardMembers as any[]).filter((b) => b.isActive);
+
+    if (!active.length) {
+      if (code.category === GovernanceCodeCategory.BOARD_CHARTER) {
+        return this.finalizePublish(code);
+      }
+      throw new BadRequestException(
+        'This code requires board approval, but the tenant has no active board members to ask. Add board members under Board Management first.',
+      );
+    }
+
+    code.boardApprovals = active.map(
+      (b) =>
+        ({
+          boardMemberId: b._id,
+          name: b.name,
+          email: String(b.email).toLowerCase(),
+          decision: CodeApprovalDecision.PENDING,
+          notes: '',
+          decidedAt: null,
+          requestedAt: new Date(),
+        }) as any,
+    );
+    code.status = GovernanceCodeStatus.PENDING_BOARD_APPROVAL;
+    code.markModified('boardApprovals');
+    await code.save();
+
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    await Promise.all(
+      active.map((b) =>
+        this.emailService
+          .sendPolicyForAcknowledgment({
+            to: String(b.email).toLowerCase(),
+            recipientName: b.name,
+            policyTitle: code.title,
+            ackLink: `${process.env.BOARD_APP_URL || 'http://localhost:8083'}/governance-codes`,
+            businessName,
+          })
+          .catch(() => {}),
+      ),
+    );
+
+    return code;
+  }
+
+  // ── Board Portal — the signed-in board member's own view ────────
+
+  async getPendingForBoardMember(userId: string) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    const codes = await this.codeModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        'boardApprovals.boardMemberId': new Types.ObjectId(boardMemberId),
+      })
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    return codes.map((c: any) => {
+      const mine = (c.boardApprovals ?? []).find(
+        (r: any) => r.boardMemberId?.toString() === boardMemberId,
+      );
+      return {
+        id: c._id,
+        title: c.title,
+        category: c.category,
+        version: c.version,
+        status: c.status,
+        body: c.body,
+        myDecision: mine?.decision ?? null,
+        myNotes: mine?.notes ?? '',
+        myDecidedAt: mine?.decidedAt ?? null,
+      };
+    });
+  }
+
+  async decideBoardApproval(
+    userId: string,
+    id: string,
+    dto: DecideCodeBoardApprovalDto,
+  ) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    const code = await this.getById(tenantId, id);
+    const row = code.boardApprovals.find(
+      (r) => r.boardMemberId.toString() === boardMemberId,
+    );
+    if (!row) {
+      throw new ForbiddenException(
+        'You have not been asked to approve this code.',
+      );
+    }
+    if (row.decision !== CodeApprovalDecision.PENDING) {
+      throw new BadRequestException('This approval has already been recorded.');
+    }
+
+    row.decision = dto.decision;
+    row.notes = dto.notes ?? '';
+    row.decidedAt = new Date();
+    code.markModified('boardApprovals');
+
+    if (dto.decision === CodeApprovalDecision.REJECTED) {
+      code.status = GovernanceCodeStatus.INTERNAL_REVIEW;
+      await code.save();
+      return code;
+    }
+
+    const allApproved = code.boardApprovals.every(
+      (r) => r.decision === CodeApprovalDecision.APPROVED,
+    );
+    if (allApproved) {
+      await this.finalizePublish(code);
+    } else {
+      await code.save();
+    }
+    return code;
+  }
+
+  // Matches the actual UI exactly — bumps version and reopens the
+  // SAME record for editing. No version chain, no new document.
+  async startNewVersion(tenantId: string, id: string) {
+    const code = await this.getById(tenantId, id);
+    if (code.status !== GovernanceCodeStatus.PUBLISHED) {
+      throw new BadRequestException(
+        'Start a new version only from a published code.',
+      );
+    }
+    code.status = GovernanceCodeStatus.DRAFT;
+    code.version += 1;
+    await code.save();
+    return code;
+  }
+
+  async delete(tenantId: string, id: string): Promise<void> {
+    const deleted = await this.codeModel.findOneAndDelete({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!deleted) throw new NotFoundException('Governance code not found');
+  }
 }
-
-// Internal review and Board / Committee approval are named to match
-// the tenant UI exactly (Codes.tsx's `Stage` type) — the frontend's
-// existing 4-stage lifecycle badges map straight onto this enum, no
-// separate local-only stage tracking needed anymore.
-export enum GovernanceCodeStatus {
-  DRAFT = 'Draft',
-  INTERNAL_REVIEW = 'Internal review',
-  PENDING_BOARD_APPROVAL = 'Board / Committee approval',
-  PUBLISHED = 'Published',
-}
-
-export enum CodeApprovalDecision {
-  PENDING = 'Pending',
-  APPROVED = 'Approved',
-  REJECTED = 'Rejected',
-}
-
-@Schema({ _id: false })
-export class CodeAttachment {
-  @Prop({ required: true }) name: string;
-  @Prop({ default: null }) fileUrl: string | null;
-  @Prop({ default: null }) mimeType: string | null;
-  @Prop({ default: 0 }) size: number;
-  @Prop({ required: true, default: () => new Date() }) uploadedAt: Date;
-}
-export const CodeAttachmentSchema =
-  SchemaFactory.createForClass(CodeAttachment);
-
-// One row per active board member asked to approve a code — decided
-// in-app from the Board Portal (the director is already an
-// authenticated BoardPortalController caller there, so unlike
-// Policy's board approval this needs no emailed magic-link token;
-// the email notification below just points them at their portal).
-@Schema({ _id: false })
-export class CodeBoardApproval {
-  @Prop({ type: Types.ObjectId, ref: 'BoardMember', required: true })
-  boardMemberId: Types.ObjectId;
-  @Prop({ required: true }) name: string;
-  @Prop({ required: true, lowercase: true }) email: string;
-  @Prop({ enum: CodeApprovalDecision, default: CodeApprovalDecision.PENDING })
-  decision: CodeApprovalDecision;
-  @Prop({ default: '' }) notes: string;
-  @Prop({ default: null }) decidedAt: Date | null;
-  @Prop({ required: true, default: () => new Date() }) requestedAt: Date;
-}
-export const CodeBoardApprovalSchema =
-  SchemaFactory.createForClass(CodeBoardApproval);
-
-@Schema({ timestamps: true, collection: 'grc_governance_codes' })
-export class GovernanceCode {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
-  tenantId: Types.ObjectId;
-
-  @Prop({ required: true, trim: true })
-  title: string;
-
-  @Prop({ enum: GovernanceCodeCategory, required: true })
-  category: GovernanceCodeCategory;
-
-  @Prop({ default: '' })
-  body: string;
-
-  @Prop({ type: [CodeAttachmentSchema], default: [] })
-  documents: CodeAttachment[];
-
-  @Prop({ default: 1 })
-  version: number;
-
-  @Prop({ enum: GovernanceCodeStatus, default: GovernanceCodeStatus.DRAFT })
-  status: GovernanceCodeStatus;
-
-  // The super-admin-authored template this code was started from, if
-  // any — record-keeping only, never re-read after creation (matches
-  // Policy.templateId).
-  @Prop({ type: Types.ObjectId, ref: 'PolicyTemplate', default: null })
-  templateId: Types.ObjectId | null;
-
-  // Populated when sendForBoardApproval opens an approval round.
-  // Empty for a code that was bootstrap-published (Board Charter,
-  // zero active board members at the time) or hasn't been sent yet.
-  @Prop({ type: [CodeBoardApprovalSchema], default: [] })
-  boardApprovals: CodeBoardApproval[];
-}
-export const GovernanceCodeSchema =
-  SchemaFactory.createForClass(GovernanceCode);
