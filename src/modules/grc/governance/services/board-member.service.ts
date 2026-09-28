@@ -25,6 +25,9 @@ import {
   BoardTrainingModule,
   BoardTrainingModuleDocument,
   TrainingType,
+  GovernanceMeeting,
+  GovernanceMeetingDocument,
+  MeetingAudienceType,
 } from '../schemas';
 import {
   CreateBoardMemberDto,
@@ -113,6 +116,14 @@ export class BoardMemberService {
     // instead of the old fixed 3-item id list.
     @InjectModel(BoardTrainingModule.name)
     private readonly trainingModuleModel: Model<BoardTrainingModuleDocument>,
+    // Same module (governance.module.ts registers this schema for
+    // MeetingService too), so no circularity risk — lets the board
+    // portal's own "Board of Directors" overview compute a director's
+    // real board-meeting attendance from actual GovernanceMeeting
+    // records instead of a manually-typed percentage (see
+    // getBoardOverview below).
+    @InjectModel(GovernanceMeeting.name)
+    private readonly meetingModel: Model<GovernanceMeetingDocument>,
     private readonly platformTemplateService: PlatformContractTemplateService,
     private readonly emailService: EmailService,
     // Real committee ⇄ board member link — see committee.schema.ts.
@@ -1292,6 +1303,85 @@ export class BoardMemberService {
       // since the director is being onboarded by, and declaring to,
       // this specific tenant, not the platform itself.
       tenantCompanyName,
+    };
+  }
+
+  // Board portal, self-service — the "Board of Directors" overview
+  // card on the My Committees page: this director's own role/status,
+  // how many active board members the tenant currently has, their own
+  // Board-meeting attendance (computed from real GovernanceMeeting
+  // attendance records, not a manually-typed percentage — matches the
+  // "computed over typed" convention used elsewhere in this module),
+  // and the tenant's current published Board Charter (a Governance
+  // Code with category = BOARD_CHARTER; there's no separate Board
+  // Charter entity — see governance-code.schema.ts).
+  async getBoardOverview(userId: string) {
+    const member = await this.getByUserId(userId);
+    const tenantId = member.tenantId;
+
+    const [totalActiveMembers, charterCode, boardMeetings] = await Promise.all([
+      this.boardMemberModel.countDocuments({
+        tenantId,
+        lifecycleStatus: BoardMemberLifecycleStatus.ACTIVE,
+      }),
+      this.governanceCodeModel
+        .findOne({
+          tenantId,
+          category: GovernanceCodeCategory.BOARD_CHARTER,
+          status: GovernanceCodeStatus.PUBLISHED,
+        })
+        .sort({ version: -1, updatedAt: -1 })
+        .lean(),
+      this.meetingModel
+        .find({
+          tenantId,
+          type: MeetingAudienceType.BOARD,
+          attendanceRecordedAt: { $ne: null },
+        })
+        .lean(),
+    ]);
+
+    // A meeting only counts toward this director's attendance if they
+    // were actually invited to it (appear in its attendees list,
+    // matched by email — the same identity attendees are recorded
+    // under). "Present" is either the meeting-wide allPresent flag or
+    // their own attendee index being in attendancePresentIndices.
+    let eligible = 0;
+    let present = 0;
+    for (const meeting of boardMeetings) {
+      const idx = (meeting.attendees ?? []).findIndex(
+        (a) => a.email?.toLowerCase() === member.email.toLowerCase(),
+      );
+      if (idx === -1) continue;
+      eligible += 1;
+      const wasPresent = meeting.attendanceAllPresent
+        ? true
+        : (meeting.attendancePresentIndices ?? []).includes(idx);
+      if (wasPresent) present += 1;
+    }
+
+    return {
+      name: 'Board of Directors',
+      role: member.role,
+      status: member.lifecycleStatus,
+      totalMembers: totalActiveMembers,
+      attendance:
+        eligible > 0
+          ? {
+              pct: Math.round((present / eligible) * 100),
+              present,
+              eligible,
+            }
+          : null,
+      charter: charterCode
+        ? {
+            id: charterCode._id,
+            title: charterCode.title,
+            version: charterCode.version,
+            body: charterCode.body,
+            publishedAt: (charterCode as any).updatedAt ?? null,
+          }
+        : null,
     };
   }
 

@@ -51,6 +51,17 @@ export class BoardPortalController {
     return this.boardMemberService.getMyCommittees(userId);
   }
 
+  @Get('board-overview')
+  @ApiOperation({
+    summary:
+      "Board of Directors overview — this director's role/status, total " +
+      'active board members, their own board-meeting attendance, and the ' +
+      'current published Board Charter',
+  })
+  getBoardOverview(@CurrentUser('sub') userId: string) {
+    return this.boardMemberService.getBoardOverview(userId);
+  }
+
   // ── Real onboarding form submissions — one per step, each
   // server-gated on the previous step actually being done (see
   // BoardMemberService's requireStageDone). Replaces the earlier flat
