@@ -89,6 +89,7 @@ export class GovernanceCodeService {
     return {
       ...c,
       boardApprovals: c.boardApprovals ?? [],
+      acknowledgedBy: c.acknowledgedBy ?? [],
       templateId: c.templateId ?? null,
     };
   }
@@ -161,6 +162,22 @@ export class GovernanceCodeService {
       throw new BadRequestException(
         'Only a draft can be sent for internal review.',
       );
+    }
+    // Bootstrap shortcut, Board Charter only: a charter drafted before
+    // any board member exists has no board to review or approve it —
+    // it's often the very document that establishes one — so it skips
+    // Internal review and Board / Committee approval entirely and
+    // publishes straight from Draft. Any other category, or a tenant
+    // that already has active board members, goes through the normal
+    // two-step pipeline below. Mirrors sendForBoardApproval's own
+    // bootstrap exception so the two can never disagree about when it
+    // applies.
+    if (code.category === GovernanceCodeCategory.BOARD_CHARTER) {
+      const boardMembers = await this.boardMemberService.getAll(tenantId);
+      const active = (boardMembers as any[]).filter((b) => b.isActive);
+      if (!active.length) {
+        return this.finalizePublish(code);
+      }
     }
     code.status = GovernanceCodeStatus.INTERNAL_REVIEW;
     await code.save();
