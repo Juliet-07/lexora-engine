@@ -7,6 +7,7 @@ import {
   AddCommitteeMemberDto,
   AddCommitteeTaskDto,
   UpdateTaskStatusDto,
+  UpdateCommitteeDetailsDto,
 } from '../dtos/index.dto';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 
@@ -25,6 +26,10 @@ export class CommitteeService {
       purpose: dto.purpose ?? '',
       members: [],
       tasks: [],
+      cadence: dto.cadence ?? 'Quarterly',
+      quorum: dto.quorum ?? 'Majority of voting members',
+      charter: dto.charter ?? '',
+      nextMeeting: dto.nextMeeting ? new Date(dto.nextMeeting) : null,
     });
     return { ...created.toObject(), chair: null };
   }
@@ -34,8 +39,15 @@ export class CommitteeService {
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ name: 1 })
       .lean();
+    // Pre-existing committees created before cadence/quorum/charter/
+    // nextMeeting existed on the schema won't have them hydrated by a
+    // .lean() read, so backfill the same defaults the schema declares.
     return committees.map((c) => ({
       ...c,
+      cadence: c.cadence ?? 'Quarterly',
+      quorum: c.quorum ?? 'Majority of voting members',
+      charter: c.charter ?? '',
+      nextMeeting: c.nextMeeting ?? null,
       chair: this.deriveChair(c.members),
     }));
   }
@@ -153,6 +165,27 @@ export class CommitteeService {
     committee.markModified('tasks');
     await committee.save();
     return committee;
+  }
+
+  async updateDetails(
+    tenantId: string,
+    id: string,
+    dto: UpdateCommitteeDetailsDto,
+  ) {
+    const committee = await this.getById(tenantId, id);
+    if (dto.name !== undefined) committee.name = dto.name;
+    if (dto.purpose !== undefined) committee.purpose = dto.purpose;
+    if (dto.cadence !== undefined) committee.cadence = dto.cadence;
+    if (dto.quorum !== undefined) committee.quorum = dto.quorum;
+    if (dto.charter !== undefined) committee.charter = dto.charter;
+    if (dto.nextMeeting !== undefined) {
+      committee.nextMeeting = dto.nextMeeting
+        ? new Date(dto.nextMeeting)
+        : null;
+    }
+    await committee.save();
+    const chair = this.deriveChair(committee.members as any);
+    return { ...committee.toObject(), chair };
   }
 
   async delete(tenantId: string, id: string): Promise<void> {

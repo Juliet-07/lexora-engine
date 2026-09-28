@@ -51,5 +51,17 @@ export class Committee {
 
   @Prop({ type: [CommitteeTaskSchema], default: [] })
   tasks: CommitteeTask[];
+
+  @Prop({ default: 'Quarterly' })
+  cadence: string;
+
+  @Prop({ default: 'Majority of voting members' })
+  quorum: string;
+
+  @Prop({ default: '' })
+  charter: string;
+
+  @Prop({ type: Date, default: null })
+  nextMeeting: Date | null;
 }
 export const CommitteeSchema = SchemaFactory.createForClass(Committee);

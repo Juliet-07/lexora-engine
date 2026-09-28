@@ -16,6 +16,7 @@ import {
   AddCommitteeMemberDto,
   AddCommitteeTaskDto,
   UpdateTaskStatusDto,
+  UpdateCommitteeDetailsDto,
 } from '../dtos/index.dto';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -70,6 +71,16 @@ export class CommitteeController {
     const tenantId = t || u;
     const businessName = await resolveBusinessName(this.userModel, tenantId);
     return this.committeeService.addMember(tenantId, id, dto, businessName);
+  }
+
+  @Patch(':id')
+  updateDetails(
+    @Param('id') id: string,
+    @Body() dto: UpdateCommitteeDetailsDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.committeeService.updateDetails(t || u, id, dto);
   }
 
   @Delete(':id/members/:index')

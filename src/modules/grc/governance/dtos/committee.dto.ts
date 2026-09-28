@@ -11,6 +11,25 @@ import { CommitteeMemberRole, CommitteeTaskStatus } from '../schemas';
 export class CreateCommitteeDto {
   @ApiProperty() @IsString() name: string;
   @ApiPropertyOptional() @IsOptional() @IsString() purpose?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() cadence?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() quorum?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() charter?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  nextMeeting?: string;
+}
+
+export class UpdateCommitteeDetailsDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() name?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() purpose?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() cadence?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() quorum?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() charter?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  nextMeeting?: string;
 }
 
 export class AddCommitteeMemberDto {
