@@ -93,6 +93,22 @@ export class CommitteeController {
     return this.committeeService.removeMember(t || u, id, Number(index));
   }
 
+  // Same removal, addressed by board member id — used by a director's
+  // own Board Management page, which doesn't track member ordering.
+  @Delete(':id/members/board-member/:boardMemberId')
+  removeMemberByBoardMember(
+    @Param('id') id: string,
+    @Param('boardMemberId') boardMemberId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.committeeService.removeMemberByBoardMember(
+      t || u,
+      id,
+      boardMemberId,
+    );
+  }
+
   @Post(':id/tasks')
   async addTask(
     @Param('id') id: string,

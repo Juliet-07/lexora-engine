@@ -34,7 +34,6 @@ import {
   LogTrainingDto,
   AddSkillDto,
   UpdateRemunerationDto,
-  SetCommitteesDto,
   UpdateAttendanceDto,
   AddOtherDirectorshipDto,
   InitiateSuccessionDto,
@@ -68,6 +67,13 @@ import {
   formatScopeOfWorkList,
 } from 'src/common/utils/contract-fields.util';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+// Imported directly from its own file, not the services barrel — the
+// barrel also re-exports this service, so importing it that way here
+// would be a circular module reference. One-directional otherwise:
+// CommitteeService only injects the BoardMember *model*, never this
+// service, so there's no real dependency cycle, just an import-path
+// one to avoid.
+import { CommitteeService } from './committee.service';
 
 const TERM_EXPIRING_WINDOW_DAYS = 180;
 
@@ -109,6 +115,11 @@ export class BoardMemberService {
     private readonly trainingModuleModel: Model<BoardTrainingModuleDocument>,
     private readonly platformTemplateService: PlatformContractTemplateService,
     private readonly emailService: EmailService,
+    // Real committee ⇄ board member link — see committee.schema.ts.
+    // Used to compute a director's actual committee memberships on
+    // read (getAll/getByIdForDisplay) and to serve their own
+    // "My Committees" board-portal view (getMyCommittees).
+    private readonly committeeService: CommitteeService,
   ) {}
 
   // ── Resolve tenant-picked Governance Code ids into signable-document
@@ -701,7 +712,7 @@ export class BoardMemberService {
       .populate('successorId', 'name role')
       .populate('successionPlan.riskAssessment.interimSuccessorId', 'name role')
       .lean();
-    return members.map((m) => {
+    const mapped = members.map((m) => {
       const normalized = this.normalize(m);
       return {
         ...normalized,
@@ -718,6 +729,17 @@ export class BoardMemberService {
           normalized.lifecycleStatus !== BoardMemberLifecycleStatus.OFFBOARDED,
       };
     });
+    // Real committee memberships, replacing the stale stored/typed
+    // `committees` field (see CommitteeMembership's schema comment) —
+    // batched into one query rather than one per director.
+    const membershipsMap = await this.committeeService.getMembershipsMap(
+      tenantId,
+      mapped.map((m) => m._id.toString()),
+    );
+    return mapped.map((m) => ({
+      ...m,
+      committees: membershipsMap.get(m._id.toString()) ?? [],
+    }));
   }
 
   // A member's `accept` checklist item can only ever be completed by
@@ -777,6 +799,19 @@ export class BoardMemberService {
       await member.save();
     }
     return member;
+  }
+
+  // What the controller's `GET :id` actually serves — getById() above
+  // stays a real Mongoose document for every mutation method that
+  // calls it internally, so this wraps it with the same real-committee
+  // computation getAll() does, without touching the persisted document.
+  async getByIdForDisplay(tenantId: string, id: string) {
+    const member = await this.getById(tenantId, id);
+    const committees = await this.committeeService.getMembershipsForBoardMember(
+      tenantId,
+      id,
+    );
+    return { ...member.toObject(), committees };
   }
 
   // The one place other GRC features (Meetings, once built) resolve
@@ -924,18 +959,11 @@ export class BoardMemberService {
     return member;
   }
 
-  // ── Committees ───────────────────────────────────────────────
-
-  async setCommittees(tenantId: string, id: string, dto: SetCommitteesDto) {
-    const member = await this.getById(tenantId, id);
-    member.committees = dto.committees.map((c) => ({
-      name: c.name,
-      isChair: c.isChair ?? false,
-    })) as any;
-    member.markModified('committees');
-    await member.save();
-    return member;
-  }
+  // Committee membership is no longer set here — it's written from
+  // the Committee side (CommitteeService.addMember/removeMember*),
+  // triggered from either this director's own page or the committee's
+  // own page, and read back here (getAll/getByIdForDisplay) rather
+  // than stored on the board member at all. See committee.schema.ts.
 
   // ── Attendance ───────────────────────────────────────────────
 
@@ -1223,6 +1251,18 @@ export class BoardMemberService {
       boardMemberId: member._id.toString(),
       tenantId: member.tenantId.toString(),
     };
+  }
+
+  // Board portal, self-service — "receive everything pertaining to
+  // that committee... on their board portal": every real committee
+  // this director belongs to, with its mandate, cadence, members
+  // count, chair, and its own tasks.
+  async getMyCommittees(userId: string) {
+    const { boardMemberId, tenantId } = await this.resolveBoardMember(userId);
+    return this.committeeService.getForBoardMemberPortal(
+      tenantId,
+      boardMemberId,
+    );
   }
 
   async getMyProfile(userId: string) {

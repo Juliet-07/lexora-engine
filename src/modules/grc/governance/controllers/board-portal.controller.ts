@@ -43,6 +43,14 @@ export class BoardPortalController {
     return this.boardMemberService.getMyOnboarding(userId);
   }
 
+  @Get('committees')
+  @ApiOperation({
+    summary: 'Committees this director belongs to, with their tasks',
+  })
+  getMyCommittees(@CurrentUser('sub') userId: string) {
+    return this.boardMemberService.getMyCommittees(userId);
+  }
+
   // ── Real onboarding form submissions — one per step, each
   // server-gated on the previous step actually being done (see
   // BoardMemberService's requireStageDone). Replaces the earlier flat

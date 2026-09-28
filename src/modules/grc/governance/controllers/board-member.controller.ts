@@ -30,7 +30,6 @@ import {
   SetSuccessorDto,
   AddSkillDto,
   UpdateRemunerationDto,
-  SetCommitteesDto,
   UpdateAttendanceDto,
   AddOtherDirectorshipDto,
   InitiateSuccessionDto,
@@ -184,7 +183,7 @@ export class BoardMemberController {
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.boardMemberService.getById(t || u, id);
+    return this.boardMemberService.getByIdForDisplay(t || u, id);
   }
 
   @Patch(':id')
@@ -282,20 +281,10 @@ export class BoardMemberController {
     return this.boardMemberService.updateRemuneration(t || u, id, dto);
   }
 
-  // ── Committees ───────────────────────────────────────────────
-
-  @Patch(':id/committees')
-  @ApiOperation({
-    summary: "Replace this director's committee memberships and chair flags",
-  })
-  setCommittees(
-    @Param('id') id: string,
-    @Body() dto: SetCommitteesDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.boardMemberService.setCommittees(t || u, id, dto);
-  }
+  // Committee membership is managed on the Committees endpoints now
+  // (POST/DELETE .../committees/:id/members...) — reachable from
+  // either this director's own page or the committee's own page, and
+  // read back on GET :id/committees below. See committee.controller.ts.
 
   // ── Attendance ───────────────────────────────────────────────
 

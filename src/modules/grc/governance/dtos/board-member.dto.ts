@@ -211,18 +211,10 @@ export class UpdateRemunerationDto {
   lastReviewedAt?: string;
 }
 
-class CommitteeMembershipDto {
-  @ApiProperty() @IsString() name: string;
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() isChair?: boolean;
-}
-
-export class SetCommitteesDto {
-  @ApiProperty({ type: [CommitteeMembershipDto] })
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => CommitteeMembershipDto)
-  committees: CommitteeMembershipDto[];
-}
+// Committee membership is no longer set from this side (see
+// committee.dto.ts's AddCommitteeMemberDto) — a director is added to
+// or removed from a committee through the Committees endpoints, from
+// either this director's own page or the committee's own page.
 
 export class UpdateAttendanceDto {
   @ApiProperty() @IsNumber() @Min(0) @Max(100) attendancePercentage: number;
