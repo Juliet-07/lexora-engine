@@ -129,6 +129,20 @@ export class SubmitBoardMemberAckDto {
   @ApiProperty() @IsBoolean() agendaConfirmed: boolean;
 }
 
+// Board Packs page — mark one board pack document read/unread, and
+// leave a note on it. Documents are addressed by fileUrl (see
+// BoardPackNote's schema comment for why), never by index or a client-
+// supplied name alone.
+export class ToggleBoardPackReadDto {
+  @ApiProperty() @IsString() fileUrl: string;
+  @ApiProperty() @IsBoolean() read: boolean;
+}
+
+export class AddBoardPackNoteDto {
+  @ApiProperty() @IsString() fileUrl: string;
+  @ApiProperty() @IsString() text: string;
+}
+
 // ── Preparation checklist ──────────────────────────────────────────
 export class SetChecklistItemDto {
   @ApiProperty() @IsBoolean() completed: boolean;

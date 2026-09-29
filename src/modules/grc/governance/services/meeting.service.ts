@@ -39,6 +39,8 @@ import {
   SubmitPublicNoticeRsvpDto,
   UpdateMinutesDraftDto,
   SetMinutesDraftStatusDto,
+  ToggleBoardPackReadDto,
+  AddBoardPackNoteDto,
 } from '../dtos/index.dto';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { join } from 'path';
@@ -164,6 +166,7 @@ export class MeetingService {
         rsvpTokens: [],
       },
       minutesDraft: m.minutesDraft ?? null,
+      boardPackNotes: m.boardPackNotes ?? [],
     }));
   }
 
@@ -979,6 +982,17 @@ export class MeetingService {
               confirmedAt: myAck.confirmedAt,
             }
           : null,
+        // Board Packs page — this director's own reading progress
+        // (which documents they've marked read, and whether they've
+        // confirmed the whole pack), plus every note left on any of
+        // this meeting's documents — shared among attendees and the
+        // tenant, not private per-director.
+        myBoardPack: {
+          readFileUrls: (myAck?.documents ?? []).map((d: any) => d.fileUrl),
+          allDocumentsRead: myAck?.allDocumentsRead ?? false,
+          allDocumentsReadAt: myAck?.allDocumentsReadAt ?? null,
+        },
+        boardPackNotes: m.boardPackNotes ?? [],
         actionItems: myActionItems.map((a: any) => ({
           _id: a._id,
           title: a.title,
@@ -1036,6 +1050,153 @@ export class MeetingService {
       meeting.acknowledgments.push(entry as any);
     }
     meeting.markModified('acknowledgments');
+    await meeting.save();
+    return meeting;
+  }
+
+  // ── Board Packs page — per-document reading, not just the one-shot
+  // "acknowledge agenda" above. A director marks each board pack
+  // document read individually (and can un-mark it), then confirms the
+  // whole pack once every document is read. Reuses the same
+  // MeetingAcknowledgment record submitBoardMemberAck writes to — the
+  // first "mark read" toggle creates it if it doesn't exist yet, the
+  // same "first touch creates the record" pattern used throughout this
+  // module — so a director's agenda acknowledgement and their board
+  // pack reading progress live on one record, not two. Documents are
+  // matched by fileUrl (see BoardPackNote's schema comment). ─────────
+
+  private findOrCreateMyAck(
+    meeting: GovernanceMeetingDocument,
+    email: string,
+    name: string,
+  ) {
+    const lowerEmail = email.toLowerCase();
+    let idx = meeting.acknowledgments.findIndex(
+      (a) => a.attendeeEmail.toLowerCase() === lowerEmail,
+    );
+    if (idx < 0) {
+      meeting.acknowledgments.push({
+        attendeeName: name,
+        attendeeEmail: lowerEmail,
+        agendaConfirmed: false,
+        documents: [],
+        confirmedAt: new Date(),
+        signature: name,
+        allDocumentsRead: false,
+        allDocumentsReadAt: null,
+      } as any);
+      idx = meeting.acknowledgments.length - 1;
+    }
+    return meeting.acknowledgments[idx];
+  }
+
+  async toggleBoardPackDocumentRead(
+    tenantId: string,
+    id: string,
+    email: string,
+    name: string,
+    dto: ToggleBoardPackReadDto,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const lowerEmail = email.toLowerCase();
+    const isAttendee = meeting.attendees.some(
+      (a) => a.email.toLowerCase() === lowerEmail,
+    );
+    if (!isAttendee) {
+      throw new BadRequestException(
+        'You are not listed as an attendee of this meeting.',
+      );
+    }
+    if (meeting.status === MeetingStatus.DRAFT) {
+      throw new BadRequestException('This meeting has not been sent yet.');
+    }
+    const doc = meeting.boardPack.find((d) => d.fileUrl === dto.fileUrl);
+    if (!doc) throw new NotFoundException('Board pack document not found.');
+
+    const ack = this.findOrCreateMyAck(meeting, email, name);
+    const docIdx = ack.documents.findIndex((d) => d.fileUrl === dto.fileUrl);
+    if (dto.read) {
+      if (docIdx < 0) {
+        ack.documents.push({
+          name: doc.name,
+          fileUrl: doc.fileUrl,
+          ackedAt: new Date(),
+          method: 'in-app',
+        } as any);
+      }
+    } else {
+      if (docIdx >= 0) ack.documents.splice(docIdx, 1);
+      // Unmarking a document means the pack is no longer fully read.
+      ack.allDocumentsRead = false;
+    }
+    meeting.markModified('acknowledgments');
+    await meeting.save();
+    return meeting;
+  }
+
+  async confirmBoardPackRead(tenantId: string, id: string, email: string) {
+    const meeting = await this.getById(tenantId, id);
+    if (meeting.boardPack.length === 0) {
+      throw new BadRequestException(
+        'This meeting has no board pack documents yet.',
+      );
+    }
+    const lowerEmail = email.toLowerCase();
+    const idx = meeting.acknowledgments.findIndex(
+      (a) => a.attendeeEmail.toLowerCase() === lowerEmail,
+    );
+    if (idx < 0) {
+      throw new BadRequestException(
+        'Mark every board pack document as read first.',
+      );
+    }
+    const ack = meeting.acknowledgments[idx];
+    const readUrls = new Set(ack.documents.map((d) => d.fileUrl));
+    const allRead = meeting.boardPack.every((d) => readUrls.has(d.fileUrl));
+    if (!allRead) {
+      throw new BadRequestException(
+        'Mark every board pack document as read first.',
+      );
+    }
+    ack.allDocumentsRead = true;
+    ack.allDocumentsReadAt = new Date();
+    meeting.markModified('acknowledgments');
+    await meeting.save();
+    return meeting;
+  }
+
+  // A director's note/question on a board pack document — shared with
+  // the tenant ("Company Secretary") and visible to other attendees on
+  // the same document, per the board portal's reference design.
+  async addBoardPackNote(
+    tenantId: string,
+    id: string,
+    email: string,
+    name: string,
+    dto: AddBoardPackNoteDto,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const lowerEmail = email.toLowerCase();
+    const isAttendee = meeting.attendees.some(
+      (a) => a.email.toLowerCase() === lowerEmail,
+    );
+    if (!isAttendee) {
+      throw new BadRequestException(
+        'You are not listed as an attendee of this meeting.',
+      );
+    }
+    const doc = meeting.boardPack.find((d) => d.fileUrl === dto.fileUrl);
+    if (!doc) throw new NotFoundException('Board pack document not found.');
+    const text = dto.text.trim();
+    if (!text) throw new BadRequestException('Note cannot be empty.');
+    meeting.boardPackNotes.push({
+      fileUrl: dto.fileUrl,
+      authorName: name,
+      authorEmail: lowerEmail,
+      text,
+      createdAt: new Date(),
+    } as any);
+    meeting.markModified('boardPackNotes');
     await meeting.save();
     return meeting;
   }

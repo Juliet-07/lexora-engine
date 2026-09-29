@@ -58,10 +58,39 @@ export class MeetingAcknowledgment {
   @Prop({ type: [DocumentAckSchema], default: [] }) documents: DocumentAck[];
   @Prop({ required: true, default: () => new Date() }) confirmedAt: Date;
   @Prop({ required: true }) signature: string;
+  // Board Packs page — set once this attendee has marked every one of
+  // the meeting's boardPack documents as read (see
+  // MeetingService#confirmBoardPackRead), distinct from agendaConfirmed
+  // (a separate, meeting-level "acknowledge agenda" action). This
+  // record itself may exist before either is true: the first "mark a
+  // document read" toggle creates it, same as the first agenda
+  // acknowledgement does.
+  @Prop({ default: false }) allDocumentsRead: boolean;
+  @Prop({ default: null }) allDocumentsReadAt: Date | null;
 }
 export const MeetingAcknowledgmentSchema = SchemaFactory.createForClass(
   MeetingAcknowledgment,
 );
+
+// A director's note/question on a specific board pack document,
+// visible to the tenant ("Company Secretary") and to other attendees —
+// a shared thread, not a private one, matching the reference UI.
+// Documents are addressed by fileUrl (a uuid-based multer filename,
+// unique per upload) rather than a Mongo subdocument _id, since
+// BoardPackDocument predates this feature and retrofitting a real _id
+// onto already-stored array elements has no reliable backfill path —
+// fileUrl is already unique and was already the natural key
+// removeBoardPackDoc's own index-based route sidesteps for the same
+// reason.
+@Schema({ _id: false })
+export class BoardPackNote {
+  @Prop({ required: true }) fileUrl: string;
+  @Prop({ required: true }) authorName: string;
+  @Prop({ required: true, lowercase: true }) authorEmail: string;
+  @Prop({ required: true, trim: true }) text: string;
+  @Prop({ required: true, default: () => new Date() }) createdAt: Date;
+}
+export const BoardPackNoteSchema = SchemaFactory.createForClass(BoardPackNote);
 
 @Schema({ _id: false })
 export class MeetingAttendee {
@@ -394,6 +423,9 @@ export class GovernanceMeeting {
 
   @Prop({ type: MinutesDraftSchema, default: null })
   minutesDraft: MinutesDraft | null;
+
+  @Prop({ type: [BoardPackNoteSchema], default: [] })
+  boardPackNotes: BoardPackNote[];
 }
 export const GovernanceMeetingSchema =
   SchemaFactory.createForClass(GovernanceMeeting);

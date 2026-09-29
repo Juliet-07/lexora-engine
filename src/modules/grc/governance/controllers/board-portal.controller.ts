@@ -16,6 +16,8 @@ import {
   SubmitBoardMemberAckDto,
   SetActionItemStatusDto,
   SubmitNoticeRsvpDto,
+  ToggleBoardPackReadDto,
+  AddBoardPackNoteDto,
 } from '../dtos/index.dto';
 
 // ── Board portal, self-service ──────────────────────────────────
@@ -137,6 +139,54 @@ export class BoardPortalController {
     const { tenantId, email } =
       await this.boardMemberService.resolveBoardMember(userId);
     return this.meetingService.markNoticeOpened(tenantId, id, email);
+  }
+
+  @Patch('meetings/:id/board-pack/read')
+  @ApiOperation({
+    summary: 'Mark one board pack document read/unread, in-app',
+  })
+  async toggleBoardPackRead(
+    @Param('id') id: string,
+    @Body() dto: ToggleBoardPackReadDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { tenantId, name, email } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.meetingService.toggleBoardPackDocumentRead(
+      tenantId,
+      id,
+      email,
+      name,
+      dto,
+    );
+  }
+
+  @Post('meetings/:id/board-pack/confirm-read')
+  @ApiOperation({
+    summary: 'Confirm every board pack document has been read',
+  })
+  async confirmBoardPackRead(
+    @Param('id') id: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { tenantId, email } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.meetingService.confirmBoardPackRead(tenantId, id, email);
+  }
+
+  @Post('meetings/:id/board-pack/notes')
+  @ApiOperation({
+    summary:
+      'Add a note or question on a board pack document, shared with the tenant',
+  })
+  async addBoardPackNote(
+    @Param('id') id: string,
+    @Body() dto: AddBoardPackNoteDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { tenantId, name, email } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.meetingService.addBoardPackNote(tenantId, id, email, name, dto);
   }
 
   @Patch('meetings/:id/action-items/:actionItemId/status')
