@@ -21,6 +21,7 @@ import {
   BoardTrainingModuleService,
   GovernanceCodeService,
   MeetingAckReminderService,
+  MeetingNoticeReminderService,
   ResolutionService,
 } from './services';
 import {
@@ -83,6 +84,7 @@ import {
     GovernanceCodeService,
     EmailService,
     MeetingAckReminderService,
+    MeetingNoticeReminderService,
     ResolutionService,
   ],
   controllers: [

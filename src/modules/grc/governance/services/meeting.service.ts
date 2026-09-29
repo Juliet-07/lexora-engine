@@ -10,10 +10,17 @@ import {
   ACK_TOKEN_EXPIRY_DAYS,
   GovernanceMeeting,
   GovernanceMeetingDocument,
+  MeetingAudienceType,
   MeetingMode,
   MeetingStatus,
   MeetingActionItemStatus,
+  NoticeRsvpStatus,
+  MinutesDraftStatus,
 } from '../schemas';
+import {
+  MEETING_CHECKLIST_ITEMS,
+  MEETING_CHECKLIST_ITEM_IDS,
+} from '../constants/meeting-checklist.constant';
 import {
   CreateMeetingDto,
   AddAttendeeDto,
@@ -26,6 +33,12 @@ import {
   AddActionItemDto,
   SetActionItemStatusDto,
   SubmitBoardMemberAckDto,
+  SetChecklistItemDto,
+  UpdateNoticeDto,
+  SubmitNoticeRsvpDto,
+  SubmitPublicNoticeRsvpDto,
+  UpdateMinutesDraftDto,
+  SetMinutesDraftStatusDto,
 } from '../dtos/index.dto';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { join } from 'path';
@@ -69,6 +82,8 @@ export class MeetingService {
       );
     }
 
+    const attendees = await this.computeAutoAttendees(tenantId, dto);
+
     return this.meetingModel.create({
       tenantId: new Types.ObjectId(tenantId),
       title: dto.title,
@@ -83,10 +98,45 @@ export class MeetingService {
       committeeId: dto.committeeId ? new Types.ObjectId(dto.committeeId) : null,
       notes: dto.notes ?? '',
       status: MeetingStatus.DRAFT,
-      attendees: [],
+      attendees,
       agenda: [],
       boardPack: [],
     });
+  }
+
+  // A Board meeting's attendees are always every active board member;
+  // a Committee meeting's attendees are always the selected
+  // committee's current members. Neither is manually built up one
+  // attendee at a time any more — see addAttendee/removeAttendee
+  // below, which now reject Board/Committee meetings outright.
+  // Executive/Ad-hoc meetings have no natural roster source, so they
+  // keep the old manual add/remove flow.
+  private async computeAutoAttendees(
+    tenantId: string,
+    dto: CreateMeetingDto,
+  ): Promise<{ name: string; email: string; role: string }[]> {
+    if (dto.type === MeetingAudienceType.BOARD) {
+      const boardMembers = await this.boardMemberService.getAll(tenantId);
+      return (boardMembers as any[])
+        .filter((b) => b.isActive)
+        .map((b) => ({
+          name: b.name,
+          email: b.email,
+          role: b.role || 'Director',
+        }));
+    }
+    if (dto.type === MeetingAudienceType.COMMITTEE && dto.committeeId) {
+      const committee = await this.committeeService.getById(
+        tenantId,
+        dto.committeeId,
+      );
+      return committee.members.map((m) => ({
+        name: m.name,
+        email: m.email,
+        role: m.role,
+      }));
+    }
+    return [];
   }
 
   async getAll(tenantId: string) {
@@ -95,11 +145,26 @@ export class MeetingService {
       .sort({ date: -1 })
       .lean();
     // .lean() skips schema-default hydration, so a meeting created
-    // before `actionItems` existed on the schema comes back with the
-    // field simply absent rather than `[]` — same read-path-
-    // normalization fix used throughout this codebase (audit folders,
-    // Board Management fields, Governance Codes boardApprovals, …).
-    return meetings.map((m) => ({ ...m, actionItems: m.actionItems ?? [] }));
+    // before `actionItems`/`checklist`/`notice`/`minutesDraft` existed
+    // on the schema comes back with those fields simply absent rather
+    // than their defaults — same read-path-normalization fix used
+    // throughout this codebase (audit folders, Board Management
+    // fields, Governance Codes boardApprovals, …).
+    return meetings.map((m: any) => ({
+      ...m,
+      actionItems: m.actionItems ?? [],
+      checklist: m.checklist ?? [],
+      notice: m.notice ?? {
+        body: '',
+        minimumDays: 14,
+        rsvpDeadline: null,
+        dispatchedAt: null,
+        dispatchedBy: null,
+        recipients: [],
+        rsvpTokens: [],
+      },
+      minutesDraft: m.minutesDraft ?? null,
+    }));
   }
 
   async getById(
@@ -114,8 +179,26 @@ export class MeetingService {
     return meeting;
   }
 
+  // Only an Executive/Ad-hoc meeting — with no auto-populated roster
+  // — can still have attendees added/removed by hand.
+  private assertManualAttendeesAllowed(meeting: GovernanceMeetingDocument) {
+    if (
+      meeting.type === MeetingAudienceType.BOARD ||
+      meeting.type === MeetingAudienceType.COMMITTEE
+    ) {
+      throw new BadRequestException(
+        `Attendees for a ${meeting.type} meeting are automatic — every ${
+          meeting.type === MeetingAudienceType.BOARD
+            ? 'active board member'
+            : "the selected committee's member"
+        } is invited, managed from the Board roster/committee membership rather than added here.`,
+      );
+    }
+  }
+
   async addAttendee(tenantId: string, id: string, dto: AddAttendeeDto) {
     const meeting = await this.getById(tenantId, id);
+    this.assertManualAttendeesAllowed(meeting);
     meeting.attendees.push({
       name: dto.name,
       email: dto.email,
@@ -128,6 +211,7 @@ export class MeetingService {
 
   async removeAttendee(tenantId: string, id: string, index: number) {
     const meeting = await this.getById(tenantId, id);
+    this.assertManualAttendeesAllowed(meeting);
     meeting.attendees.splice(index, 1);
     meeting.markModified('attendees');
     await meeting.save();
@@ -136,6 +220,21 @@ export class MeetingService {
 
   async addAgendaItem(tenantId: string, id: string, dto: AddAgendaItemDto) {
     const meeting = await this.getById(tenantId, id);
+    // The presenter is picked from the meeting's own attendees (a
+    // dropdown on the frontend) rather than typed — validated here in
+    // case anything ever posts directly to this endpoint.
+    if (
+      dto.presenter &&
+      meeting.attendees.length > 0 &&
+      !meeting.attendees.some(
+        (a) =>
+          a.name.trim().toLowerCase() === dto.presenter!.trim().toLowerCase(),
+      )
+    ) {
+      throw new BadRequestException(
+        "The presenter must be one of this meeting's attendees.",
+      );
+    }
     meeting.agenda.push({
       title: dto.title,
       presenter: dto.presenter ?? '',
@@ -205,6 +304,11 @@ export class MeetingService {
     const meeting = await this.getById(tenantId, id);
     if (meeting.attendees.length === 0) {
       throw new BadRequestException('Add attendees before dispatching.');
+    }
+    if (meeting.checklist.length < MEETING_CHECKLIST_ITEMS.length) {
+      throw new BadRequestException(
+        'Complete the preparation checklist before dispatching the board pack.',
+      );
     }
 
     const attachments = meeting.boardPack
@@ -526,6 +630,268 @@ export class MeetingService {
     return meeting;
   }
 
+  // ── Preparation checklist — gates Dispatch. ─────────────────────
+
+  async setChecklistItem(
+    tenantId: string,
+    id: string,
+    itemId: string,
+    dto: SetChecklistItemDto,
+    actorName: string,
+  ) {
+    if (!MEETING_CHECKLIST_ITEM_IDS.includes(itemId)) {
+      throw new BadRequestException('Unknown checklist item.');
+    }
+    const meeting = await this.getById(tenantId, id);
+    const existingIdx = meeting.checklist.findIndex((c) => c.itemId === itemId);
+    if (dto.completed) {
+      const entry = { itemId, completedAt: new Date(), completedBy: actorName };
+      if (existingIdx >= 0) meeting.checklist[existingIdx] = entry as any;
+      else meeting.checklist.push(entry as any);
+    } else if (existingIdx >= 0) {
+      meeting.checklist.splice(existingIdx, 1);
+    }
+    meeting.markModified('checklist');
+    await meeting.save();
+    return meeting;
+  }
+
+  // ── Notice — drafted, then dispatched to every current attendee,
+  // ahead of (and separate from) the board-pack Dispatch button.
+  // Reminders (email + portal) run on a cron — see
+  // MeetingNoticeReminderService, mirroring MeetingAckReminderService. ─
+
+  async updateNotice(tenantId: string, id: string, dto: UpdateNoticeDto) {
+    const meeting = await this.getById(tenantId, id);
+    meeting.notice.body = dto.body;
+    if (dto.minimumDays !== undefined)
+      meeting.notice.minimumDays = dto.minimumDays;
+    if (dto.rsvpDeadline !== undefined)
+      meeting.notice.rsvpDeadline = new Date(dto.rsvpDeadline);
+    meeting.markModified('notice');
+    await meeting.save();
+    return meeting;
+  }
+
+  async dispatchNotice(tenantId: string, id: string, businessName: string) {
+    const meeting = await this.getById(tenantId, id);
+    if (meeting.attendees.length === 0) {
+      throw new BadRequestException('Add attendees before sending the notice.');
+    }
+    if (!meeting.notice.body?.trim()) {
+      throw new BadRequestException('Draft the notice before sending it.');
+    }
+
+    meeting.notice.recipients = meeting.attendees.map((a) => ({
+      name: a.name,
+      email: a.email,
+      rsvp: NoticeRsvpStatus.PENDING,
+      openedAt: null,
+      lastReminderSentAt: null,
+    })) as any;
+
+    const boardMembers = await this.boardMemberService.getAll(tenantId);
+    const boardMemberEmails = new Set(
+      (boardMembers as any[])
+        .map((b) => b.email?.toLowerCase())
+        .filter(Boolean),
+    );
+
+    // A real token per non-board-member recipient, so an Employee/
+    // guest attendee with no portal login can still RSVP — mirrors
+    // ensureAckToken. Board members RSVP in-app instead (see
+    // submitBoardMemberNoticeRsvp).
+    const rsvpLinkByEmail = new Map<string, string>();
+    for (const r of meeting.attendees) {
+      if (boardMemberEmails.has(r.email.toLowerCase())) continue;
+      const token = this.ensureNoticeRsvpToken(meeting, r.email, r.name);
+      rsvpLinkByEmail.set(
+        r.email.toLowerCase(),
+        `${process.env.TENANT_APP_URL}/meeting-notice/${token}`,
+      );
+    }
+
+    meeting.notice.dispatchedAt = new Date();
+    meeting.notice.dispatchedBy = businessName;
+    meeting.markModified('notice');
+    await meeting.save();
+
+    await Promise.all(
+      meeting.attendees.map((r) =>
+        this.emailService
+          .sendMeetingNotice({
+            to: r.email,
+            attendeeName: r.name,
+            meetingTitle: meeting.title,
+            date: meeting.date,
+            location: meeting.location,
+            chair: meeting.chair,
+            noticeBody: meeting.notice.body,
+            rsvpDeadline: meeting.notice.rsvpDeadline,
+            rsvpLink: rsvpLinkByEmail.get(r.email.toLowerCase()) ?? null,
+            boardPortalLink: boardMemberEmails.has(r.email.toLowerCase())
+              ? `${process.env.BOARD_APP_URL}/meetings`
+              : null,
+            businessName,
+          })
+          .catch(() => {}),
+      ),
+    );
+
+    return meeting;
+  }
+
+  private ensureNoticeRsvpToken(
+    meeting: GovernanceMeetingDocument,
+    email: string,
+    name: string,
+  ): string {
+    const existing = meeting.notice.rsvpTokens.find(
+      (t) => t.attendeeEmail.toLowerCase() === email.toLowerCase(),
+    );
+    if (existing) return existing.token;
+    const token = randomBytes(24).toString('hex');
+    meeting.notice.rsvpTokens.push({
+      token,
+      attendeeEmail: email.toLowerCase(),
+      attendeeName: name,
+      createdAt: new Date(),
+      lastReminderSentAt: null,
+    } as any);
+    meeting.markModified('notice');
+    return token;
+  }
+
+  // Public — token-resolved, no auth (Employee/guest attendee).
+  async getNoticeRsvpSnapshot(token: string) {
+    const meeting = await this.meetingModel
+      .findOne({ 'notice.rsvpTokens.token': token })
+      .lean();
+    if (!meeting) throw new NotFoundException('This RSVP link is invalid.');
+    const tokenEntry = (meeting.notice.rsvpTokens as any[]).find(
+      (t) => t.token === token,
+    );
+    const recipient = (meeting.notice.recipients as any[]).find(
+      (r) => r.email?.toLowerCase() === tokenEntry.attendeeEmail,
+    );
+    return {
+      title: meeting.title,
+      type: meeting.type,
+      date: meeting.date,
+      location: meeting.location,
+      chair: meeting.chair,
+      noticeBody: meeting.notice.body,
+      rsvpDeadline: meeting.notice.rsvpDeadline,
+      prefillName: tokenEntry.attendeeName,
+      currentRsvp: recipient?.rsvp ?? 'Pending',
+    };
+  }
+
+  async submitPublicNoticeRsvp(token: string, dto: SubmitPublicNoticeRsvpDto) {
+    const meeting = await this.meetingModel.findOne({
+      'notice.rsvpTokens.token': token,
+    });
+    if (!meeting) throw new NotFoundException('This RSVP link is invalid.');
+    const tokenEntry = meeting.notice.rsvpTokens.find((t) => t.token === token);
+    if (!tokenEntry) throw new NotFoundException('This RSVP link is invalid.');
+
+    const recipient = meeting.notice.recipients.find(
+      (r) => r.email.toLowerCase() === tokenEntry.attendeeEmail,
+    );
+    if (!recipient)
+      throw new NotFoundException('You are not listed for this notice.');
+    recipient.rsvp = dto.rsvp;
+    if (!recipient.openedAt) recipient.openedAt = new Date();
+    meeting.markModified('notice');
+    await meeting.save();
+    return { success: true };
+  }
+
+  // Board portal, self-service — RSVP in-app rather than via an
+  // emailed token link, matching submitBoardMemberAck's pattern.
+  async submitBoardMemberNoticeRsvp(
+    tenantId: string,
+    id: string,
+    email: string,
+    dto: SubmitNoticeRsvpDto,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const lowerEmail = email.toLowerCase();
+    const recipient = meeting.notice.recipients.find(
+      (r) => r.email.toLowerCase() === lowerEmail,
+    );
+    if (!recipient) {
+      throw new BadRequestException(
+        'No notice has been sent to you for this meeting yet.',
+      );
+    }
+    recipient.rsvp = dto.rsvp;
+    if (!recipient.openedAt) recipient.openedAt = new Date();
+    meeting.markModified('notice');
+    await meeting.save();
+    return meeting;
+  }
+
+  async markNoticeOpened(tenantId: string, id: string, email: string) {
+    const meeting = await this.getById(tenantId, id);
+    const lowerEmail = email.toLowerCase();
+    const recipient = meeting.notice.recipients.find(
+      (r) => r.email.toLowerCase() === lowerEmail,
+    );
+    if (recipient && !recipient.openedAt) {
+      recipient.openedAt = new Date();
+      meeting.markModified('notice');
+      await meeting.save();
+    }
+    return { success: true };
+  }
+
+  // ── Structured minutes drafting — sections generated client-side
+  // from the agenda, edited here, then rendered to HTML client-side
+  // and saved through the existing updateMinutes()/sendMinutes() flow. ─
+
+  async updateMinutesDraft(
+    tenantId: string,
+    id: string,
+    dto: UpdateMinutesDraftDto,
+    actorName: string,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const prevStatus = meeting.minutesDraft?.status ?? MinutesDraftStatus.DRAFT;
+    meeting.minutesDraft = {
+      chair: dto.chair ?? meeting.minutesDraft?.chair ?? '',
+      minuteTaker: dto.minuteTaker ?? meeting.minutesDraft?.minuteTaker ?? '',
+      quorumText: dto.quorumText ?? meeting.minutesDraft?.quorumText ?? '',
+      conflicts: dto.conflicts ?? meeting.minutesDraft?.conflicts ?? '',
+      sections: dto.sections as any,
+      actions: dto.actions as any,
+      status: prevStatus,
+      updatedAt: new Date(),
+      updatedBy: actorName,
+    } as any;
+    meeting.markModified('minutesDraft');
+    await meeting.save();
+    return meeting;
+  }
+
+  async setMinutesDraftStatus(
+    tenantId: string,
+    id: string,
+    dto: SetMinutesDraftStatusDto,
+    actorName: string,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    if (!meeting.minutesDraft) {
+      throw new BadRequestException('There is no minutes draft yet.');
+    }
+    meeting.minutesDraft.status = dto.status;
+    meeting.minutesDraft.updatedAt = new Date();
+    meeting.minutesDraft.updatedBy = actorName;
+    meeting.markModified('minutesDraft');
+    await meeting.save();
+    return meeting;
+  }
+
   // ── Board portal, self-service — everything a director sees on
   // "My Meetings": the real meetings they're actually invited to
   // (attendee email match), gated to Sent/Held/Postponed so a
@@ -541,8 +907,14 @@ export class MeetingService {
     const meetings = await this.meetingModel
       .find({
         tenantId: new Types.ObjectId(tenantId),
-        status: { $ne: MeetingStatus.DRAFT },
         'attendees.email': lowerEmail,
+        // Visible once either the notice or the board pack has gone
+        // out — a director sees the meeting notice ahead of the pack
+        // itself, while the meeting is technically still Draft.
+        $or: [
+          { status: { $ne: MeetingStatus.DRAFT } },
+          { 'notice.dispatchedAt': { $ne: null } },
+        ],
       })
       .sort({ date: -1 })
       .lean();
@@ -550,6 +922,9 @@ export class MeetingService {
     return meetings.map((m: any) => {
       const idx = (m.attendees ?? []).findIndex(
         (a: any) => a.email?.toLowerCase() === lowerEmail,
+      );
+      const myNoticeRecipient = (m.notice?.recipients ?? []).find(
+        (r: any) => r.email?.toLowerCase() === lowerEmail,
       );
       const myAttendance = m.attendanceRecordedAt
         ? m.attendanceAllPresent
@@ -584,6 +959,19 @@ export class MeetingService {
         minutes: minutesReady ? (m.minutes ?? null) : null,
         minutesPdfUrl: minutesReady ? (m.minutesPdfUrl ?? null) : null,
         minutesSentAt: m.minutesSentAt ?? null,
+        notice: m.notice?.dispatchedAt
+          ? {
+              body: m.notice.body,
+              rsvpDeadline: m.notice.rsvpDeadline ?? null,
+              dispatchedAt: m.notice.dispatchedAt,
+            }
+          : null,
+        myNoticeRsvp: myNoticeRecipient
+          ? {
+              rsvp: myNoticeRecipient.rsvp,
+              openedAt: myNoticeRecipient.openedAt ?? null,
+            }
+          : null,
         myAttendance,
         myAck: myAck
           ? {

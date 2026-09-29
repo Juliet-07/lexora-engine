@@ -122,6 +122,147 @@ export enum MeetingActionItemStatus {
   DONE = 'Done',
 }
 
+// ── Preparation checklist — gates the Dispatch button. Item ids are
+// the fixed set in constants/meeting-checklist.constant.ts; this only
+// stores which ones are done, by whom, and when. ────────────────────
+@Schema({ _id: false })
+export class ChecklistItemRecord {
+  @Prop({ required: true }) itemId: string;
+  @Prop({ required: true, default: () => new Date() }) completedAt: Date;
+  @Prop({ required: true }) completedBy: string;
+}
+export const ChecklistItemRecordSchema =
+  SchemaFactory.createForClass(ChecklistItemRecord);
+
+// ── Notice — the pre-meeting communication the tenant drafts and
+// dispatches to attendees, replacing the old free-text "notes" field
+// as the real pre-meeting flow. A separate step from the board-pack
+// Dispatch button below (notice goes out first, further ahead of the
+// meeting; the board pack follows once preparation is complete). ────
+export enum NoticeRsvpStatus {
+  PENDING = 'Pending',
+  CONFIRMED = 'Confirmed',
+  APOLOGIES = 'Apologies',
+}
+
+@Schema({ _id: false })
+export class NoticeRsvpToken {
+  @Prop({ required: true }) token: string;
+  @Prop({ required: true, lowercase: true }) attendeeEmail: string;
+  @Prop({ required: true }) attendeeName: string;
+  @Prop({ required: true, default: () => new Date() }) createdAt: Date;
+  @Prop({ default: null }) lastReminderSentAt: Date | null;
+}
+export const NoticeRsvpTokenSchema =
+  SchemaFactory.createForClass(NoticeRsvpToken);
+
+@Schema({ _id: false })
+export class NoticeRecipient {
+  @Prop({ required: true }) name: string;
+  @Prop({ required: true, lowercase: true, trim: true }) email: string;
+  @Prop({ enum: NoticeRsvpStatus, default: NoticeRsvpStatus.PENDING })
+  rsvp: NoticeRsvpStatus;
+  @Prop({ default: null }) openedAt: Date | null;
+  @Prop({ default: null }) lastReminderSentAt: Date | null;
+}
+export const NoticeRecipientSchema =
+  SchemaFactory.createForClass(NoticeRecipient);
+
+@Schema({ _id: false })
+export class MeetingNotice {
+  @Prop({ default: '' }) body: string;
+  @Prop({ default: 14 }) minimumDays: number;
+  @Prop({ default: null }) rsvpDeadline: Date | null;
+  @Prop({ default: null }) dispatchedAt: Date | null;
+  @Prop({ default: null }) dispatchedBy: string | null;
+  @Prop({ type: [NoticeRecipientSchema], default: [] })
+  recipients: NoticeRecipient[];
+  @Prop({ type: [NoticeRsvpTokenSchema], default: [] })
+  rsvpTokens: NoticeRsvpToken[];
+}
+export const MeetingNoticeSchema = SchemaFactory.createForClass(MeetingNotice);
+
+// ── Structured minutes drafting — supersedes free-typing the final
+// `minutes` HTML directly; sections are generated from the agenda,
+// edited here, then rendered to HTML client-side and saved via the
+// existing updateMinutes()/sendMinutes() flow. ──────────────────────
+export enum MinuteSectionKind {
+  PROCEDURAL = 'Procedural',
+  NOTING = 'Noting',
+  DISCUSSION = 'Discussion',
+  RESOLUTION = 'Resolution',
+}
+
+export enum MinutesDraftStatus {
+  DRAFT = 'Draft',
+  SENT_FOR_CHAIR_REVIEW = 'Sent for Chair review',
+  CHAIR_APPROVED = 'Chair approved',
+  TABLED_FOR_BOARD_ADOPTION = 'Tabled for Board adoption',
+  ADOPTED_AND_SIGNED = 'Adopted and signed',
+}
+
+export enum MinuteResolutionOutcome {
+  PASSED = 'Passed',
+  NOT_PASSED = 'Not passed',
+  DEFERRED = 'Deferred',
+  WITHDRAWN = 'Withdrawn',
+}
+
+@Schema({ _id: false })
+export class MinuteResolution {
+  @Prop({ default: '' }) ref: string;
+  @Prop({ default: '' }) proposedBy: string;
+  @Prop({ default: '' }) secondedBy: string;
+  @Prop({ default: 0 }) for: number;
+  @Prop({ default: 0 }) against: number;
+  @Prop({ default: 0 }) abstained: number;
+  @Prop({
+    enum: MinuteResolutionOutcome,
+    default: MinuteResolutionOutcome.PASSED,
+  })
+  outcome: MinuteResolutionOutcome;
+}
+export const MinuteResolutionSchema =
+  SchemaFactory.createForClass(MinuteResolution);
+
+@Schema()
+export class MinuteSection {
+  @Prop({ required: true }) title: string;
+  @Prop({ enum: MinuteSectionKind, default: MinuteSectionKind.NOTING })
+  kind: MinuteSectionKind;
+  @Prop({ default: '' }) presenter: string;
+  @Prop({ default: '' }) time: string;
+  @Prop({ default: '' }) body: string;
+  @Prop({ type: MinuteResolutionSchema, default: null })
+  resolution: MinuteResolution | null;
+}
+export const MinuteSectionSchema = SchemaFactory.createForClass(MinuteSection);
+
+@Schema({ _id: false })
+export class MinutesDraftAction {
+  @Prop({ required: true }) action: string;
+  @Prop({ default: '' }) owner: string;
+  @Prop({ default: '' }) due: string;
+}
+export const MinutesDraftActionSchema =
+  SchemaFactory.createForClass(MinutesDraftAction);
+
+@Schema({ _id: false })
+export class MinutesDraft {
+  @Prop({ default: '' }) chair: string;
+  @Prop({ default: '' }) minuteTaker: string;
+  @Prop({ default: '' }) quorumText: string;
+  @Prop({ default: '' }) conflicts: string;
+  @Prop({ type: [MinuteSectionSchema], default: [] }) sections: MinuteSection[];
+  @Prop({ type: [MinutesDraftActionSchema], default: [] })
+  actions: MinutesDraftAction[];
+  @Prop({ enum: MinutesDraftStatus, default: MinutesDraftStatus.DRAFT })
+  status: MinutesDraftStatus;
+  @Prop({ default: null }) updatedAt: Date | null;
+  @Prop({ default: null }) updatedBy: string | null;
+}
+export const MinutesDraftSchema = SchemaFactory.createForClass(MinutesDraft);
+
 // A real action item arising from a meeting — replaces the tenant
 // frontend's previous hardcoded/local-only "action items" concept.
 // The assignee is a snapshot of one of the meeting's own attendees
@@ -244,6 +385,15 @@ export class GovernanceMeeting {
 
   @Prop({ type: [MeetingActionItemSchema], default: [] })
   actionItems: MeetingActionItem[];
+
+  @Prop({ type: [ChecklistItemRecordSchema], default: [] })
+  checklist: ChecklistItemRecord[];
+
+  @Prop({ type: MeetingNoticeSchema, default: () => ({}) })
+  notice: MeetingNotice;
+
+  @Prop({ type: MinutesDraftSchema, default: null })
+  minutesDraft: MinutesDraft | null;
 }
 export const GovernanceMeetingSchema =
   SchemaFactory.createForClass(GovernanceMeeting);

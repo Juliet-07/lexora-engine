@@ -209,6 +209,14 @@ import {
   meetingAckReminderTemplate,
 } from './templates/meeting-ack-reminder.template';
 import {
+  MeetingNoticeEmailData,
+  meetingNoticeTemplate,
+} from './templates/meeting-notice.template';
+import {
+  MeetingNoticeReminderEmailData,
+  meetingNoticeReminderTemplate,
+} from './templates/meeting-notice-reminder.template';
+import {
   ResolutionCirculatedEmailData,
   resolutionCirculatedTemplate,
 } from './templates/resolution-circulated.template';
@@ -916,6 +924,28 @@ export class EmailService {
     data: MeetingAckReminderEmailData,
   ): Promise<void> {
     const { subject, html } = meetingAckReminderTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendMeetingNotice(data: MeetingNoticeEmailData): Promise<void> {
+    const { subject, html } = meetingNoticeTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendMeetingNoticeReminder(
+    data: MeetingNoticeReminderEmailData,
+  ): Promise<void> {
+    const { subject, html } = meetingNoticeReminderTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

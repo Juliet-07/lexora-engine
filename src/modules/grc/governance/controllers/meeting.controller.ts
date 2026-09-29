@@ -36,6 +36,11 @@ import {
   SubmitMinutesReviewDto,
   AddActionItemDto,
   SetActionItemStatusDto,
+  SetChecklistItemDto,
+  UpdateNoticeDto,
+  SubmitPublicNoticeRsvpDto,
+  UpdateMinutesDraftDto,
+  SetMinutesDraftStatusDto,
 } from '../dtos/index.dto';
 import { CurrentUser, Public, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -217,6 +222,87 @@ export class MeetingController {
     return this.meetingService.updateMinutes(t || u, id, dto);
   }
 
+  // ── Preparation checklist ────────────────────────────────────────
+
+  @Patch(':id/checklist/:itemId')
+  async setChecklistItem(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() dto: SetChecklistItemDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    return this.meetingService.setChecklistItem(
+      tenantId,
+      id,
+      itemId,
+      dto,
+      businessName,
+    );
+  }
+
+  // ── Notice — drafted, then dispatched to attendees ───────────────
+
+  @Patch(':id/notice')
+  updateNotice(
+    @Param('id') id: string,
+    @Body() dto: UpdateNoticeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.meetingService.updateNotice(t || u, id, dto);
+  }
+
+  @Post(':id/notice/dispatch')
+  @ApiOperation({ summary: 'Send the meeting notice to all attendees' })
+  async dispatchNotice(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    return this.meetingService.dispatchNotice(tenantId, id, businessName);
+  }
+
+  // ── Structured minutes drafting ──────────────────────────────────
+
+  @Patch(':id/minutes-draft')
+  async updateMinutesDraft(
+    @Param('id') id: string,
+    @Body() dto: UpdateMinutesDraftDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    return this.meetingService.updateMinutesDraft(
+      tenantId,
+      id,
+      dto,
+      businessName,
+    );
+  }
+
+  @Patch(':id/minutes-draft/status')
+  async setMinutesDraftStatus(
+    @Param('id') id: string,
+    @Body() dto: SetMinutesDraftStatusDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    return this.meetingService.setMinutesDraftStatus(
+      tenantId,
+      id,
+      dto,
+      businessName,
+    );
+  }
+
   @Post(':id/mark-held')
   markHeld(
     @Param('id') id: string,
@@ -342,6 +428,25 @@ export class MeetingController {
   @ApiOperation({ summary: 'Public — submit a board pack acknowledgement' })
   submitAck(@Param('token') token: string, @Body() dto: SubmitAckDto) {
     return this.meetingService.submitAck(token, dto);
+  }
+
+  @Public()
+  @Get('notice-rsvp/:token')
+  @ApiOperation({
+    summary: 'Public — fetch the notice RSVP page snapshot for a token',
+  })
+  getNoticeRsvpSnapshot(@Param('token') token: string) {
+    return this.meetingService.getNoticeRsvpSnapshot(token);
+  }
+
+  @Public()
+  @Post('notice-rsvp/:token')
+  @ApiOperation({ summary: 'Public — submit a meeting notice RSVP' })
+  submitPublicNoticeRsvp(
+    @Param('token') token: string,
+    @Body() dto: SubmitPublicNoticeRsvpDto,
+  ) {
+    return this.meetingService.submitPublicNoticeRsvp(token, dto);
   }
 
   @Public()

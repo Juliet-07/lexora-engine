@@ -15,6 +15,7 @@ import {
   DecideCodeBoardApprovalDto,
   SubmitBoardMemberAckDto,
   SetActionItemStatusDto,
+  SubmitNoticeRsvpDto,
 } from '../dtos/index.dto';
 
 // ── Board portal, self-service ──────────────────────────────────
@@ -108,6 +109,34 @@ export class BoardPortalController {
       name,
       dto,
     );
+  }
+
+  @Post('meetings/:id/notice/rsvp')
+  @ApiOperation({ summary: 'RSVP to a meeting notice in-app' })
+  async submitMeetingNoticeRsvp(
+    @Param('id') id: string,
+    @Body() dto: SubmitNoticeRsvpDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { tenantId, email } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.meetingService.submitBoardMemberNoticeRsvp(
+      tenantId,
+      id,
+      email,
+      dto,
+    );
+  }
+
+  @Post('meetings/:id/notice/opened')
+  @ApiOperation({ summary: 'Mark a meeting notice as opened, in-app' })
+  async markMeetingNoticeOpened(
+    @Param('id') id: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { tenantId, email } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.meetingService.markNoticeOpened(tenantId, id, email);
   }
 
   @Patch('meetings/:id/action-items/:actionItemId/status')
