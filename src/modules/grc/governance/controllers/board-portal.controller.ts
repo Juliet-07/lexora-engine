@@ -4,6 +4,7 @@ import {
   BoardMemberService,
   GovernanceCodeService,
   MeetingService,
+  BoardDashboardService,
 } from '../services';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import { UserType } from 'src/common/interfaces/user-role.enum';
@@ -37,12 +38,23 @@ export class BoardPortalController {
     private readonly boardMemberService: BoardMemberService,
     private readonly governanceCodeService: GovernanceCodeService,
     private readonly meetingService: MeetingService,
+    private readonly boardDashboardService: BoardDashboardService,
   ) {}
 
   @Get('me')
   @ApiOperation({ summary: "The signed-in board member's own profile" })
   getMe(@CurrentUser('sub') userId: string) {
     return this.boardMemberService.getMyProfile(userId);
+  }
+
+  @Get('dashboard')
+  @ApiOperation({
+    summary:
+      "The signed-in board member's Dashboard — KPIs, attention items, " +
+      'upcoming meetings and standing, all computed from real records',
+  })
+  getMyDashboard(@CurrentUser('sub') userId: string) {
+    return this.boardDashboardService.getForBoardMember(userId);
   }
 
   @Get('onboarding')

@@ -1311,6 +1311,12 @@ export class BoardMemberService {
       // since the director is being onboarded by, and declaring to,
       // this specific tenant, not the platform itself.
       tenantCompanyName,
+      // Real training/CPD log (tenant-logged manually, or pushed here
+      // automatically as onboarding training modules are completed —
+      // see submitOnboardingTraining) — surfaced so the board portal's
+      // own dashboard can show real CPD hours instead of a fabricated
+      // figure. Not paginated: a director's own log is never large.
+      training: member.training ?? [],
     };
   }
 

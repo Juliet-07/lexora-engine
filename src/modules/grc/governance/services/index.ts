@@ -1,3 +1,4 @@
+export * from './board-dashboard.service';
 export * from './board-member.service';
 export * from './board-training-module.service';
 export * from './committee.service';
@@ -5,4 +6,5 @@ export * from './governance-code.service';
 export * from './meeting-ack-reminder.service';
 export * from './meeting-notice-reminder.service';
 export * from './meeting.service';
+export * from './org-structure.service';
 export * from './resolution.service';

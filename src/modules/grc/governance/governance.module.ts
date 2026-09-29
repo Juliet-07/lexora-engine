@@ -23,6 +23,8 @@ import {
   MeetingAckReminderService,
   MeetingNoticeReminderService,
   ResolutionService,
+  BoardDashboardService,
+  OrgStructureService,
 } from './services';
 import {
   MeetingController,
@@ -31,6 +33,7 @@ import {
   BoardTrainingModuleController,
   BoardPortalController,
   GovernanceCodeController,
+  OrgStructureController,
 } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas';
 import { EmailService } from 'src/common/utils/mailing/email.service';
@@ -46,6 +49,11 @@ import {
   PolicyTemplate,
   PolicyTemplateSchema,
 } from 'src/modules/super_admin/schemas/policy-template.schema';
+import {
+  Employee,
+  EmployeeSchema,
+} from 'src/modules/hr/schemas/employee.schema';
+import { HrTeam, HrTeamSchema } from 'src/modules/hr/schemas/hr.schema';
 
 @Module({
   imports: [
@@ -70,6 +78,14 @@ import {
       // published Governance-Code-flagged template — see its
       // constructor comment.
       { name: PolicyTemplate.name, schema: PolicyTemplateSchema },
+      // Registered directly here too (same "direct model injection"
+      // convention already used by ComplianceModule's PolicyService/
+      // AuditService for the identical reason) so OrgStructureService
+      // can derive the real org chart from HR's own Employee records —
+      // cross-module *service* DI has broken at runtime before in this
+      // codebase, direct model injection is the working pattern.
+      { name: Employee.name, schema: EmployeeSchema },
+      { name: HrTeam.name, schema: HrTeamSchema },
     ]),
     // For PlatformContractTemplateService only — SuperAdminModule has
     // no path back into GovernanceModule/ComplianceModule/ToolsModule,
@@ -86,6 +102,8 @@ import {
     MeetingAckReminderService,
     MeetingNoticeReminderService,
     ResolutionService,
+    BoardDashboardService,
+    OrgStructureService,
   ],
   controllers: [
     MeetingController,
@@ -95,6 +113,7 @@ import {
     BoardPortalController,
     GovernanceCodeController,
     ResolutionController,
+    OrgStructureController,
   ],
   exports: [
     MeetingService,
