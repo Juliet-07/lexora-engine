@@ -56,8 +56,20 @@ import { EmailService } from 'src/common/utils/mailing/email.service';
 import { join } from 'path';
 import { BoardMemberService } from './board-member.service';
 import { CommitteeService } from './committee.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+// Direct model injection across the HR/GRC module boundary — not
+// EmployeeService — per this codebase's established fix for
+// cross-module DI breaking at runtime (see AuditService/
+// OrgStructureService's identical Employee injection).
+import {
+  Employee,
+  EmployeeDocument,
+} from 'src/modules/hr/schemas/employee.schema';
 import { randomBytes } from 'crypto';
-import { renderRichText } from 'src/common/utils/pdf/render-rich-text.util';
+import {
+  renderRichText,
+  htmlToPlainText,
+} from 'src/common/utils/pdf/render-rich-text.util';
 import { buildReportPdf } from 'src/common/utils/pdf/report-builder.util';
 import * as PDFKitImport from 'pdfkit';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
@@ -70,9 +82,12 @@ export class MeetingService {
   constructor(
     @InjectModel(GovernanceMeeting.name)
     private readonly meetingModel: Model<GovernanceMeetingDocument>,
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
     private readonly emailService: EmailService,
     private readonly boardMemberService: BoardMemberService,
     private readonly committeeService: CommitteeService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async create(tenantId: string, dto: CreateMeetingDto) {
@@ -192,8 +207,8 @@ export class MeetingService {
         ...d,
         agendaItemTitle: d.agendaItemTitle ?? '',
         required: d.required ?? true,
+        assignedToEmployeeId: d.assignedToEmployeeId ?? null,
         assignedToName: d.assignedToName ?? '',
-        assignedToEmail: d.assignedToEmail ?? '',
         dueDate: d.dueDate ?? null,
         uploadedBy: d.uploadedBy ?? '',
       })),
@@ -334,8 +349,8 @@ export class MeetingService {
       uploadedAt: new Date(),
       agendaItemTitle: title,
       required: true,
+      assignedToEmployeeId: null,
       assignedToName: '',
-      assignedToEmail: '',
       dueDate: null,
       uploadedBy,
     } as any);
@@ -347,8 +362,10 @@ export class MeetingService {
   // Creates an "Outstanding" placeholder row — a required document
   // the tenant is asking for but hasn't received yet — matching the
   // reference mockup's "Awaiting upload from CFO · Expected by 24
-  // Aug" rows. Fulfilled later via fulfillBoardPackDoc rather than
-  // creating a second, duplicate entry once the file arrives.
+  // Aug" rows. Fulfilled later via fulfillBoardPackDoc (tenant side)
+  // or submitMyBoardPackDoc (the assigned employee's own portal)
+  // rather than creating a second, duplicate entry once the file
+  // arrives.
   async addBoardPackRequirement(
     tenantId: string,
     id: string,
@@ -356,6 +373,36 @@ export class MeetingService {
   ) {
     const meeting = await this.getById(tenantId, id);
     const title = this.assertAgendaItemExists(meeting, dto.agendaItemTitle);
+
+    // Assignee is a real Employee picked from a dropdown, resolved
+    // here to a display-name snapshot (same convention as
+    // AuditService#addRequest) — never trusted name/email text from
+    // the client.
+    let assignedToEmployeeId: Types.ObjectId | null = null;
+    let assignedToName = '';
+    if (dto.assignedToEmployeeId) {
+      const emp = await this.employeeModel
+        .findOne({
+          _id: dto.assignedToEmployeeId,
+          tenantId: new Types.ObjectId(tenantId),
+        })
+        .select('firstName lastName userId')
+        .lean();
+      if (!emp) throw new NotFoundException('Employee not found');
+      assignedToEmployeeId = emp._id;
+      assignedToName = `${emp.firstName} ${emp.lastName}`.trim();
+
+      if (emp.userId) {
+        this.eventEmitter.emit('grc.board_pack.document_requested', {
+          tenantId,
+          employeeUserId: emp.userId.toString(),
+          meetingTitle: meeting.title,
+          docName: dto.name,
+          dueDate: dto.dueDate ?? null,
+        });
+      }
+    }
+
     meeting.boardPack.push({
       name: dto.name,
       fileUrl: null,
@@ -364,8 +411,8 @@ export class MeetingService {
       uploadedAt: new Date(),
       agendaItemTitle: title,
       required: true,
-      assignedToName: dto.assignedToName ?? '',
-      assignedToEmail: dto.assignedToEmail ?? '',
+      assignedToEmployeeId,
+      assignedToName,
       dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
       uploadedBy: '',
     } as any);
@@ -378,6 +425,9 @@ export class MeetingService {
   // instead of creating a duplicate — the name/agenda-item/assignee
   // the tenant originally asked for stays as the record of what was
   // requested; only the file and its upload metadata are filled in.
+  // Tenant/company-secretary side — no ownership check, any
+  // outstanding row can be fulfilled directly. The assigned
+  // employee's own equivalent is submitMyBoardPackDoc below.
   async fulfillBoardPackDoc(
     tenantId: string,
     id: string,
@@ -400,6 +450,81 @@ export class MeetingService {
     doc.uploadedBy = uploadedBy;
     meeting.markModified('boardPack');
     await meeting.save();
+    return meeting;
+  }
+
+  // ── Employee-facing board-pack document-request portal — same
+  // pattern as AuditService#getMyRequests/submitRequestFiles: list
+  // every outstanding-or-fulfilled row assigned to the logged-in
+  // employee across all of the tenant's meetings, and let them
+  // upload straight from their own "My board pack requests" page
+  // rather than going through the company secretary. ───────────────
+  async getMyBoardPackRequests(tenantId: string, employeeId: string) {
+    const meetings = await this.meetingModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        'boardPack.assignedToEmployeeId': new Types.ObjectId(employeeId),
+      })
+      .select('title date boardPack')
+      .lean();
+
+    const out: any[] = [];
+    for (const m of meetings as any[]) {
+      (m.boardPack ?? []).forEach((doc: any, index: number) => {
+        if (String(doc.assignedToEmployeeId) === String(employeeId)) {
+          out.push({
+            ...doc,
+            meetingId: m._id.toString(),
+            meetingTitle: m.title,
+            meetingDate: m.date,
+            index,
+          });
+        }
+      });
+    }
+    return out.sort((a, b) => {
+      if (!a.dueDate) return 1;
+      if (!b.dueDate) return -1;
+      return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+    });
+  }
+
+  async submitMyBoardPackDoc(
+    tenantId: string,
+    employeeId: string,
+    meetingId: string,
+    index: number,
+    file: Express.Multer.File,
+    uploaderName: string,
+  ) {
+    const meeting = await this.getById(tenantId, meetingId);
+    const doc = meeting.boardPack[index];
+    if (!doc) throw new NotFoundException('Board pack document not found');
+    if (String(doc.assignedToEmployeeId) !== String(employeeId)) {
+      throw new ForbiddenException('This request is not assigned to you.');
+    }
+    if (doc.fileUrl) {
+      throw new BadRequestException('This document already has a file.');
+    }
+    doc.fileUrl = `/uploads/grc/meetings/board-pack/${file.filename}`;
+    doc.mimeType = file.mimetype;
+    doc.size = file.size;
+    doc.uploadedAt = new Date();
+    doc.uploadedBy = uploaderName;
+    meeting.markModified('boardPack');
+    await meeting.save();
+
+    // Fallback-to-tenant-account convention (AuditService#requestRecipient
+    // does the same with leadUserId ?? tenantId): meetings have no
+    // reliable company-secretary userId on the record to notify
+    // directly, so the tenant owner account is the recipient.
+    this.eventEmitter.emit('tenant.board_pack_document.submitted', {
+      tenantId,
+      recipientUserId: tenantId,
+      meetingTitle: meeting.title,
+      docName: doc.name,
+      uploadedBy: uploaderName,
+    });
     return meeting;
   }
 
@@ -751,17 +876,15 @@ export class MeetingService {
     return meeting;
   }
 
-  async resumeMeeting(tenantId: string, id: string) {
-    const meeting = await this.getById(tenantId, id);
-    if (meeting.status !== MeetingStatus.POSTPONED) {
-      throw new BadRequestException('Only a postponed meeting can be resumed.');
-    }
-    meeting.status = MeetingStatus.DRAFT;
-    meeting.postponementReason = null;
-    meeting.postponedAt = null;
-    await meeting.save();
-    return meeting;
-  }
+  // Deliberately no "resume" action: postponing already moves the meeting
+  // to its new date (see above), and every list/dashboard that buckets
+  // meetings into upcoming vs past reads the current `date`, not
+  // `status`. So a meeting postponed to a future date reappears as
+  // upcoming on its own — there's nothing left for a "resume" step to
+  // do, and forcing one through an extra click only hid the meeting's
+  // normal actions (postpone again, mark as held) behind it for no
+  // reason. `status` stays Postponed as a historical marker (shown as a
+  // banner/badge) until the meeting is held or postponed again.
 
   // ── Action items — real, per-meeting, assigned to a real attendee
   // (never free text). Replaces the tenant frontend's previous
@@ -1948,10 +2071,15 @@ export class MeetingService {
       sections: [
         {
           heading: 'Recipients and dispatch status',
-          // The notice body is free text of unpredictable length, so
-          // it goes in the section note (which wraps naturally) rather
-          // than a table cell (whose row height is fixed).
-          note: meeting.notice.body || undefined,
+          // The notice body is rich text (the notice editor is a
+          // RichTextEditor — see UpdateNoticeDto), but this report
+          // builder's `note` is a plain-text field, not an HTML
+          // renderer (unlike renderRichText, used for minutes) — so
+          // it's flattened to readable text here rather than showing
+          // raw markup.
+          note: meeting.notice.body
+            ? htmlToPlainText(meeting.notice.body)
+            : undefined,
           columns: [
             'Recipient',
             'Role',

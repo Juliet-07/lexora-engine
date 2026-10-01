@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsDateString,
   IsEmail,
+  IsMongoId,
   IsNumber,
   IsBoolean,
   IsArray,
@@ -153,8 +154,15 @@ export class AddBoardPackRequirementDto {
   // files the document under the general "Procedural documents"
   // bucket, same as a direct upload with no agenda item selected.
   @ApiPropertyOptional() @IsOptional() @IsString() agendaItemTitle?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() assignedToName?: string;
-  @ApiPropertyOptional() @IsOptional() @IsEmail() assignedToEmail?: string;
+  // A real Employee, picked from a dropdown rather than typed in —
+  // same assignee-by-id convention as AddActionItemDto below. Resolved
+  // server-side to a display name and (if the employee has a portal
+  // account) a "document requested" notification — see
+  // MeetingService#addBoardPackRequirement.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsMongoId()
+  assignedToEmployeeId?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() dueDate?: string;
 }
 

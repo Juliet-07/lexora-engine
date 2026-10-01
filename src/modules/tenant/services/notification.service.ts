@@ -98,6 +98,20 @@ interface AuditDocumentResolvedEvent {
   auditName: string;
   requestDescription: string;
 }
+interface BoardPackDocumentRequestedEvent {
+  tenantId: string;
+  employeeUserId: string;
+  meetingTitle: string;
+  docName: string;
+  dueDate: string | null;
+}
+interface BoardPackDocumentSubmittedEvent {
+  tenantId: string;
+  recipientUserId: string;
+  meetingTitle: string;
+  docName: string;
+  uploadedBy: string;
+}
 
 @Injectable()
 export class TenantNotificationService {
@@ -583,6 +597,34 @@ export class TenantNotificationService {
       `Request resolved — ${e.auditName}`,
       `"${e.requestDescription}" has been marked resolved.`,
       '/my/audit-requests',
+    );
+  }
+
+  // ── Meetings — board pack document-request portal. Same "notify
+  // whichever side didn't just act" rule as the audit thread above. ──
+  @OnEvent('grc.board_pack.document_requested')
+  async onBoardPackDocumentRequested(e: BoardPackDocumentRequestedEvent) {
+    await this.create(
+      e.tenantId,
+      e.employeeUserId,
+      TenantNotificationType.DOCUMENT,
+      `Document requested — ${e.meetingTitle}`,
+      e.dueDate
+        ? `${e.docName} (due ${new Date(e.dueDate).toLocaleDateString()}).`
+        : `${e.docName}.`,
+      '/my/board-pack-requests',
+    );
+  }
+
+  @OnEvent('tenant.board_pack_document.submitted')
+  async onBoardPackDocumentSubmitted(e: BoardPackDocumentSubmittedEvent) {
+    await this.create(
+      e.tenantId,
+      e.recipientUserId,
+      TenantNotificationType.DOCUMENT,
+      `Board pack document submitted — ${e.meetingTitle}`,
+      `${e.uploadedBy} uploaded "${e.docName}".`,
+      '/grc/governance/meetings',
     );
   }
 }

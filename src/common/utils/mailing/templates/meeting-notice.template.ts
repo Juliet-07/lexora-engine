@@ -37,7 +37,7 @@ export function meetingNoticeTemplate(data: MeetingNoticeEmailData): {
           <p style="margin:0 0 16px;font-size:14px;color:#555;line-height:1.7;">
             ${data.date.toLocaleString()} · ${data.location} · Chair: ${data.chair}
           </p>
-          <div style="margin:0 0 20px;font-size:14px;color:#2c2c2c;line-height:1.7;white-space:pre-wrap;">${data.noticeBody}</div>
+          <div style="margin:0 0 20px;font-size:14px;color:#2c2c2c;line-height:1.7;">${data.noticeBody}</div>
           ${
             data.rsvpDeadline
               ? `<p style="margin:0 0 20px;font-size:13px;color:#b45309;">Please RSVP by ${data.rsvpDeadline.toLocaleDateString()}.</p>`

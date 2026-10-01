@@ -10,6 +10,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import {
@@ -19,7 +20,7 @@ import {
   ApiConsumes,
 } from '@nestjs/swagger';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
@@ -55,6 +56,10 @@ import {
 } from 'src/common/interfaces/user-role.enum';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+import {
+  Employee,
+  EmployeeDocument,
+} from 'src/modules/hr/schemas/employee.schema';
 
 const boardPackStorage = diskStorage({
   destination: (_req, _file, cb) => {
@@ -103,6 +108,8 @@ export class MeetingController {
   constructor(
     private readonly meetingService: MeetingService,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
   ) {}
 
   private async currentUserName(userId: string): Promise<string> {
@@ -111,6 +118,21 @@ export class MeetingController {
       .select('firstName lastName')
       .lean();
     return `${me?.firstName ?? ''} ${me?.lastName ?? ''}`.trim();
+  }
+
+  /** Resolve the logged-in employee record for the "my board pack
+   * requests" portal — same userId lookup convention used everywhere
+   * else an employee-facing endpoint needs to know which Employee it's
+   * acting as (see AuditController#currentEmployeeId, leave.service.ts,
+   * employee-onboarding.service.ts, etc). */
+  private async currentEmployeeId(userId: string): Promise<string> {
+    const emp = await this.employeeModel
+      .findOne({ userId: new Types.ObjectId(userId) })
+      .select('_id')
+      .lean();
+    if (!emp)
+      throw new NotFoundException('No employee record for this account.');
+    return emp._id.toString();
   }
 
   @Post()
@@ -125,6 +147,50 @@ export class MeetingController {
   @Get()
   getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
     return this.meetingService.getAll(t || u);
+  }
+
+  // ── Employee-facing board-pack document-request portal ───────────
+  // Registered ahead of the /:id routes below so "my" is never
+  // captured as an :id param (same convention as AuditController).
+  @Get('my/board-pack-requests')
+  async getMyBoardPackRequests(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const employeeId = await this.currentEmployeeId(u);
+    return this.meetingService.getMyBoardPackRequests(t || u, employeeId);
+  }
+
+  @Post('my/board-pack-requests/:meetingId/:index/file')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: boardPackStorage,
+      fileFilter: boardPackFileFilter,
+      limits: { fileSize: 25 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary:
+      'Upload the file for a board pack document request assigned to the logged-in employee',
+  })
+  async submitMyBoardPackDoc(
+    @Param('meetingId') meetingId: string,
+    @Param('index') index: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const employeeId = await this.currentEmployeeId(u);
+    const uploaderName = await this.currentUserName(u);
+    return this.meetingService.submitMyBoardPackDoc(
+      t || u,
+      employeeId,
+      meetingId,
+      Number(index),
+      file,
+      uploaderName,
+    );
   }
 
   @Get(':id')
@@ -512,15 +578,6 @@ export class MeetingController {
       businessName,
       dto.newDate,
     );
-  }
-
-  @Post(':id/resume')
-  resumeMeeting(
-    @Param('id') id: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.meetingService.resumeMeeting(t || u, id);
   }
 
   @Post(':id/action-items')

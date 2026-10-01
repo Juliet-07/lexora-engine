@@ -238,8 +238,18 @@ export class BoardPackDocument {
   @Prop({ required: true, default: () => new Date() }) uploadedAt: Date;
   @Prop({ default: '' }) agendaItemTitle: string;
   @Prop({ default: true }) required: boolean;
+  // Real link to the Employee this outstanding document is assigned
+  // to (picked from a dropdown, not typed in) — same
+  // assignee-by-reference convention as MeetingActionItem's
+  // assigneeBoardMemberId below. assignedToName is a resolved-at-
+  // request-time snapshot for display, so the row still reads
+  // sensibly if the employee record is later changed or removed.
+  // No separate email field: the assigned employee's own account is
+  // what the "My board pack requests" portal page
+  // (MeetingController#getMyBoardPackRequests) filters by.
+  @Prop({ type: Types.ObjectId, ref: 'Employee', default: null })
+  assignedToEmployeeId: Types.ObjectId | null;
   @Prop({ default: '' }) assignedToName: string;
-  @Prop({ default: '' }) assignedToEmail: string;
   @Prop({ default: null }) dueDate: Date | null;
   // Resolved server-side from the logged-in user at upload/fulfil
   // time — never trusted from the client, matching the attribution

@@ -83,13 +83,14 @@ export class BoardDashboardService {
     );
     const unreadPacks = packs.filter((m) => !m.myBoardPack.allDocumentsRead);
 
-    // ── Upcoming meetings (today or later, not Postponed) ────────────
+    // ── Upcoming meetings (today or later) ────────────────────────────
+    // Status is deliberately not part of this filter: a postponed
+    // meeting's `date` is already updated to its new date when it's
+    // postponed (see MeetingService#postponeMeeting), so it belongs in
+    // "upcoming" exactly like any other future meeting — excluding
+    // Postponed here would just hide it from its own reschedule.
     const upcomingMeetings = (meetings as any[])
-      .filter(
-        (m) =>
-          m.status !== MeetingStatus.POSTPONED &&
-          new Date(m.date).getTime() >= todayStart.getTime(),
-      )
+      .filter((m) => new Date(m.date).getTime() >= todayStart.getTime())
       .sort((a, b) => +new Date(a.date) - +new Date(b.date));
 
     // ── Attention items — every real, actionable thing pending ───────

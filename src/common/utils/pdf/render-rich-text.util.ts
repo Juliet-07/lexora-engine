@@ -322,6 +322,23 @@ function cellPlainText(cell: HTMLElement): string {
   return cell.text.replace(/\s+/g, ' ').trim();
 }
 
+// Strips this editor's markup down to readable plain text, preserving
+// paragraph/line breaks — for a consumer that only wants a text
+// summary rather than full rich-text rendering (e.g. the meeting
+// notice PDF's recipients-table note, built with the general-purpose
+// report builder rather than renderRichText above).
+export function htmlToPlainText(html: string): string {
+  if (!html?.trim()) return '';
+  const withBreaks = html
+    .replace(/<\/(p|div|li|h1|h2|h3|tr)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n');
+  const root = parse(withBreaks);
+  return root.text
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // pdfkit has no native table primitive — cells are drawn manually as
 // bordered rectangles with placed text, column widths divided evenly.
 function renderTable(doc: PDFKit.PDFDocument, tableEl: HTMLElement): void {
