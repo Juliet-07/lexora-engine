@@ -21,6 +21,7 @@ import {
   MeetingConflictAction,
   MeetingConflictSource,
   ConflictType,
+  AgendaItemType,
 } from '../schemas';
 import {
   MEETING_CHECKLIST_ITEMS,
@@ -48,6 +49,8 @@ import {
   AddBoardPackNoteDto,
   RecordMeetingConflictDto,
   SubmitMeetingConflictDto,
+  AddBoardPackRequirementDto,
+  UpdateBoardPackDueDateDto,
 } from '../dtos/index.dto';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { join } from 'path';
@@ -180,6 +183,20 @@ export class MeetingService {
       attendanceEntries: m.attendanceEntries ?? [],
       conflictDeclarations: m.conflictDeclarations ?? [],
       postponementHistory: m.postponementHistory ?? [],
+      boardPackDueDate: m.boardPackDueDate ?? null,
+      agenda: (m.agenda ?? []).map((a: any) => ({
+        ...a,
+        type: a.type ?? AgendaItemType.NOTING,
+      })),
+      boardPack: (m.boardPack ?? []).map((d: any) => ({
+        ...d,
+        agendaItemTitle: d.agendaItemTitle ?? '',
+        required: d.required ?? true,
+        assignedToName: d.assignedToName ?? '',
+        assignedToEmail: d.assignedToEmail ?? '',
+        dueDate: d.dueDate ?? null,
+        uploadedBy: d.uploadedBy ?? '',
+      })),
     }));
   }
 
@@ -255,6 +272,7 @@ export class MeetingService {
       title: dto.title,
       presenter: dto.presenter ?? '',
       durationMinutes: dto.durationMinutes ?? 10,
+      type: dto.type ?? AgendaItemType.NOTING,
     } as any);
     meeting.markModified('agenda');
     await meeting.save();
@@ -263,25 +281,123 @@ export class MeetingService {
 
   async removeAgendaItem(tenantId: string, id: string, index: number) {
     const meeting = await this.getById(tenantId, id);
+    const removedTitle = meeting.agenda[index]?.title;
     meeting.agenda.splice(index, 1);
     meeting.markModified('agenda');
+    // A board-pack document filed under this item moves to the
+    // general "Procedural documents" bucket rather than being left
+    // pointing at an agenda item that no longer exists.
+    if (removedTitle) {
+      meeting.boardPack.forEach((d) => {
+        if (d.agendaItemTitle === removedTitle) d.agendaItemTitle = '';
+      });
+      meeting.markModified('boardPack');
+    }
     await meeting.save();
     return meeting;
+  }
+
+  // Validates an optional agenda-item title against the meeting's own
+  // agenda before filing a board-pack document under it — blank is
+  // always allowed (the general "Procedural documents" bucket).
+  private assertAgendaItemExists(
+    meeting: GovernanceMeetingDocument,
+    agendaItemTitle: string | undefined,
+  ) {
+    const title = agendaItemTitle?.trim();
+    if (!title) return '';
+    const match = meeting.agenda.some(
+      (a) => a.title.trim().toLowerCase() === title.toLowerCase(),
+    );
+    if (!match) {
+      throw new BadRequestException(
+        "Select one of this meeting's own agenda items, or leave it blank for a general procedural document.",
+      );
+    }
+    return title;
   }
 
   async addBoardPackDoc(
     tenantId: string,
     id: string,
     file: Express.Multer.File,
+    agendaItemTitle: string | undefined,
+    uploadedBy: string,
   ) {
     const meeting = await this.getById(tenantId, id);
+    const title = this.assertAgendaItemExists(meeting, agendaItemTitle);
     meeting.boardPack.push({
       name: file.originalname,
       fileUrl: `/uploads/grc/meetings/board-pack/${file.filename}`,
       mimeType: file.mimetype,
       size: file.size,
       uploadedAt: new Date(),
+      agendaItemTitle: title,
+      required: true,
+      assignedToName: '',
+      assignedToEmail: '',
+      dueDate: null,
+      uploadedBy,
     } as any);
+    meeting.markModified('boardPack');
+    await meeting.save();
+    return meeting;
+  }
+
+  // Creates an "Outstanding" placeholder row — a required document
+  // the tenant is asking for but hasn't received yet — matching the
+  // reference mockup's "Awaiting upload from CFO · Expected by 24
+  // Aug" rows. Fulfilled later via fulfillBoardPackDoc rather than
+  // creating a second, duplicate entry once the file arrives.
+  async addBoardPackRequirement(
+    tenantId: string,
+    id: string,
+    dto: AddBoardPackRequirementDto,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const title = this.assertAgendaItemExists(meeting, dto.agendaItemTitle);
+    meeting.boardPack.push({
+      name: dto.name,
+      fileUrl: null,
+      mimeType: null,
+      size: 0,
+      uploadedAt: new Date(),
+      agendaItemTitle: title,
+      required: true,
+      assignedToName: dto.assignedToName ?? '',
+      assignedToEmail: dto.assignedToEmail ?? '',
+      dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+      uploadedBy: '',
+    } as any);
+    meeting.markModified('boardPack');
+    await meeting.save();
+    return meeting;
+  }
+
+  // Attaches an uploaded file to an existing "Outstanding" row
+  // instead of creating a duplicate — the name/agenda-item/assignee
+  // the tenant originally asked for stays as the record of what was
+  // requested; only the file and its upload metadata are filled in.
+  async fulfillBoardPackDoc(
+    tenantId: string,
+    id: string,
+    index: number,
+    file: Express.Multer.File,
+    uploadedBy: string,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const doc = meeting.boardPack[index];
+    if (!doc) throw new NotFoundException('Board pack document not found');
+    if (doc.fileUrl) {
+      throw new BadRequestException(
+        'This document already has a file — remove it and add a new one to replace it.',
+      );
+    }
+    doc.fileUrl = `/uploads/grc/meetings/board-pack/${file.filename}`;
+    doc.mimeType = file.mimetype;
+    doc.size = file.size;
+    doc.uploadedAt = new Date();
+    doc.uploadedBy = uploadedBy;
     meeting.markModified('boardPack');
     await meeting.save();
     return meeting;
@@ -291,6 +407,25 @@ export class MeetingService {
     const meeting = await this.getById(tenantId, id);
     meeting.boardPack.splice(index, 1);
     meeting.markModified('boardPack');
+    await meeting.save();
+    return meeting;
+  }
+
+  // The reference mockup's "Board pack due: 26 August 2026 (7 days
+  // before meeting)" banner — a tenant-set override when stored,
+  // otherwise derived so every meeting has a sensible due date
+  // without the tenant having to set one explicitly. Left to the
+  // frontend to compute from `boardPackDueDate`/`date` (same
+  // compute-over-store convention used for other derived display
+  // values in this codebase) rather than widening every read
+  // response with a second, always-present field.
+  async updateBoardPackDueDate(
+    tenantId: string,
+    id: string,
+    dto: UpdateBoardPackDueDateDto,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    meeting.boardPackDueDate = dto.dueDate ? new Date(dto.dueDate) : null;
     await meeting.save();
     return meeting;
   }

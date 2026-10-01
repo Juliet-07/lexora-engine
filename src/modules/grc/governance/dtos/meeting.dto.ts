@@ -21,6 +21,7 @@ import {
   MeetingAttendanceStatus,
   MeetingConflictStatus,
   MeetingConflictAction,
+  AgendaItemType,
 } from '../schemas';
 import { Type } from 'class-transformer';
 
@@ -136,6 +137,29 @@ export class AddAgendaItemDto {
   @ApiProperty() @IsString() title: string;
   @ApiPropertyOptional() @IsOptional() @IsString() presenter?: string;
   @ApiPropertyOptional() @IsOptional() @IsNumber() durationMinutes?: number;
+  @ApiPropertyOptional({ enum: AgendaItemType })
+  @IsOptional()
+  @IsEnum(AgendaItemType)
+  type?: AgendaItemType;
+}
+
+// Creates a board-pack row the tenant is asking for but hasn't
+// received yet (fileUrl stays null until someone uploads against it
+// — see MeetingService#fulfillBoardPackDoc) — the reference
+// mockup's "Outstanding" / "Awaiting upload from X" rows.
+export class AddBoardPackRequirementDto {
+  @ApiProperty() @IsString() name: string;
+  // Matched against the meeting's own agenda item titles — blank
+  // files the document under the general "Procedural documents"
+  // bucket, same as a direct upload with no agenda item selected.
+  @ApiPropertyOptional() @IsOptional() @IsString() agendaItemTitle?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() assignedToName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsEmail() assignedToEmail?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() dueDate?: string;
+}
+
+export class UpdateBoardPackDueDateDto {
+  @ApiPropertyOptional() @IsOptional() @IsDateString() dueDate?: string | null;
 }
 
 export class UpdateNotesDto {

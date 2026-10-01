@@ -190,15 +190,45 @@ export class MeetingAttendee {
 export const MeetingAttendeeSchema =
   SchemaFactory.createForClass(MeetingAttendee);
 
+// How an agenda item is handled at the table, matching the three
+// categories the PO's own reference mockup labels every item with —
+// Procedural items (opening, adoption of minutes, AOB) carry no
+// papers of their own, Noting items are presented for information,
+// Resolution items require a Board vote.
+export enum AgendaItemType {
+  PROCEDURAL = 'Procedural',
+  NOTING = 'Noting',
+  RESOLUTION = 'Resolution',
+}
+
 @Schema({ _id: false })
 export class MeetingAgendaItem {
   @Prop({ required: true }) title: string;
   @Prop({ default: '' }) presenter: string;
   @Prop({ default: 10 }) durationMinutes: number;
+  @Prop({ enum: AgendaItemType, default: AgendaItemType.NOTING })
+  type: AgendaItemType;
 }
 export const MeetingAgendaItemSchema =
   SchemaFactory.createForClass(MeetingAgendaItem);
 
+// The communication between Agenda and Board Pack the PO's reference
+// mockup shows: a board pack document is filed either under a named
+// agenda item ("Agenda item 5 — Dividend declaration") or, when
+// `agendaItemTitle` is left blank, under a general "Procedural
+// documents" bucket (meeting notice, prior minutes, the action
+// tracker — nothing tied to one specific item). Linked by the
+// agenda item's own title rather than an id, the same snapshot
+// approach `MeetingConflictDeclaration.agendaItems` already uses,
+// since MeetingAgendaItem has no stable id of its own (`{_id:
+// false}`) — see the comment on that field above.
+//
+// `required`/`fileUrl` together express the reference mockup's
+// Uploaded vs Outstanding split: a required document can exist with
+// `fileUrl: null` as a placeholder the tenant has asked for but not
+// yet received (optionally naming who it's expected from and by
+// when), fulfilled later via MeetingService#fulfillBoardPackDoc
+// without creating a second, duplicate row.
 @Schema({ _id: false })
 export class BoardPackDocument {
   @Prop({ required: true }) name: string;
@@ -206,6 +236,15 @@ export class BoardPackDocument {
   @Prop({ default: null }) mimeType: string | null;
   @Prop({ default: 0 }) size: number;
   @Prop({ required: true, default: () => new Date() }) uploadedAt: Date;
+  @Prop({ default: '' }) agendaItemTitle: string;
+  @Prop({ default: true }) required: boolean;
+  @Prop({ default: '' }) assignedToName: string;
+  @Prop({ default: '' }) assignedToEmail: string;
+  @Prop({ default: null }) dueDate: Date | null;
+  // Resolved server-side from the logged-in user at upload/fulfil
+  // time — never trusted from the client, matching the attribution
+  // convention used everywhere else in this codebase.
+  @Prop({ default: '' }) uploadedBy: string;
 }
 
 export const BoardPackDocumentSchema =
@@ -469,6 +508,17 @@ export class GovernanceMeeting {
 
   @Prop({ type: [BoardPackDocumentSchema], default: [] })
   boardPack: BoardPackDocument[];
+
+  // Tenant-set override of when the board pack is due to be complete
+  // (the reference mockup's "Board pack due: 26 August 2026 (7 days
+  // before meeting)" banner). When unset, the frontend derives a
+  // default of 7 days before the meeting date rather than requiring
+  // the tenant to set it for every meeting — see
+  // BoardPackDueDateBanner in MeetingControls.tsx (lexora-tenant).
+  // Deliberately not computed/defaulted server-side (compute over
+  // store): this field stays the tenant's raw override, nothing else.
+  @Prop({ default: null })
+  boardPackDueDate: Date | null;
 
   @Prop({ default: null })
   sentAt: Date | null;

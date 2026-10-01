@@ -44,6 +44,8 @@ import {
   UpdateMinutesDraftDto,
   SetMinutesDraftStatusDto,
   RecordMeetingConflictDto,
+  AddBoardPackRequirementDto,
+  UpdateBoardPackDueDateDto,
 } from '../dtos/index.dto';
 import { CurrentUser, Public, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -102,6 +104,14 @@ export class MeetingController {
     private readonly meetingService: MeetingService,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
   ) {}
+
+  private async currentUserName(userId: string): Promise<string> {
+    const me = await this.userModel
+      .findById(userId)
+      .select('firstName lastName')
+      .lean();
+    return `${me?.firstName ?? ''} ${me?.lastName ?? ''}`.trim();
+  }
 
   @Post()
   create(
@@ -185,14 +195,69 @@ export class MeetingController {
     }),
   )
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: "Upload a document into this meeting's board pack" })
-  addBoardPackDoc(
+  @ApiOperation({
+    summary:
+      "Upload a document into this meeting's board pack, optionally filed under one of its agenda items",
+  })
+  async addBoardPackDoc(
     @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('agendaItemTitle') agendaItemTitle: string | undefined,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const uploadedBy = await this.currentUserName(u);
+    return this.meetingService.addBoardPackDoc(
+      t || u,
+      id,
+      file,
+      agendaItemTitle,
+      uploadedBy,
+    );
+  }
+
+  @Post(':id/board-pack/requirement')
+  @ApiOperation({
+    summary:
+      'Request a board pack document that has not been uploaded yet — an "Outstanding" placeholder, optionally naming who it is expected from and by when',
+  })
+  addBoardPackRequirement(
+    @Param('id') id: string,
+    @Body() dto: AddBoardPackRequirementDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.meetingService.addBoardPackRequirement(t || u, id, dto);
+  }
+
+  @Post(':id/board-pack/:index/fulfill')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: boardPackStorage,
+      fileFilter: boardPackFileFilter,
+      limits: { fileSize: 25 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary:
+      'Attach a file to an outstanding board pack requirement, rather than creating a duplicate row',
+  })
+  async fulfillBoardPackDoc(
+    @Param('id') id: string,
+    @Param('index') index: string,
     @UploadedFile() file: Express.Multer.File,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.meetingService.addBoardPackDoc(t || u, id, file);
+    const uploadedBy = await this.currentUserName(u);
+    return this.meetingService.fulfillBoardPackDoc(
+      t || u,
+      id,
+      Number(index),
+      file,
+      uploadedBy,
+    );
   }
 
   @Delete(':id/board-pack/:index')
@@ -203,6 +268,20 @@ export class MeetingController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.meetingService.removeBoardPackDoc(t || u, id, Number(index));
+  }
+
+  @Patch(':id/board-pack-due-date')
+  @ApiOperation({
+    summary:
+      'Set or clear a custom board pack due date — defaults to 7 days before the meeting when unset',
+  })
+  updateBoardPackDueDate(
+    @Param('id') id: string,
+    @Body() dto: UpdateBoardPackDueDateDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.meetingService.updateBoardPackDueDate(t || u, id, dto);
   }
 
   @Patch(':id/notes')
