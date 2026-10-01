@@ -18,7 +18,9 @@ import {
   MinutesDraftStatus,
   MeetingAttendanceStatus,
   MeetingConflictStatus,
+  MeetingConflictAction,
   MeetingConflictSource,
+  ConflictType,
 } from '../schemas';
 import {
   MEETING_CHECKLIST_ITEMS,
@@ -53,6 +55,7 @@ import { BoardMemberService } from './board-member.service';
 import { CommitteeService } from './committee.service';
 import { randomBytes } from 'crypto';
 import { renderRichText } from 'src/common/utils/pdf/render-rich-text.util';
+import { buildReportPdf } from 'src/common/utils/pdf/report-builder.util';
 import * as PDFKitImport from 'pdfkit';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 
@@ -868,6 +871,23 @@ export class MeetingService {
     return { success: true, resentTo: pending.length };
   }
 
+  // Generated on demand (never cached to disk, unlike minutes) so it
+  // always reflects the current recipients table — RSVPs and opens
+  // keep changing after dispatch, right up to the meeting.
+  async downloadNoticePdf(
+    tenantId: string,
+    id: string,
+    businessName: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const meeting = await this.getById(tenantId, id);
+    if (!meeting.notice.dispatchedAt) {
+      throw new BadRequestException('The notice has not been sent yet.');
+    }
+    const buffer = await this.generateNoticePdf(meeting, businessName);
+    const filename = `${meeting.title.replace(/[^a-z0-9]+/gi, '-')}-notice.pdf`;
+    return { buffer, filename };
+  }
+
   // ── Meeting-specific conflict of interest — recorded either by the
   // tenant (from the Attendance register) or by the board member
   // themselves from their own portal. Both write to the same array so
@@ -890,6 +910,49 @@ export class MeetingService {
       validTitles.has(t),
     );
     return { natureOfConflict: nature, agendaItems };
+  }
+
+  // No status is picked by the self-declaring board member (their
+  // dialog has no status field — see SubmitMeetingConflictDto), so it
+  // is inferred from the action they did choose: a recusal action
+  // implies the conflict requires recusal, "noted" implies it doesn't,
+  // and "referred" is treated as requiring recusal until the
+  // Nominations Committee says otherwise. No action picked at all
+  // falls back to the generic "noted" state.
+  private inferConflictStatus(
+    actionTaken?: MeetingConflictAction,
+  ): MeetingConflictStatus {
+    if (
+      actionTaken === MeetingConflictAction.RECUSE_DISCUSSION_AND_VOTE ||
+      actionTaken === MeetingConflictAction.RECUSE_VOTE_ONLY ||
+      actionTaken === MeetingConflictAction.REFERRED_TO_NOMCO
+    ) {
+      return MeetingConflictStatus.DECLARED_RECUSAL_REQUIRED;
+    }
+    return MeetingConflictStatus.DECLARED_NOTED_NO_RECUSAL;
+  }
+
+  // When a conflict is recorded as a standing (ongoing, not just
+  // meeting-specific) declaration, it also gets pushed onto the
+  // declarer's own BoardMember#conflicts register — the "director's
+  // standing conflict register" the reference Conflict-of-Interest
+  // dialog's hint text refers to. Best-effort: a failure here must
+  // never block recording the meeting-level declaration itself.
+  private async linkToStandingRegister(
+    tenantId: string,
+    boardMemberId: Types.ObjectId | string | null,
+    natureOfConflict: string,
+  ): Promise<void> {
+    if (!boardMemberId) return;
+    try {
+      await this.boardMemberService.recordConflict(
+        tenantId,
+        boardMemberId.toString(),
+        { note: natureOfConflict, type: ConflictType.STANDING } as any,
+      );
+    } catch {
+      // best-effort — the meeting-level declaration already saved
+    }
   }
 
   async recordConflict(
@@ -916,11 +979,12 @@ export class MeetingService {
     const boardMatch = (boardMembers as any[]).find(
       (b) => b.email?.toLowerCase() === lowerEmail,
     );
+    const status = dto.status ?? this.inferConflictStatus(dto.actionTaken);
     meeting.conflictDeclarations.push({
       declaredByName: attendee.name,
       declaredByEmail: lowerEmail,
       declaredByBoardMemberId: boardMatch ? boardMatch._id : null,
-      status: dto.status ?? MeetingConflictStatus.DECLARED,
+      status,
       agendaItems,
       natureOfConflict,
       actionTaken: dto.actionTaken ?? undefined,
@@ -930,22 +994,13 @@ export class MeetingService {
     } as any);
     meeting.markModified('conflictDeclarations');
     await meeting.save();
-    return meeting;
-  }
-
-  async resolveConflictDeclaration(
-    tenantId: string,
-    id: string,
-    declarationId: string,
-  ) {
-    const meeting = await this.getById(tenantId, id);
-    const entry = (meeting.conflictDeclarations as any[]).find(
-      (c) => c._id.toString() === declarationId,
-    );
-    if (!entry) throw new NotFoundException('Conflict declaration not found');
-    entry.status = MeetingConflictStatus.RESOLVED;
-    meeting.markModified('conflictDeclarations');
-    await meeting.save();
+    if (status === MeetingConflictStatus.STANDING && boardMatch) {
+      await this.linkToStandingRegister(
+        tenantId,
+        boardMatch._id,
+        natureOfConflict,
+      );
+    }
     return meeting;
   }
 
@@ -974,11 +1029,12 @@ export class MeetingService {
       meeting,
       dto,
     );
+    const status = this.inferConflictStatus(dto.actionTaken);
     meeting.conflictDeclarations.push({
       declaredByName: name,
       declaredByEmail: lowerEmail,
       declaredByBoardMemberId: new Types.ObjectId(boardMemberId),
-      status: MeetingConflictStatus.DECLARED,
+      status,
       agendaItems,
       natureOfConflict,
       actionTaken: dto.actionTaken ?? undefined,
@@ -1724,6 +1780,61 @@ export class MeetingService {
       renderRichText(doc, meeting.minutes ?? '');
 
       doc.end();
+    });
+  }
+
+  // "Download notice PDF" — reuses the platform's standard report-PDF
+  // house style (buildReportPdf) rather than the minutes' freeform
+  // renderer, since this is a summary/table document, not rich text.
+  private async generateNoticePdf(
+    meeting: GovernanceMeetingDocument,
+    businessName: string,
+  ): Promise<Buffer> {
+    const roleByEmail = new Map(
+      meeting.attendees.map((a) => [a.email.toLowerCase(), a.role || '—']),
+    );
+    const dispatched = meeting.notice.dispatchedAt
+      ? new Date(meeting.notice.dispatchedAt).toLocaleString()
+      : '—';
+    return buildReportPdf({
+      title: `Meeting Notice — ${meeting.title}`,
+      subtitle: `${new Date(meeting.date).toLocaleString()} · ${meeting.location}`,
+      summary: [
+        { label: 'Dispatched', value: dispatched },
+        { label: 'Dispatched by', value: meeting.notice.dispatchedBy ?? '—' },
+        {
+          label: 'RSVP deadline',
+          value: meeting.notice.rsvpDeadline
+            ? new Date(meeting.notice.rsvpDeadline).toLocaleDateString()
+            : '—',
+        },
+        { label: 'Recipients', value: meeting.notice.recipients.length },
+      ],
+      sections: [
+        {
+          heading: 'Recipients and dispatch status',
+          // The notice body is free text of unpredictable length, so
+          // it goes in the section note (which wraps naturally) rather
+          // than a table cell (whose row height is fixed).
+          note: meeting.notice.body || undefined,
+          columns: [
+            'Recipient',
+            'Role',
+            'Email',
+            'Dispatched',
+            'Opened',
+            'RSVP',
+          ],
+          rows: meeting.notice.recipients.map((r) => [
+            r.name,
+            roleByEmail.get(r.email.toLowerCase()) ?? '—',
+            r.email,
+            dispatched,
+            r.openedAt ? new Date(r.openedAt).toLocaleString() : 'Not opened',
+            r.rsvp,
+          ]),
+        },
+      ],
     });
   }
 

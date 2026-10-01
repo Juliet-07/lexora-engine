@@ -57,16 +57,27 @@ export const AttendanceEntrySchema =
 // distinguishes the two). Feeds straight into the minutes draft's
 // `conflicts` field (see MeetingService#getConflictsSummaryText) so
 // neither side has to retype what was already declared. ────────────
+// Four values (not a declared/resolved lifecycle) — matches the PO's
+// reference Conflict-of-Interest dialog exactly. STANDING marks a
+// conflict as ongoing rather than specific to this one meeting; when
+// recorded with that value MeetingService also pushes a disclosure
+// onto the declarer's own BoardMember#conflicts register (see
+// MeetingService#linkToStandingRegister), which is what the dialog's
+// "…linked to the director's standing conflict register" hint refers
+// to. There is no separate "resolved" state: a new declaration on a
+// later meeting simply supersedes the earlier one.
 export enum MeetingConflictStatus {
-  DECLARED = 'Declared',
-  RESOLVED = 'Resolved',
+  NONE = 'No conflict declared',
+  DECLARED_RECUSAL_REQUIRED = 'Conflict declared — recusal required',
+  DECLARED_NOTED_NO_RECUSAL = 'Conflict declared — noted, no recusal',
+  STANDING = 'Standing declaration — ongoing',
 }
 
 export enum MeetingConflictAction {
-  RECUSED_DISCUSSION_AND_VOTE = 'Recused from discussion and vote',
-  RECUSED_VOTE_ONLY = 'Recused from vote only',
-  NOTED_ONLY = 'Noted only — participated',
-  LEFT_MEETING = 'Left the meeting',
+  RECUSE_DISCUSSION_AND_VOTE = 'Director to recuse from discussion and vote',
+  RECUSE_VOTE_ONLY = 'Director to recuse from vote only (may participate in discussion)',
+  NOTED_NO_RECUSAL = 'Conflict noted in minutes, no recusal required',
+  REFERRED_TO_NOMCO = 'Referred to Nominations Committee for guidance',
 }
 
 export enum MeetingConflictSource {
@@ -82,7 +93,7 @@ export class MeetingConflictDeclaration {
   declaredByBoardMemberId: Types.ObjectId | null;
   @Prop({
     enum: MeetingConflictStatus,
-    default: MeetingConflictStatus.DECLARED,
+    default: MeetingConflictStatus.DECLARED_RECUSAL_REQUIRED,
   })
   status: MeetingConflictStatus;
   // Snapshot of affected agenda item titles — agenda items have no
@@ -91,7 +102,7 @@ export class MeetingConflictDeclaration {
   @Prop({ required: true, trim: true }) natureOfConflict: string;
   @Prop({
     enum: MeetingConflictAction,
-    default: MeetingConflictAction.NOTED_ONLY,
+    default: MeetingConflictAction.NOTED_NO_RECUSAL,
   })
   actionTaken: MeetingConflictAction;
   @Prop({ required: true }) recordedBy: string;

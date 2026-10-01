@@ -6,10 +6,12 @@ import {
   Delete,
   Body,
   Param,
+  Res,
   UseInterceptors,
   UploadedFile,
   BadRequestException,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -282,6 +284,31 @@ export class MeetingController {
     return this.meetingService.resendNotice(tenantId, id, businessName);
   }
 
+  @Get(':id/notice/pdf')
+  @ApiOperation({
+    summary:
+      'Download the meeting notice — body plus current recipients and dispatch status — as a PDF',
+  })
+  async downloadNoticePdf(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const { buffer, filename } = await this.meetingService.downloadNoticePdf(
+      tenantId,
+      id,
+      businessName,
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.send(buffer);
+  }
+
   // ── Meeting-specific conflict of interest ────────────────────────
 
   @Post(':id/conflicts')
@@ -302,20 +329,6 @@ export class MeetingController {
       id,
       dto,
       recordedByName,
-    );
-  }
-
-  @Patch(':id/conflicts/:declarationId/resolve')
-  resolveConflictDeclaration(
-    @Param('id') id: string,
-    @Param('declarationId') declarationId: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.meetingService.resolveConflictDeclaration(
-      t || u,
-      id,
-      declarationId,
     );
   }
 
