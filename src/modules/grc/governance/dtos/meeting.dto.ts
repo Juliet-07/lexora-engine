@@ -18,6 +18,9 @@ import {
   MinutesDraftStatus,
   MinuteResolutionOutcome,
   NoticeRsvpStatus,
+  MeetingAttendanceStatus,
+  MeetingConflictStatus,
+  MeetingConflictAction,
 } from '../schemas';
 import { Type } from 'class-transformer';
 
@@ -27,6 +30,9 @@ export class CreateMeetingDto {
   @IsEnum(MeetingAudienceType)
   type: MeetingAudienceType;
   @ApiProperty() @IsDateString() date: string;
+  // IANA timezone selected by the tenant when scheduling this meeting
+  // (e.g. "Africa/Kigali") — display metadata alongside `date`.
+  @ApiProperty() @IsString() timezone: string;
   @ApiPropertyOptional() @IsOptional() @IsString() committeeId?: string;
   @ApiProperty({ enum: MeetingMode }) @IsEnum(MeetingMode) mode: MeetingMode;
   @ApiPropertyOptional() @IsOptional() @IsString() venue?: string;
@@ -68,14 +74,62 @@ export class AbsenceNoteDto {
   @ApiProperty() @IsString() note: string;
 }
 
+// Per-attendee attendance — in person, by proxy (with the proxy
+// holder's name), an apology, or a plain absence, per the PO's
+// explicit feedback that attendance must distinguish in-person from
+// proxy attendance.
+export class AttendanceEntryDto {
+  @ApiProperty() @IsNumber() index: number;
+  @ApiProperty({ enum: MeetingAttendanceStatus })
+  @IsEnum(MeetingAttendanceStatus)
+  status: MeetingAttendanceStatus;
+  @ApiPropertyOptional() @IsOptional() @IsString() proxyHolderName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() note?: string;
+}
+
 export class RecordAttendanceDto {
-  @ApiProperty() @IsBoolean() allAttended: boolean;
-  @ApiPropertyOptional({ type: [Number] })
+  @ApiProperty({ type: [AttendanceEntryDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AttendanceEntryDto)
+  entries: AttendanceEntryDto[];
+}
+
+// ── Meeting-specific conflict of interest ──────────────────────────
+export class RecordMeetingConflictDto {
+  // Must match one of this meeting's attendees — resolved server-side
+  // to their real name rather than trusting a client-typed one.
+  @ApiProperty() @IsEmail() declaredByEmail: string;
+  @ApiPropertyOptional({ enum: MeetingConflictStatus })
   @IsOptional()
-  presentIndices?: number[];
-  @ApiPropertyOptional({ type: [AbsenceNoteDto] })
+  @IsEnum(MeetingConflictStatus)
+  status?: MeetingConflictStatus;
+  @ApiPropertyOptional({ type: [String] })
   @IsOptional()
-  absenceNotes?: AbsenceNoteDto[];
+  @IsArray()
+  @IsString({ each: true })
+  agendaItems?: string[];
+  @ApiProperty() @IsString() natureOfConflict: string;
+  @ApiPropertyOptional({ enum: MeetingConflictAction })
+  @IsOptional()
+  @IsEnum(MeetingConflictAction)
+  actionTaken?: MeetingConflictAction;
+}
+
+// Board portal, self-service — the signed-in director declares their
+// own conflict, so there's no declaredByEmail to pass (resolved from
+// their JWT server-side).
+export class SubmitMeetingConflictDto {
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  agendaItems?: string[];
+  @ApiProperty() @IsString() natureOfConflict: string;
+  @ApiPropertyOptional({ enum: MeetingConflictAction })
+  @IsOptional()
+  @IsEnum(MeetingConflictAction)
+  actionTaken?: MeetingConflictAction;
 }
 
 export class AddAgendaItemDto {
@@ -94,6 +148,11 @@ export class UpdateMinutesDto {
 
 export class PostponeMeetingDto {
   @ApiProperty() @IsString() reason: string;
+  // Optional new date/time for the postponed meeting — when given,
+  // the meeting's own `date` is updated immediately (so it's reflected
+  // on the board calendar/My Meetings without any separate record) and
+  // included in the postponement email.
+  @ApiPropertyOptional() @IsOptional() @IsDateString() newDate?: string;
 }
 
 export class SubmitMinutesReviewDto {

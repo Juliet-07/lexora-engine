@@ -3,6 +3,10 @@ export interface MeetingPostponedEmailData {
   attendeeName: string;
   meetingTitle: string;
   originalDate: Date;
+  // The new date/time the tenant rescheduled to, when one was given at
+  // postponement time — null when the meeting is postponed with no
+  // replacement date yet (a date to be confirmed later).
+  newDate: Date | null;
   reason: string;
   businessName: string;
 }
@@ -30,6 +34,11 @@ export function meetingPostponedTemplate(data: MeetingPostponedEmailData): {
             The following meeting, originally scheduled for <strong>${data.originalDate.toLocaleString()}</strong>, has been postponed:
           </p>
           <p style="margin:0 0 16px;font-size:17px;color:#2c2c2c;font-weight:bold;">${data.meetingTitle}</p>
+          ${
+            data.newDate
+              ? `<p style="margin:0 0 16px;font-size:15px;color:#2c2c2c;line-height:1.8;">It has been rescheduled to <strong>${data.newDate.toLocaleString()}</strong>. Please update your calendar.</p>`
+              : `<p style="margin:0 0 16px;font-size:15px;color:#2c2c2c;line-height:1.8;">A new date and time will be confirmed in a follow-up notice.</p>`
+          }
           <p style="margin:0 0 8px;font-size:14px;color:#2c2c2c;font-weight:bold;">Reason</p>
           <p style="margin:0;font-size:14px;color:#555;line-height:1.7;">${data.reason}</p>
         </td></tr>

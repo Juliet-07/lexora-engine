@@ -28,6 +28,81 @@ export enum MeetingStatus {
   POSTPONED = 'Postponed',
 }
 
+// ── Attendance — in person vs by proxy, per PO feedback (2026-09):
+// "it is meant to be captured if the attendee is attending the
+// meeting in person or by proxy". Apology distinguishes a notified
+// absence from a plain unexplained one. ─────────────────────────────
+export enum MeetingAttendanceStatus {
+  PRESENT = 'Present',
+  PROXY = 'Proxy',
+  APOLOGY = 'Apology',
+  ABSENT = 'Absent',
+}
+
+@Schema({ _id: false })
+export class AttendanceEntry {
+  @Prop({ required: true }) index: number;
+  @Prop({ enum: MeetingAttendanceStatus, required: true })
+  status: MeetingAttendanceStatus;
+  // Only meaningful when status === Proxy — who is holding the proxy.
+  @Prop({ default: null }) proxyHolderName: string | null;
+  @Prop({ default: null }) note: string | null;
+}
+export const AttendanceEntrySchema =
+  SchemaFactory.createForClass(AttendanceEntry);
+
+// ── Meeting-specific conflict of interest — recorded either by the
+// tenant (Company Secretary, from the Attendance register) or by the
+// board member themselves from their own portal (source
+// distinguishes the two). Feeds straight into the minutes draft's
+// `conflicts` field (see MeetingService#getConflictsSummaryText) so
+// neither side has to retype what was already declared. ────────────
+export enum MeetingConflictStatus {
+  DECLARED = 'Declared',
+  RESOLVED = 'Resolved',
+}
+
+export enum MeetingConflictAction {
+  RECUSED_DISCUSSION_AND_VOTE = 'Recused from discussion and vote',
+  RECUSED_VOTE_ONLY = 'Recused from vote only',
+  NOTED_ONLY = 'Noted only — participated',
+  LEFT_MEETING = 'Left the meeting',
+}
+
+export enum MeetingConflictSource {
+  TENANT = 'tenant',
+  BOARD_MEMBER = 'board-member',
+}
+
+@Schema({ timestamps: false })
+export class MeetingConflictDeclaration {
+  @Prop({ required: true }) declaredByName: string;
+  @Prop({ required: true, lowercase: true }) declaredByEmail: string;
+  @Prop({ type: Types.ObjectId, ref: 'BoardMember', default: null })
+  declaredByBoardMemberId: Types.ObjectId | null;
+  @Prop({
+    enum: MeetingConflictStatus,
+    default: MeetingConflictStatus.DECLARED,
+  })
+  status: MeetingConflictStatus;
+  // Snapshot of affected agenda item titles — agenda items have no
+  // stable id of their own (MeetingAgendaItem is { _id: false }).
+  @Prop({ type: [String], default: [] }) agendaItems: string[];
+  @Prop({ required: true, trim: true }) natureOfConflict: string;
+  @Prop({
+    enum: MeetingConflictAction,
+    default: MeetingConflictAction.NOTED_ONLY,
+  })
+  actionTaken: MeetingConflictAction;
+  @Prop({ required: true }) recordedBy: string;
+  @Prop({ required: true, default: () => new Date() }) recordedAt: Date;
+  @Prop({ enum: MeetingConflictSource, required: true })
+  source: MeetingConflictSource;
+}
+export const MeetingConflictDeclarationSchema = SchemaFactory.createForClass(
+  MeetingConflictDeclaration,
+);
+
 export const ACK_TOKEN_EXPIRY_DAYS = 7;
 export const ACK_REMINDER_INTERVAL_HOURS = 48;
 
@@ -334,6 +409,15 @@ export class GovernanceMeeting {
   @Prop({ required: true })
   date: Date;
 
+  // IANA timezone the tenant selected when scheduling this meeting
+  // (e.g. "Africa/Kigali") — display-only metadata alongside `date`
+  // (still stored as an absolute instant), so notices/emails and the
+  // meeting workspace can show "10:00 WAT" rather than leaving the
+  // timezone to guesswork. 'UTC' backfills meetings created before
+  // this field existed.
+  @Prop({ required: true, default: 'UTC' })
+  timezone: string;
+
   @Prop({ enum: MeetingMode, required: true })
   mode: MeetingMode;
 
@@ -396,6 +480,21 @@ export class GovernanceMeeting {
   @Prop({ type: [{ index: Number, note: String }], default: [] })
   attendanceAbsenceNotes: { index: number; note: string }[];
 
+  // Real per-attendee attendance status (Present / Proxy / Apology /
+  // Absent) — supersedes the boolean allPresent/presentIndices pair
+  // above as the source of truth for new recordings; those legacy
+  // fields are still derived and kept in sync alongside this one so
+  // older reads (minutes PDF, board-portal myAttendance) keep working
+  // without a migration.
+  @Prop({ type: [AttendanceEntrySchema], default: [] })
+  attendanceEntries: AttendanceEntry[];
+
+  // Per-meeting conflict-of-interest declarations — recorded by the
+  // tenant from the Attendance register, or self-declared by a board
+  // member from their own portal (see `source`).
+  @Prop({ type: [MeetingConflictDeclarationSchema], default: [] })
+  conflictDeclarations: MeetingConflictDeclaration[];
+
   @Prop({ type: [AckTokenSchema], default: [] }) ackTokens: AckToken[];
   @Prop({ type: [MeetingAcknowledgmentSchema], default: [] })
   acknowledgments: MeetingAcknowledgment[];
@@ -405,6 +504,23 @@ export class GovernanceMeeting {
 
   @Prop({ default: null })
   postponedAt: Date | null;
+
+  // Audit trail of every postponement — each entry snapshots the date
+  // being moved away from and the new date it was moved to (null when
+  // no replacement date was given yet). `date` itself is updated to
+  // the new date immediately, which is what makes the change show up
+  // on the board calendar/My Meetings without any separate calendar
+  // record.
+  @Prop({
+    type: [{ fromDate: Date, toDate: Date, reason: String, postponedAt: Date }],
+    default: [],
+  })
+  postponementHistory: {
+    fromDate: Date;
+    toDate: Date | null;
+    reason: string;
+    postponedAt: Date;
+  }[];
 
   @Prop({ default: null }) minutesPdfUrl: string | null;
   @Prop({ type: [MinutesReviewTokenSchema], default: [] })

@@ -22,8 +22,8 @@ import {
   GovernanceCodeDocument,
   GovernanceCodeStatus,
   GovernanceCodeCategory,
-  BoardTrainingModule,
-  BoardTrainingModuleDocument,
+  BoardOnboardingTrainingModule,
+  BoardOnboardingTrainingModuleDocument,
   TrainingType,
   GovernanceMeeting,
   GovernanceMeetingDocument,
@@ -114,8 +114,8 @@ export class BoardMemberService {
     // no circularity risk — lets Step 4's required-module list and
     // validation come from the tenant's own real training catalog
     // instead of the old fixed 3-item id list.
-    @InjectModel(BoardTrainingModule.name)
-    private readonly trainingModuleModel: Model<BoardTrainingModuleDocument>,
+    @InjectModel(BoardOnboardingTrainingModule.name)
+    private readonly trainingModuleModel: Model<BoardOnboardingTrainingModuleDocument>,
     // Same module (governance.module.ts registers this schema for
     // MeetingService too), so no circularity risk — lets the board
     // portal's own "Board of Directors" overview compute a director's

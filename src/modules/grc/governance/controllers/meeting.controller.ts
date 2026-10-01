@@ -41,6 +41,7 @@ import {
   SubmitPublicNoticeRsvpDto,
   UpdateMinutesDraftDto,
   SetMinutesDraftStatusDto,
+  RecordMeetingConflictDto,
 } from '../dtos/index.dto';
 import { CurrentUser, Public, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -267,6 +268,57 @@ export class MeetingController {
     return this.meetingService.dispatchNotice(tenantId, id, businessName);
   }
 
+  @Post(':id/notice/resend')
+  @ApiOperation({
+    summary: 'Resend the meeting notice to non-respondents only',
+  })
+  async resendNotice(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    return this.meetingService.resendNotice(tenantId, id, businessName);
+  }
+
+  // ── Meeting-specific conflict of interest ────────────────────────
+
+  @Post(':id/conflicts')
+  @ApiOperation({
+    summary:
+      'Record a conflict of interest declared during this meeting (tenant-recorded)',
+  })
+  async recordConflict(
+    @Param('id') id: string,
+    @Body() dto: RecordMeetingConflictDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const recordedByName = await resolveBusinessName(this.userModel, tenantId);
+    return this.meetingService.recordConflict(
+      tenantId,
+      id,
+      dto,
+      recordedByName,
+    );
+  }
+
+  @Patch(':id/conflicts/:declarationId/resolve')
+  resolveConflictDeclaration(
+    @Param('id') id: string,
+    @Param('declarationId') declarationId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.meetingService.resolveConflictDeclaration(
+      t || u,
+      id,
+      declarationId,
+    );
+  }
+
   // ── Structured minutes drafting ──────────────────────────────────
 
   @Patch(':id/minutes-draft')
@@ -366,6 +418,7 @@ export class MeetingController {
       id,
       dto.reason,
       businessName,
+      dto.newDate,
     );
   }
 

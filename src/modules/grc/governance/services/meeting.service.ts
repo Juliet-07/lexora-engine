@@ -16,6 +16,9 @@ import {
   MeetingActionItemStatus,
   NoticeRsvpStatus,
   MinutesDraftStatus,
+  MeetingAttendanceStatus,
+  MeetingConflictStatus,
+  MeetingConflictSource,
 } from '../schemas';
 import {
   MEETING_CHECKLIST_ITEMS,
@@ -41,6 +44,8 @@ import {
   SetMinutesDraftStatusDto,
   ToggleBoardPackReadDto,
   AddBoardPackNoteDto,
+  RecordMeetingConflictDto,
+  SubmitMeetingConflictDto,
 } from '../dtos/index.dto';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { join } from 'path';
@@ -91,6 +96,7 @@ export class MeetingService {
       title: dto.title,
       type: dto.type,
       date: new Date(dto.date),
+      timezone: dto.timezone,
       mode: dto.mode,
       venue: dto.venue ?? null,
       meetingLink: dto.meetingLink ?? null,
@@ -154,6 +160,7 @@ export class MeetingService {
     // fields, Governance Codes boardApprovals, …).
     return meetings.map((m: any) => ({
       ...m,
+      timezone: m.timezone ?? 'UTC',
       actionItems: m.actionItems ?? [],
       checklist: m.checklist ?? [],
       notice: m.notice ?? {
@@ -167,6 +174,9 @@ export class MeetingService {
       },
       minutesDraft: m.minutesDraft ?? null,
       boardPackNotes: m.boardPackNotes ?? [],
+      attendanceEntries: m.attendanceEntries ?? [],
+      conflictDeclarations: m.conflictDeclarations ?? [],
+      postponementHistory: m.postponementHistory ?? [],
     }));
   }
 
@@ -473,21 +483,60 @@ export class MeetingService {
     if (!deleted) throw new NotFoundException('Meeting not found');
   }
 
+  // Per-attendee attendance — Present / Proxy / Apology / Absent (see
+  // MeetingAttendanceStatus), replacing the earlier present/absent-only
+  // recording per the PO's explicit feedback that proxy attendance
+  // must be distinguishable from in-person. The legacy
+  // attendanceAllPresent/attendancePresentIndices/attendanceAbsenceNotes
+  // fields are still derived and kept in sync here (a director present
+  // in person OR by proxy counts toward "present" for those), so older
+  // readers (the minutes PDF fallback, board-portal myAttendance) keep
+  // working without a migration.
   async recordAttendance(
     tenantId: string,
     id: string,
     dto: RecordAttendanceDto,
   ) {
     const meeting = await this.getById(tenantId, id);
-    const indices = dto.allAttended
-      ? meeting.attendees.map((_, i) => i)
-      : (dto.presentIndices ?? []);
-    meeting.attendanceAllPresent = dto.allAttended;
-    meeting.attendancePresentIndices = indices;
-    meeting.attendanceAbsenceNotes = dto.allAttended
-      ? []
-      : (dto.absenceNotes ?? []);
+    const validIndices = new Set(meeting.attendees.map((_, i) => i));
+    for (const e of dto.entries) {
+      if (!validIndices.has(e.index)) {
+        throw new BadRequestException(
+          `Attendee index ${e.index} is not on this meeting's attendee list.`,
+        );
+      }
+    }
+
+    meeting.attendanceEntries = dto.entries.map((e) => ({
+      index: e.index,
+      status: e.status,
+      proxyHolderName:
+        e.status === MeetingAttendanceStatus.PROXY
+          ? (e.proxyHolderName ?? null)
+          : null,
+      note: e.note ?? null,
+    })) as any;
+
+    const presentIndices = dto.entries
+      .filter(
+        (e) =>
+          e.status === MeetingAttendanceStatus.PRESENT ||
+          e.status === MeetingAttendanceStatus.PROXY,
+      )
+      .map((e) => e.index);
+    meeting.attendanceAllPresent =
+      presentIndices.length === meeting.attendees.length;
+    meeting.attendancePresentIndices = presentIndices;
+    meeting.attendanceAbsenceNotes = dto.entries
+      .filter(
+        (e) =>
+          (e.status === MeetingAttendanceStatus.APOLOGY ||
+            e.status === MeetingAttendanceStatus.ABSENT) &&
+          e.note?.trim(),
+      )
+      .map((e) => ({ index: e.index, note: e.note!.trim() }));
     meeting.attendanceRecordedAt = new Date();
+    meeting.markModified('attendanceEntries');
     meeting.markModified('attendanceAbsenceNotes');
     await meeting.save();
     return meeting;
@@ -498,6 +547,7 @@ export class MeetingService {
     id: string,
     reason: string,
     businessName: string,
+    newDate?: string,
   ) {
     const meeting = await this.getById(tenantId, id);
     if (meeting.status === MeetingStatus.HELD) {
@@ -512,9 +562,21 @@ export class MeetingService {
     }
 
     const originalDate = meeting.date;
+    const parsedNewDate = newDate ? new Date(newDate) : null;
     meeting.status = MeetingStatus.POSTPONED;
     meeting.postponementReason = reason.trim();
     meeting.postponedAt = new Date();
+    meeting.postponementHistory.push({
+      fromDate: originalDate,
+      toDate: parsedNewDate,
+      reason: meeting.postponementReason,
+      postponedAt: meeting.postponedAt,
+    } as any);
+    meeting.markModified('postponementHistory');
+    // Updating `date` directly (rather than a separate calendar record)
+    // is what makes the new date/time show up on the board calendar
+    // and My Meetings immediately — both read straight off this field.
+    if (parsedNewDate) meeting.date = parsedNewDate;
     await meeting.save();
 
     // Same recipient set as dispatch/sendMinutes — every attendee,
@@ -540,6 +602,7 @@ export class MeetingService {
             attendeeName: r.name,
             meetingTitle: meeting.title,
             originalDate,
+            newDate: parsedNewDate,
             reason: meeting.postponementReason!,
             businessName,
           })
@@ -744,6 +807,190 @@ export class MeetingService {
     return meeting;
   }
 
+  // "Resend to non-respondents" — re-sends the notice email only to
+  // recipients who haven't RSVP'd yet (still Pending), rather than
+  // spamming everyone who already confirmed or sent apologies.
+  async resendNotice(tenantId: string, id: string, businessName: string) {
+    const meeting = await this.getById(tenantId, id);
+    if (!meeting.notice.dispatchedAt) {
+      throw new BadRequestException('The notice has not been sent yet.');
+    }
+    const pending = meeting.notice.recipients.filter(
+      (r) => r.rsvp === NoticeRsvpStatus.PENDING,
+    );
+    if (pending.length === 0) {
+      throw new BadRequestException(
+        'Every recipient has already responded to this notice.',
+      );
+    }
+
+    const boardMembers = await this.boardMemberService.getAll(tenantId);
+    const boardMemberEmails = new Set(
+      (boardMembers as any[])
+        .map((b) => b.email?.toLowerCase())
+        .filter(Boolean),
+    );
+
+    const rsvpLinkByEmail = new Map<string, string>();
+    for (const r of pending) {
+      if (boardMemberEmails.has(r.email.toLowerCase())) continue;
+      const token = this.ensureNoticeRsvpToken(meeting, r.email, r.name);
+      rsvpLinkByEmail.set(
+        r.email.toLowerCase(),
+        `${process.env.TENANT_APP_URL}/meeting-notice/${token}`,
+      );
+    }
+    meeting.markModified('notice');
+    await meeting.save();
+
+    await Promise.all(
+      pending.map((r) =>
+        this.emailService
+          .sendMeetingNotice({
+            to: r.email,
+            attendeeName: r.name,
+            meetingTitle: meeting.title,
+            date: meeting.date,
+            location: meeting.location,
+            chair: meeting.chair,
+            noticeBody: meeting.notice.body,
+            rsvpDeadline: meeting.notice.rsvpDeadline,
+            rsvpLink: rsvpLinkByEmail.get(r.email.toLowerCase()) ?? null,
+            boardPortalLink: boardMemberEmails.has(r.email.toLowerCase())
+              ? `${process.env.BOARD_APP_URL}/meetings`
+              : null,
+            businessName,
+          })
+          .catch(() => {}),
+      ),
+    );
+
+    return { success: true, resentTo: pending.length };
+  }
+
+  // ── Meeting-specific conflict of interest — recorded either by the
+  // tenant (from the Attendance register) or by the board member
+  // themselves from their own portal. Both write to the same array so
+  // the minutes draft can pull from one place regardless of source. ──
+
+  private resolveMeetingConflictDto(
+    meeting: GovernanceMeetingDocument,
+    dto: {
+      agendaItems?: string[];
+      natureOfConflict: string;
+      actionTaken?: any;
+    },
+  ) {
+    const nature = dto.natureOfConflict?.trim();
+    if (!nature) {
+      throw new BadRequestException('Describe the nature of the conflict.');
+    }
+    const validTitles = new Set(meeting.agenda.map((a) => a.title));
+    const agendaItems = (dto.agendaItems ?? []).filter((t) =>
+      validTitles.has(t),
+    );
+    return { natureOfConflict: nature, agendaItems };
+  }
+
+  async recordConflict(
+    tenantId: string,
+    id: string,
+    dto: RecordMeetingConflictDto,
+    recordedByName: string,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const lowerEmail = dto.declaredByEmail.toLowerCase();
+    const attendee = meeting.attendees.find(
+      (a) => a.email.toLowerCase() === lowerEmail,
+    );
+    if (!attendee) {
+      throw new BadRequestException(
+        'The person declaring a conflict must be an attendee of this meeting.',
+      );
+    }
+    const { natureOfConflict, agendaItems } = this.resolveMeetingConflictDto(
+      meeting,
+      dto,
+    );
+    const boardMembers = await this.boardMemberService.getAll(tenantId);
+    const boardMatch = (boardMembers as any[]).find(
+      (b) => b.email?.toLowerCase() === lowerEmail,
+    );
+    meeting.conflictDeclarations.push({
+      declaredByName: attendee.name,
+      declaredByEmail: lowerEmail,
+      declaredByBoardMemberId: boardMatch ? boardMatch._id : null,
+      status: dto.status ?? MeetingConflictStatus.DECLARED,
+      agendaItems,
+      natureOfConflict,
+      actionTaken: dto.actionTaken ?? undefined,
+      recordedBy: recordedByName,
+      recordedAt: new Date(),
+      source: MeetingConflictSource.TENANT,
+    } as any);
+    meeting.markModified('conflictDeclarations');
+    await meeting.save();
+    return meeting;
+  }
+
+  async resolveConflictDeclaration(
+    tenantId: string,
+    id: string,
+    declarationId: string,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const entry = (meeting.conflictDeclarations as any[]).find(
+      (c) => c._id.toString() === declarationId,
+    );
+    if (!entry) throw new NotFoundException('Conflict declaration not found');
+    entry.status = MeetingConflictStatus.RESOLVED;
+    meeting.markModified('conflictDeclarations');
+    await meeting.save();
+    return meeting;
+  }
+
+  // Board portal, self-service — a director declares their own
+  // conflict of interest for this meeting, rather than relying on the
+  // tenant to record it on their behalf.
+  async submitBoardMemberConflict(
+    tenantId: string,
+    id: string,
+    boardMemberId: string,
+    name: string,
+    email: string,
+    dto: SubmitMeetingConflictDto,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const lowerEmail = email.toLowerCase();
+    const isAttendee = meeting.attendees.some(
+      (a) => a.email.toLowerCase() === lowerEmail,
+    );
+    if (!isAttendee) {
+      throw new BadRequestException(
+        'You are not listed as an attendee of this meeting.',
+      );
+    }
+    const { natureOfConflict, agendaItems } = this.resolveMeetingConflictDto(
+      meeting,
+      dto,
+    );
+    meeting.conflictDeclarations.push({
+      declaredByName: name,
+      declaredByEmail: lowerEmail,
+      declaredByBoardMemberId: new Types.ObjectId(boardMemberId),
+      status: MeetingConflictStatus.DECLARED,
+      agendaItems,
+      natureOfConflict,
+      actionTaken: dto.actionTaken ?? undefined,
+      recordedBy: name,
+      recordedAt: new Date(),
+      source: MeetingConflictSource.BOARD_MEMBER,
+    } as any);
+    meeting.markModified('conflictDeclarations');
+    await meeting.save();
+    return meeting;
+  }
+
   private ensureNoticeRsvpToken(
     meeting: GovernanceMeetingDocument,
     email: string,
@@ -934,6 +1181,13 @@ export class MeetingService {
           ? true
           : (m.attendancePresentIndices ?? []).includes(idx)
         : null;
+      const myAttendanceEntry = (m.attendanceEntries ?? []).find(
+        (e: any) => e.index === idx,
+      );
+      const myConflict =
+        (m.conflictDeclarations ?? []).find(
+          (c: any) => c.declaredByEmail?.toLowerCase() === lowerEmail,
+        ) ?? null;
       const myAck =
         (m.acknowledgments ?? []).find(
           (a: any) => a.attendeeEmail?.toLowerCase() === lowerEmail,
@@ -976,6 +1230,17 @@ export class MeetingService {
             }
           : null,
         myAttendance,
+        myAttendanceStatus: myAttendanceEntry?.status ?? null,
+        myConflict: myConflict
+          ? {
+              _id: myConflict._id,
+              status: myConflict.status,
+              agendaItems: myConflict.agendaItems ?? [],
+              natureOfConflict: myConflict.natureOfConflict,
+              actionTaken: myConflict.actionTaken,
+              recordedAt: myConflict.recordedAt,
+            }
+          : null,
         myAck: myAck
           ? {
               agendaConfirmed: myAck.agendaConfirmed,
@@ -1533,39 +1798,73 @@ export class MeetingService {
       return;
     }
 
-    const presentIdx = meeting.attendanceAllPresent
-      ? meeting.attendees.map((_, i) => i)
-      : meeting.attendancePresentIndices;
-    const absentIdx = meeting.attendees
-      .map((_, i) => i)
-      .filter((i) => !presentIdx.includes(i));
+    // attendanceEntries is the source of truth for any meeting
+    // recorded since in-person/proxy tracking shipped; older meetings
+    // fall back to the legacy present/absent-only fields.
+    const entries =
+      meeting.attendanceEntries && meeting.attendanceEntries.length > 0
+        ? meeting.attendanceEntries
+        : meeting.attendees.map((_, i) => ({
+            index: i,
+            status: (meeting.attendanceAllPresent ||
+            meeting.attendancePresentIndices.includes(i)
+              ? 'Present'
+              : 'Absent') as any,
+            proxyHolderName: null,
+            note:
+              meeting.attendanceAbsenceNotes?.find((n) => n.index === i)
+                ?.note ?? null,
+          }));
 
-    doc.fontSize(11).font('Helvetica-Bold').text('Present:');
-    presentIdx.forEach((i) => {
-      const a = meeting.attendees[i];
-      if (a)
+    const byStatus = (status: string) =>
+      entries.filter((e) => e.status === status);
+
+    const renderGroup = (label: string, list: typeof entries) => {
+      if (list.length === 0) return;
+      doc.moveDown(0.3);
+      doc.font('Helvetica-Bold').text(`${label}:`);
+      list.forEach((e) => {
+        const a = meeting.attendees[e.index];
+        if (!a) return;
+        const proxySuffix =
+          e.status === 'Proxy' && e.proxyHolderName
+            ? ` (proxy held by ${e.proxyHolderName})`
+            : '';
+        const noteSuffix = e.note ? ` (${e.note})` : '';
         doc
           .font('Helvetica')
-          .text(`•  ${a.name}${a.role ? ` – ${a.role}` : ''}`, { indent: 15 });
-    });
-
-    if (absentIdx.length > 0) {
-      doc.moveDown(0.3);
-      doc.font('Helvetica-Bold').text('Absent:');
-      absentIdx.forEach((i) => {
-        const a = meeting.attendees[i];
-        const noteEntry = meeting.attendanceAbsenceNotes?.find(
-          (n) => n.index === i,
-        );
-        const suffix = noteEntry?.note ? ` (${noteEntry.note})` : '';
-        if (a)
-          doc
-            .font('Helvetica')
-            .text(`•  ${a.name}${a.role ? ` – ${a.role}` : ''}${suffix}`, {
-              indent: 15,
-            });
+          .text(
+            `•  ${a.name}${a.role ? ` – ${a.role}` : ''}${proxySuffix}${noteSuffix}`,
+            { indent: 15 },
+          );
       });
-    }
+    };
+
+    renderGroup('Present', byStatus('Present'));
+    renderGroup('Present by proxy', byStatus('Proxy'));
+    renderGroup('Apologies', byStatus('Apology'));
+    renderGroup('Absent', byStatus('Absent'));
     doc.moveDown(0.8);
+
+    // ── Conflicts of interest declared ─────────────────────────────
+    if (meeting.conflictDeclarations.length > 0) {
+      doc.fontSize(12).font('Helvetica-Bold').text('2. Conflicts of Interest');
+      doc.moveDown(0.25);
+      meeting.conflictDeclarations.forEach((c) => {
+        doc
+          .fontSize(11)
+          .font('Helvetica-Bold')
+          .text(
+            `•  ${c.declaredByName}${c.agendaItems?.length ? ` — re: ${c.agendaItems.join(', ')}` : ''}`,
+            { indent: 15 },
+          );
+        doc
+          .font('Helvetica')
+          .text(`${c.natureOfConflict}. Action taken: ${c.actionTaken}.`, {
+            indent: 25,
+          });
+      });
+      doc.moveDown(0.8);
+    }
   }
 }

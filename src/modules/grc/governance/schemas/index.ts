@@ -1,5 +1,5 @@
 export * from './board-member.schema';
-export * from './board-training-module.schema';
+export * from './board-training.schema';
 export * from './committee.schema';
 export * from './governance-code.schema';
 export * from './meeting.schema';

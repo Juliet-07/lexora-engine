@@ -1,11 +1,31 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiConsumes,
+} from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
+import { existsSync, mkdirSync } from 'fs';
+import { v4 as uuidv4 } from 'uuid';
 import {
   BoardMemberService,
   GovernanceCodeService,
   MeetingService,
   BoardDashboardService,
 } from '../services';
+import { BoardTrainingService } from '../services/board-training.service';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import { UserType } from 'src/common/interfaces/user-role.enum';
 import {
@@ -19,7 +39,25 @@ import {
   SubmitNoticeRsvpDto,
   ToggleBoardPackReadDto,
   AddBoardPackNoteDto,
+  SubmitMeetingConflictDto,
 } from '../dtos/index.dto';
+import { CompleteBoardTrainingDto } from '../dtos/board-training.dto';
+
+const trainingProofStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(
+      process.cwd(),
+      'uploads',
+      'grc',
+      'trainings',
+      'proof',
+    );
+    if (!existsSync(uploadPath)) mkdirSync(uploadPath, { recursive: true });
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) =>
+    cb(null, `${uuidv4()}${extname(file.originalname)}`),
+});
 
 // ── Board portal, self-service ──────────────────────────────────
 // Reached from lexora-board (BOARD_APP_URL), not the tenant app.
@@ -39,6 +77,7 @@ export class BoardPortalController {
     private readonly governanceCodeService: GovernanceCodeService,
     private readonly meetingService: MeetingService,
     private readonly boardDashboardService: BoardDashboardService,
+    private readonly boardTrainingService: BoardTrainingService,
   ) {}
 
   @Get('me')
@@ -201,6 +240,27 @@ export class BoardPortalController {
     return this.meetingService.addBoardPackNote(tenantId, id, email, name, dto);
   }
 
+  @Post('meetings/:id/conflicts')
+  @ApiOperation({
+    summary: 'Declare a conflict of interest for this meeting, in-app',
+  })
+  async submitMeetingConflict(
+    @Param('id') id: string,
+    @Body() dto: SubmitMeetingConflictDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { boardMemberId, tenantId, name, email } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.meetingService.submitBoardMemberConflict(
+      tenantId,
+      id,
+      boardMemberId,
+      name,
+      email,
+      dto,
+    );
+  }
+
   @Patch('meetings/:id/action-items/:actionItemId/status')
   @ApiOperation({
     summary: "Mark one of the director's own meeting action items Open/Done",
@@ -289,5 +349,55 @@ export class BoardPortalController {
     @CurrentUser('sub') userId: string,
   ) {
     return this.governanceCodeService.decideBoardApproval(userId, id, dto);
+  }
+
+  // ── Trainings — general, ongoing board training (distinct from the
+  // onboarding-only modules under /onboarding/training above). A
+  // director reviews the tenant's attached material and marks it
+  // done, or — when no material was attached — uploads their own
+  // proof of completion instead. ────────────────────────────────────
+
+  @Get('trainings')
+  @ApiOperation({
+    summary:
+      'Trainings assigned to the signed-in director, with their own completion status',
+  })
+  async getMyTrainings(@CurrentUser('sub') userId: string) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.boardTrainingService.getForBoardMemberPortal(
+      tenantId,
+      boardMemberId,
+    );
+  }
+
+  @Post('trainings/:id/complete')
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary:
+      'Mark a training complete — with proof (file) when it has no material of its own',
+  })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: trainingProofStorage,
+      limits: { fileSize: 25 * 1024 * 1024 },
+    }),
+  )
+  async completeTraining(
+    @Param('id') id: string,
+    @Body() _dto: CompleteBoardTrainingDto,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { boardMemberId, tenantId, name, email } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.boardTrainingService.completeByBoardMember(
+      tenantId,
+      id,
+      boardMemberId,
+      name,
+      email,
+      file,
+    );
   }
 }
