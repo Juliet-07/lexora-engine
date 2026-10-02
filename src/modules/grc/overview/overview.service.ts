@@ -15,7 +15,6 @@ import {
   TreatmentPlanService,
   EmergingRiskService,
   IncidentService,
-  VendorService,
   BcpService,
 } from '../risk/services';
 import {
@@ -74,7 +73,6 @@ export class OverviewService {
     private readonly treatmentPlanService: TreatmentPlanService,
     private readonly emergingRiskService: EmergingRiskService,
     private readonly incidentService: IncidentService,
-    private readonly vendorService: VendorService,
     private readonly bcpService: BcpService,
     // Compliance
     private readonly obligationService: ComplianceObligationService,
@@ -142,15 +140,13 @@ export class OverviewService {
   }
 
   private async getThirdPartyBcp(tenantId: string) {
-    const [vendors, bcpPlans, bcpTests, rtoRpo, crisisContacts] =
-      await Promise.all([
-        this.vendorService.getAll(tenantId),
-        this.bcpService.getAllPlans(tenantId),
-        this.bcpService.getAllTests(tenantId),
-        this.bcpService.getAllRtoRpo(tenantId),
-        this.bcpService.getAllContacts(tenantId),
-      ]);
-    return { vendors, bcpPlans, bcpTests, rtoRpo, crisisContacts };
+    const [bcpPlans, bcpTests, rtoRpo, crisisContacts] = await Promise.all([
+      this.bcpService.getAllPlans(tenantId),
+      this.bcpService.getAllTests(tenantId),
+      this.bcpService.getAllRtoRpo(tenantId),
+      this.bcpService.getAllContacts(tenantId),
+    ]);
+    return { bcpPlans, bcpTests, rtoRpo, crisisContacts };
   }
 
   private async getCompliance(tenantId: string) {

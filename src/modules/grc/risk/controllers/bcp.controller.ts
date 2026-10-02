@@ -1,11 +1,18 @@
-import { Controller, Get, Post, Body } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { BcpService } from '../services';
 import {
   CreateBcpPlanDto,
-  LogBcpTestDto,
+  CreateBcpTestDto,
+  CompleteBcpTestDto,
   CreateRtoRpoDto,
+  RecordRtoRpoActualDto,
   CreateCrisisContactDto,
+  CreateBiaProcessDto,
+  CreateVendorResilienceDto,
+  DeclareBcpIncidentDto,
+  CreateBcpReportDto,
+  CreateBcpTestFindingDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -39,12 +46,21 @@ export class BcpController {
   }
 
   @Post('tests')
-  logTest(
-    @Body() dto: LogBcpTestDto,
+  createTest(
+    @Body() dto: CreateBcpTestDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.bcpService.logTest(t || u, dto);
+    return this.bcpService.createTest(t || u, dto);
+  }
+  @Patch('tests/:id/complete')
+  completeTest(
+    @Param('id') id: string,
+    @Body() dto: CompleteBcpTestDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.completeTest(t || u, id, dto);
   }
   @Get('tests')
   getAllTests(
@@ -54,6 +70,30 @@ export class BcpController {
     return this.bcpService.getAllTests(t || u);
   }
 
+  @Post('findings')
+  addFinding(
+    @Body() dto: CreateBcpTestFindingDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.addFinding(t || u, dto);
+  }
+  @Patch('findings/:id/resolve')
+  resolveFinding(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.resolveFinding(t || u, id);
+  }
+  @Get('findings')
+  getAllFindings(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.getAllFindings(t || u);
+  }
+
   @Post('rto-rpo')
   createRtoRpo(
     @Body() dto: CreateRtoRpoDto,
@@ -61,6 +101,15 @@ export class BcpController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.bcpService.createRtoRpo(t || u, dto);
+  }
+  @Patch('rto-rpo/:id/actual')
+  recordRtoRpoActual(
+    @Param('id') id: string,
+    @Body() dto: RecordRtoRpoActualDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.recordRtoRpoActual(t || u, id, dto);
   }
   @Get('rto-rpo')
   getAllRtoRpo(
@@ -84,5 +133,85 @@ export class BcpController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.bcpService.getAllContacts(t || u);
+  }
+
+  @Post('processes')
+  createProcess(
+    @Body() dto: CreateBiaProcessDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.createProcess(t || u, dto);
+  }
+  @Get('processes')
+  getAllProcesses(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.getAllProcesses(t || u);
+  }
+
+  @Post('vendor-resilience')
+  createVendorResilience(
+    @Body() dto: CreateVendorResilienceDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.createVendorResilience(t || u, dto);
+  }
+  @Patch('vendor-resilience/:id/attest')
+  markVendorResilienceAttested(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.markVendorResilienceAttested(t || u, id);
+  }
+  @Get('vendor-resilience')
+  getAllVendorResilience(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.getAllVendorResilience(t || u);
+  }
+
+  @Post('incidents')
+  declareIncident(
+    @Body() dto: DeclareBcpIncidentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.declareIncident(t || u, dto);
+  }
+  @Patch('incidents/:id/resolve')
+  resolveIncident(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.resolveIncident(t || u, id);
+  }
+  @Get('incidents')
+  getAllIncidents(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.getAllIncidents(t || u);
+  }
+
+  @Post('reports')
+  createReport(
+    @Body() dto: CreateBcpReportDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.createReport(t || u, dto);
+  }
+  @Get('reports')
+  getAllReports(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.getAllReports(t || u);
   }
 }
