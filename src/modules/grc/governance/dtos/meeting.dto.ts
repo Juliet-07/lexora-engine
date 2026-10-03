@@ -246,6 +246,10 @@ export class UpdateNoticeDto {
   @ApiPropertyOptional() @IsOptional() @IsDateString() rsvpDeadline?: string;
 }
 
+export class UpdateExecutiveSummaryDto {
+  @ApiProperty() @IsString() executiveSummary: string;
+}
+
 export class SubmitNoticeRsvpDto {
   @ApiProperty({
     enum: [NoticeRsvpStatus.CONFIRMED, NoticeRsvpStatus.APOLOGIES],

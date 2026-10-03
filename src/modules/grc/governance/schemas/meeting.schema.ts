@@ -190,15 +190,20 @@ export class MeetingAttendee {
 export const MeetingAttendeeSchema =
   SchemaFactory.createForClass(MeetingAttendee);
 
-// How an agenda item is handled at the table, matching the three
-// categories the PO's own reference mockup labels every item with —
-// Procedural items (opening, adoption of minutes, AOB) carry no
-// papers of their own, Noting items are presented for information,
-// Resolution items require a Board vote.
+// How an agenda item is handled at the table, matching the categories
+// the PO's own reference mockup labels every item with — Procedural
+// items (opening, adoption of minutes, AOB) carry no papers of their
+// own, Noting items are presented for information, Resolution items
+// require a Board vote. Discussion and Informational were added (PO
+// feedback, Oct 2026) for items that are talked through at the table
+// without a vote (Discussion) or simply shared for awareness with no
+// discussion expected (Informational).
 export enum AgendaItemType {
   PROCEDURAL = 'Procedural',
   NOTING = 'Noting',
   RESOLUTION = 'Resolution',
+  DISCUSSION = 'Discussion',
+  INFORMATIONAL = 'Informational',
 }
 
 @Schema({ _id: false })
@@ -518,6 +523,19 @@ export class GovernanceMeeting {
 
   @Prop({ type: [BoardPackDocumentSchema], default: [] })
   boardPack: BoardPackDocument[];
+
+  // The board pack's own cover page (PO reference mockup, Oct 2026) —
+  // rich text the tenant ("Company Secretary") drafts to frame the
+  // pack for directors: matters for decision/noting, outstanding
+  // action items, reading guidance. Same rich-text-HTML convention as
+  // notice.body/minutes, editable at any time (not locked at
+  // dispatch, unlike the notice) since the Company Secretary may keep
+  // refining it right up to circulation.
+  @Prop({ default: '' })
+  executiveSummary: string;
+
+  @Prop({ default: null })
+  executiveSummaryUpdatedAt: Date | null;
 
   // Tenant-set override of when the board pack is due to be complete
   // (the reference mockup's "Board pack due: 26 August 2026 (7 days

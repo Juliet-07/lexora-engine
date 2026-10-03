@@ -41,6 +41,7 @@ import {
   SetActionItemStatusDto,
   SetChecklistItemDto,
   UpdateNoticeDto,
+  UpdateExecutiveSummaryDto,
   SubmitPublicNoticeRsvpDto,
   UpdateMinutesDraftDto,
   SetMinutesDraftStatusDto,
@@ -447,6 +448,43 @@ export class MeetingController {
       id,
       businessName,
     );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.send(buffer);
+  }
+
+  // ── Board pack cover page / executive summary ─────────────────────
+
+  @Patch(':id/executive-summary')
+  updateExecutiveSummary(
+    @Param('id') id: string,
+    @Body() dto: UpdateExecutiveSummaryDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.meetingService.updateExecutiveSummary(t || u, id, dto);
+  }
+
+  @Get(':id/executive-summary/pdf')
+  @ApiOperation({
+    summary: 'Download the board pack cover page / executive summary as a PDF',
+  })
+  async downloadExecutiveSummaryPdf(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const { buffer, filename } =
+      await this.meetingService.downloadExecutiveSummaryPdf(
+        tenantId,
+        id,
+        businessName,
+      );
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${filename}"`,

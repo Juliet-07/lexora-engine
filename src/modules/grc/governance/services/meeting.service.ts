@@ -41,6 +41,7 @@ import {
   SubmitBoardMemberAckDto,
   SetChecklistItemDto,
   UpdateNoticeDto,
+  UpdateExecutiveSummaryDto,
   SubmitNoticeRsvpDto,
   SubmitPublicNoticeRsvpDto,
   UpdateMinutesDraftDto,
@@ -998,6 +999,42 @@ export class MeetingService {
     meeting.markModified('notice');
     await meeting.save();
     return meeting;
+  }
+
+  // ── Board pack cover page / executive summary ────────────────────
+  // Unlike the notice, this is never dispatch-locked — the Company
+  // Secretary can keep refining it right up to (and after) the pack
+  // goes out, so there's no separate "dispatch" step, just save +
+  // on-demand preview/download.
+  async updateExecutiveSummary(
+    tenantId: string,
+    id: string,
+    dto: UpdateExecutiveSummaryDto,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    meeting.executiveSummary = dto.executiveSummary;
+    meeting.executiveSummaryUpdatedAt = new Date();
+    await meeting.save();
+    return meeting;
+  }
+
+  async downloadExecutiveSummaryPdf(
+    tenantId: string,
+    id: string,
+    businessName: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const meeting = await this.getById(tenantId, id);
+    if (!meeting.executiveSummary?.trim()) {
+      throw new BadRequestException(
+        'Write the executive summary before exporting it.',
+      );
+    }
+    const buffer = await this.generateExecutiveSummaryPdf(
+      meeting,
+      businessName,
+    );
+    const filename = `${meeting.title.replace(/[^a-z0-9]+/gi, '-')}-executive-summary.pdf`;
+    return { buffer, filename };
   }
 
   async dispatchNotice(tenantId: string, id: string, businessName: string) {
@@ -2098,6 +2135,47 @@ export class MeetingService {
           ]),
         },
       ],
+    });
+  }
+
+  // "Export as PDF" for the board pack cover page — free-form rich
+  // text like the minutes, so this renders with renderRichText rather
+  // than buildReportPdf's tabular house style (see generateNoticePdf's
+  // comment on that same choice).
+  private async generateExecutiveSummaryPdf(
+    meeting: GovernanceMeetingDocument,
+    businessName: string,
+  ): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 50 });
+      const chunks: Buffer[] = [];
+      doc.on('data', (c) => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      doc.fontSize(16).font('Helvetica-Bold').text(businessName, {
+        align: 'center',
+      });
+      doc.moveDown(0.15);
+      doc
+        .fontSize(13)
+        .font('Helvetica-Bold')
+        .text('BOARD PACK — EXECUTIVE SUMMARY', { align: 'center' });
+      doc.moveDown(0.3);
+      doc
+        .fontSize(10)
+        .font('Helvetica')
+        .fillColor('#555555')
+        .text(
+          `${meeting.title} · ${new Date(meeting.date).toLocaleDateString()} · Prepared by the Company Secretary`,
+          { align: 'center' },
+        )
+        .fillColor('#000000');
+      doc.moveDown(1);
+
+      renderRichText(doc, meeting.executiveSummary ?? '');
+
+      doc.end();
     });
   }
 
