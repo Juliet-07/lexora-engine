@@ -14,6 +14,7 @@ import {
   SystemCriticality,
   BcpTestType,
   BcpPlanStatus,
+  ReviewCycle,
   Severity,
   AttestationStatus,
   AlternateVendorStatus,
@@ -22,15 +23,28 @@ import {
 
 export class CreateBcpPlanDto {
   @ApiProperty() @IsString() title: string;
-  @ApiProperty() @IsNumber() version: number;
+  // Optional — defaults to 1 server-side. Not collected on the create
+  // dialog any more (PO feedback, Oct 2026); kept for any future
+  // versioning flow.
+  @ApiPropertyOptional() @IsOptional() @IsNumber() version?: number;
   @ApiProperty() @IsString() content: string;
   @ApiPropertyOptional() @IsOptional() @IsString() scope?: string;
+  // Not collected on the create dialog any more (PO feedback, Oct
+  // 2026); kept for any future per-plan ownership assignment.
   @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
+  // Not accepted from the create dialog any more — status is always
+  // Draft on creation, system-managed from there (PO feedback, Oct
+  // 2026). Kept on the DTO only so a future status-change endpoint can
+  // reuse validation; createPlan() never reads it.
   @ApiPropertyOptional({ enum: BcpPlanStatus })
   @IsOptional()
   @IsEnum(BcpPlanStatus)
   status?: BcpPlanStatus;
   @ApiPropertyOptional() @IsOptional() @IsNumber() phase?: number;
+  @ApiPropertyOptional({ enum: ReviewCycle })
+  @IsOptional()
+  @IsEnum(ReviewCycle)
+  reviewCycle?: ReviewCycle;
   @ApiPropertyOptional() @IsOptional() @IsDateString() nextReviewDate?: string;
 }
 
@@ -86,10 +100,16 @@ export class RecordRtoRpoActualDto {
 }
 
 export class CreateCrisisContactDto {
-  @ApiProperty() @IsString() name: string;
   @ApiProperty() @IsString() role: string;
-  @ApiProperty() @IsString() phone: string;
-  @ApiProperty() @IsNumber() escalationOrder: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() primaryEmployeeId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() backupEmployeeId?: string;
+}
+
+export class UpdateCrisisContactDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() role?: string;
+  // Empty string clears the assignment; undefined leaves it unchanged.
+  @ApiPropertyOptional() @IsOptional() @IsString() primaryEmployeeId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() backupEmployeeId?: string;
 }
 
 export class CreateBiaProcessDto {

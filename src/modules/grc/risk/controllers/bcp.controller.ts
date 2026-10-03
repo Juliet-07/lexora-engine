@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Patch, Body, Param } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+} from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { BcpService } from '../services';
 import {
@@ -8,6 +16,7 @@ import {
   CreateRtoRpoDto,
   RecordRtoRpoActualDto,
   CreateCrisisContactDto,
+  UpdateCrisisContactDto,
   CreateBiaProcessDto,
   CreateVendorResilienceDto,
   DeclareBcpIncidentDto,
@@ -126,6 +135,23 @@ export class BcpController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.bcpService.createContact(t || u, dto);
+  }
+  @Patch('crisis-contacts/:id')
+  updateContact(
+    @Param('id') id: string,
+    @Body() dto: UpdateCrisisContactDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.updateContact(t || u, id, dto);
+  }
+  @Delete('crisis-contacts/:id')
+  deleteContact(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.deleteContact(t || u, id);
   }
   @Get('crisis-contacts')
   getAllContacts(

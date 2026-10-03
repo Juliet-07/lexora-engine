@@ -38,6 +38,10 @@ import {
 } from './schemas';
 import { HrTeam, HrTeamSchema } from 'src/modules/hr/schemas/hr.schema';
 import {
+  Employee,
+  EmployeeSchema,
+} from 'src/modules/hr/schemas/employee.schema';
+import {
   Vendor as CrmVendor,
   VendorSchema as CrmVendorSchema,
 } from 'src/modules/crm/crm/schemas/vendor.schema';
@@ -83,6 +87,7 @@ import {
       { name: BcpTestFinding.name, schema: BcpTestFindingSchema },
       { name: EmergingRisk.name, schema: EmergingRiskSchema },
       { name: HrTeam.name, schema: HrTeamSchema },
+      { name: Employee.name, schema: EmployeeSchema },
       { name: CrmVendor.name, schema: CrmVendorSchema },
     ]),
   ],

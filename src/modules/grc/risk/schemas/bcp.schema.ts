@@ -34,6 +34,11 @@ export enum BcpPlanStatus {
   UNDER_REVIEW = 'Under review',
   APPROVED = 'Approved',
 }
+export enum ReviewCycle {
+  QUARTERLY = 'Quarterly',
+  ANNUAL = 'Annual',
+  BIENNIAL = 'Biennial',
+}
 export enum AttestationStatus {
   NOT_YET_REQUESTED = 'Not yet requested',
   PENDING = 'Requested - pending',
@@ -75,12 +80,20 @@ export class BcpPlan {
   @Prop({ required: true }) content: string;
   @Prop({ default: '' }) scope: string;
   @Prop({ default: '' }) owner: string;
+  // Always starts Draft on creation, regardless of what's passed in —
+  // status is system-managed, there's no "set status" input on the
+  // create dialog (PO feedback, Oct 2026).
   @Prop({ enum: BcpPlanStatus, default: BcpPlanStatus.DRAFT })
   status: BcpPlanStatus;
   // 0..6, index into the fixed 7-stage lifecycle the frontend renders
   // (BIA → Draft → Stakeholder review → Board approval → Implementation
   // & training → Test & validate → Annual review).
   @Prop({ default: 0 }) phase: number;
+  // Recurring review cadence, replacing a one-off "next review date"
+  // input on the create dialog (PO feedback, Oct 2026). nextReviewDate
+  // is kept for any pre-existing plans / future computed-date use but
+  // is no longer collected from the frontend.
+  @Prop({ enum: ReviewCycle, default: null }) reviewCycle: ReviewCycle | null;
   @Prop({ default: null }) nextReviewDate: Date | null;
 }
 export const BcpPlanSchema = SchemaFactory.createForClass(BcpPlan);
@@ -149,15 +162,25 @@ export class RtoRpo {
 }
 export const RtoRpoSchema = SchemaFactory.createForClass(RtoRpo);
 
+// Crisis Management Team roster — one row per role, each with a
+// Primary and (optional) Backup pulled from the tenant's real HR
+// employee directory. primaryEmployeeId/backupEmployeeId are the
+// source of truth; primaryName/backupName are server-resolved display
+// snapshots taken at create/update time (same pattern as BIA's
+// departmentId/dept and VendorResilience's crmVendorId/name), so a
+// later employee record change doesn't silently rewrite the roster.
 @Schema({ timestamps: true, collection: 'grc_crisis_contacts' })
 export class CrisisContact {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   tenantId: Types.ObjectId;
 
-  @Prop({ required: true, trim: true }) name: string;
-  @Prop({ default: '' }) role: string;
-  @Prop({ required: true }) phone: string;
-  @Prop({ required: true }) escalationOrder: number;
+  @Prop({ required: true, trim: true }) role: string;
+  @Prop({ type: Types.ObjectId, ref: 'Employee', default: null })
+  primaryEmployeeId: Types.ObjectId | null;
+  @Prop({ default: '' }) primaryName: string;
+  @Prop({ type: Types.ObjectId, ref: 'Employee', default: null })
+  backupEmployeeId: Types.ObjectId | null;
+  @Prop({ default: '' }) backupName: string;
 }
 export const CrisisContactSchema = SchemaFactory.createForClass(CrisisContact);
 

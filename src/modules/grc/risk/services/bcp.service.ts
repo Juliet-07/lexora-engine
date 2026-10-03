@@ -32,6 +32,7 @@ import {
   CreateRtoRpoDto,
   RecordRtoRpoActualDto,
   CreateCrisisContactDto,
+  UpdateCrisisContactDto,
   CreateBiaProcessDto,
   CreateVendorResilienceDto,
   DeclareBcpIncidentDto,
@@ -39,6 +40,10 @@ import {
   CreateBcpTestFindingDto,
 } from '../dtos';
 import { HrTeam, HrTeamDocument } from 'src/modules/hr/schemas/hr.schema';
+import {
+  Employee,
+  EmployeeDocument,
+} from 'src/modules/hr/schemas/employee.schema';
 import {
   Vendor as CrmVendor,
   VendorDocument as CrmVendorDocument,
@@ -67,14 +72,26 @@ export class BcpService {
     private readonly reportModel: Model<BcpReportDocument>,
     @InjectModel(HrTeam.name)
     private readonly teamModel: Model<HrTeamDocument>,
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
     @InjectModel(CrmVendor.name)
     private readonly crmVendorModel: Model<CrmVendorDocument>,
   ) {}
 
   async createPlan(tenantId: string, dto: CreateBcpPlanDto) {
+    // Built explicitly (not `...dto`) so a plan can never be created
+    // with anything but the system-default Draft status, regardless of
+    // what the DTO carries — status is system-managed from here (PO
+    // feedback, Oct 2026).
     return this.planModel.create({
       tenantId: new Types.ObjectId(tenantId),
-      ...dto,
+      title: dto.title,
+      version: dto.version ?? 1,
+      content: dto.content,
+      scope: dto.scope ?? '',
+      owner: dto.owner ?? '',
+      phase: dto.phase ?? 0,
+      reviewCycle: dto.reviewCycle ?? null,
       nextReviewDate: dto.nextReviewDate ? new Date(dto.nextReviewDate) : null,
     });
   }
@@ -173,16 +190,78 @@ export class BcpService {
       .lean();
   }
 
+  private async resolveEmployeeName(
+    tenantId: string,
+    employeeId: string | undefined,
+  ): Promise<{ id: Types.ObjectId | null; name: string }> {
+    if (!employeeId) return { id: null, name: '' };
+    const emp = await this.employeeModel
+      .findOne({ _id: employeeId, tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+    if (!emp) return { id: null, name: '' };
+    return {
+      id: new Types.ObjectId(employeeId),
+      name: `${emp.firstName} ${emp.lastName}`,
+    };
+  }
+
   async createContact(tenantId: string, dto: CreateCrisisContactDto) {
+    const primary = await this.resolveEmployeeName(
+      tenantId,
+      dto.primaryEmployeeId,
+    );
+    const backup = await this.resolveEmployeeName(
+      tenantId,
+      dto.backupEmployeeId,
+    );
     return this.contactModel.create({
       tenantId: new Types.ObjectId(tenantId),
-      ...dto,
+      role: dto.role,
+      primaryEmployeeId: primary.id,
+      primaryName: primary.name,
+      backupEmployeeId: backup.id,
+      backupName: backup.name,
+    });
+  }
+  async updateContact(
+    tenantId: string,
+    id: string,
+    dto: UpdateCrisisContactDto,
+  ) {
+    const update: Record<string, unknown> = {};
+    if (dto.role !== undefined) update.role = dto.role;
+    if (dto.primaryEmployeeId !== undefined) {
+      const primary = await this.resolveEmployeeName(
+        tenantId,
+        dto.primaryEmployeeId || undefined,
+      );
+      update.primaryEmployeeId = primary.id;
+      update.primaryName = primary.name;
+    }
+    if (dto.backupEmployeeId !== undefined) {
+      const backup = await this.resolveEmployeeName(
+        tenantId,
+        dto.backupEmployeeId || undefined,
+      );
+      update.backupEmployeeId = backup.id;
+      update.backupName = backup.name;
+    }
+    return this.contactModel.findOneAndUpdate(
+      { _id: id, tenantId: new Types.ObjectId(tenantId) },
+      update,
+      { new: true },
+    );
+  }
+  async deleteContact(tenantId: string, id: string) {
+    return this.contactModel.findOneAndDelete({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
     });
   }
   async getAllContacts(tenantId: string) {
     return this.contactModel
       .find({ tenantId: new Types.ObjectId(tenantId) })
-      .sort({ escalationOrder: 1 })
+      .sort({ createdAt: 1 })
       .lean();
   }
 
