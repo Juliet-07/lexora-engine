@@ -139,14 +139,42 @@ export class OverviewService {
     return { incidents, audits };
   }
 
+  // Extended (PO feedback, Oct 2026) to carry every BCP/DR dataset the
+  // module has grown since this aggregation was first written — BIA
+  // processes, vendor resilience, incidents and test findings all
+  // exist as real tenant records now (see BcpService) but were never
+  // added here, so GRC Reporting's "Business Continuity & DR" report
+  // was missing them entirely.
   private async getThirdPartyBcp(tenantId: string) {
-    const [bcpPlans, bcpTests, rtoRpo, crisisContacts] = await Promise.all([
+    const [
+      bcpPlans,
+      bcpTests,
+      testFindings,
+      rtoRpo,
+      crisisContacts,
+      biaProcesses,
+      vendorResilience,
+      bcpIncidents,
+    ] = await Promise.all([
       this.bcpService.getAllPlans(tenantId),
       this.bcpService.getAllTests(tenantId),
+      this.bcpService.getAllFindings(tenantId),
       this.bcpService.getAllRtoRpo(tenantId),
       this.bcpService.getAllContacts(tenantId),
+      this.bcpService.getAllProcesses(tenantId),
+      this.bcpService.getAllVendorResilience(tenantId),
+      this.bcpService.getAllIncidents(tenantId),
     ]);
-    return { bcpPlans, bcpTests, rtoRpo, crisisContacts };
+    return {
+      bcpPlans,
+      bcpTests,
+      testFindings,
+      rtoRpo,
+      crisisContacts,
+      biaProcesses,
+      vendorResilience,
+      bcpIncidents,
+    };
   }
 
   private async getCompliance(tenantId: string) {

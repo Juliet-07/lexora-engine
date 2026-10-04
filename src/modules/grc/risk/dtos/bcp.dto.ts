@@ -68,6 +68,20 @@ export class AdvancePlanPhaseDto {
   direction: 'next' | 'back';
 }
 
+// Editing the plan's own content — title/scope/key procedures/review
+// cycle. Status and phase are deliberately excluded: those go through
+// SetPlanStatusDto/AdvancePlanPhaseDto's own one-step-at-a-time
+// endpoints, not a freeform field edit.
+export class UpdateBcpPlanDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() title?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() content?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() scope?: string;
+  @ApiPropertyOptional({ enum: ReviewCycle })
+  @IsOptional()
+  @IsEnum(ReviewCycle)
+  reviewCycle?: ReviewCycle;
+}
+
 export class CreateBcpTestDto {
   @ApiProperty() @IsString() scenario: string;
   @ApiPropertyOptional() @IsOptional() @IsString() planId?: string;
@@ -140,6 +154,31 @@ export class CreateBiaProcessDto {
   @ApiPropertyOptional() @IsOptional() @IsString() dept?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
   @ApiProperty({ enum: Severity }) @IsEnum(Severity) criticality: Severity;
+  @ApiPropertyOptional() @IsOptional() @IsString() mtd?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() impactPerDay?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() nonFinancialImpact?: string;
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  dependencies?: string[];
+  @ApiPropertyOptional() @IsOptional() @IsString() linkedPlanId?: string;
+}
+
+// Lets the tenant retroactively link (or relink/unlink) a continuity
+// plan onto a process created before that plan existed, plus edit any
+// other field — see BcpService#updateProcess. An empty string for
+// departmentId/linkedPlanId clears that link, matching
+// UpdateCrisisContactDto's convention; undefined leaves it unchanged.
+export class UpdateBiaProcessDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() name?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() departmentId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() dept?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
+  @ApiPropertyOptional({ enum: Severity })
+  @IsOptional()
+  @IsEnum(Severity)
+  criticality?: Severity;
   @ApiPropertyOptional() @IsOptional() @IsString() mtd?: string;
   @ApiPropertyOptional() @IsOptional() @IsNumber() impactPerDay?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() nonFinancialImpact?: string;

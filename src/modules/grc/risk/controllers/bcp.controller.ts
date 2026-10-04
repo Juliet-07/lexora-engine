@@ -13,6 +13,7 @@ import {
   CreateBcpPlanDto,
   SetPlanStatusDto,
   AdvancePlanPhaseDto,
+  UpdateBcpPlanDto,
   CreateBcpTestDto,
   CompleteBcpTestDto,
   CreateRtoRpoDto,
@@ -20,6 +21,7 @@ import {
   CreateCrisisContactDto,
   UpdateCrisisContactDto,
   CreateBiaProcessDto,
+  UpdateBiaProcessDto,
   CreateVendorResilienceDto,
   DeclareBcpIncidentDto,
   CreateBcpReportDto,
@@ -72,6 +74,23 @@ export class BcpController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.bcpService.advancePlanPhase(t || u, id, dto);
+  }
+  @Patch('plans/:id')
+  updatePlan(
+    @Param('id') id: string,
+    @Body() dto: UpdateBcpPlanDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.updatePlan(t || u, id, dto);
+  }
+  @Delete('plans/:id')
+  deletePlan(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.deletePlan(t || u, id);
   }
 
   @Post('tests')
@@ -195,6 +214,23 @@ export class BcpController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.bcpService.getAllProcesses(t || u);
+  }
+  @Patch('processes/:id')
+  updateProcess(
+    @Param('id') id: string,
+    @Body() dto: UpdateBiaProcessDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.updateProcess(t || u, id, dto);
+  }
+  @Delete('processes/:id')
+  deleteProcess(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.deleteProcess(t || u, id);
   }
 
   @Post('vendor-resilience')

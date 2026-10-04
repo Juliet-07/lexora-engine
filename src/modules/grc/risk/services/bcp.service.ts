@@ -34,6 +34,7 @@ import {
   CreateBcpPlanDto,
   SetPlanStatusDto,
   AdvancePlanPhaseDto,
+  UpdateBcpPlanDto,
   CreateBcpTestDto,
   CompleteBcpTestDto,
   CreateRtoRpoDto,
@@ -41,6 +42,7 @@ import {
   CreateCrisisContactDto,
   UpdateCrisisContactDto,
   CreateBiaProcessDto,
+  UpdateBiaProcessDto,
   CreateVendorResilienceDto,
   DeclareBcpIncidentDto,
   CreateBcpReportDto,
@@ -164,6 +166,30 @@ export class BcpService {
     }
     plan.phase = next;
     await plan.save();
+    return plan;
+  }
+
+  async updatePlan(tenantId: string, id: string, dto: UpdateBcpPlanDto) {
+    const update: Record<string, unknown> = {};
+    if (dto.title !== undefined) update.title = dto.title;
+    if (dto.content !== undefined) update.content = dto.content;
+    if (dto.scope !== undefined) update.scope = dto.scope;
+    if (dto.reviewCycle !== undefined) update.reviewCycle = dto.reviewCycle;
+    const plan = await this.planModel.findOneAndUpdate(
+      { _id: id, tenantId: new Types.ObjectId(tenantId) },
+      update,
+      { new: true },
+    );
+    if (!plan) throw new NotFoundException('Plan not found');
+    return plan;
+  }
+
+  async deletePlan(tenantId: string, id: string) {
+    const plan = await this.planModel.findOneAndDelete({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!plan) throw new NotFoundException('Plan not found');
     return plan;
   }
 
@@ -364,6 +390,62 @@ export class BcpService {
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
+  }
+
+  // Lets the tenant retroactively link a continuity plan onto a
+  // process that was created before that plan existed (or edit any
+  // other field) — PO feedback, Oct 2026. Same resolved-dept-snapshot
+  // handling as createProcess; an empty string for
+  // departmentId/linkedPlanId clears that link, undefined leaves it
+  // unchanged, matching UpdateCrisisContactDto's convention.
+  async updateProcess(tenantId: string, id: string, dto: UpdateBiaProcessDto) {
+    const update: Record<string, unknown> = {};
+    if (dto.name !== undefined) update.name = dto.name;
+    if (dto.departmentId !== undefined) {
+      if (dto.departmentId) {
+        const team = await this.teamModel
+          .findOne({
+            _id: dto.departmentId,
+            tenantId: new Types.ObjectId(tenantId),
+          })
+          .lean();
+        update.departmentId = new Types.ObjectId(dto.departmentId);
+        update.dept = team ? team.name : (dto.dept ?? '');
+      } else {
+        update.departmentId = null;
+        update.dept = dto.dept ?? '';
+      }
+    } else if (dto.dept !== undefined) {
+      update.dept = dto.dept;
+    }
+    if (dto.owner !== undefined) update.owner = dto.owner;
+    if (dto.criticality !== undefined) update.criticality = dto.criticality;
+    if (dto.mtd !== undefined) update.mtd = dto.mtd;
+    if (dto.impactPerDay !== undefined) update.impactPerDay = dto.impactPerDay;
+    if (dto.nonFinancialImpact !== undefined)
+      update.nonFinancialImpact = dto.nonFinancialImpact;
+    if (dto.dependencies !== undefined) update.dependencies = dto.dependencies;
+    if (dto.linkedPlanId !== undefined) {
+      update.linkedPlanId = dto.linkedPlanId
+        ? new Types.ObjectId(dto.linkedPlanId)
+        : null;
+    }
+    const process = await this.processModel.findOneAndUpdate(
+      { _id: id, tenantId: new Types.ObjectId(tenantId) },
+      update,
+      { new: true },
+    );
+    if (!process) throw new NotFoundException('Process not found');
+    return process;
+  }
+
+  async deleteProcess(tenantId: string, id: string) {
+    const process = await this.processModel.findOneAndDelete({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!process) throw new NotFoundException('Process not found');
+    return process;
   }
 
   async createVendorResilience(
