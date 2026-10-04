@@ -5,12 +5,19 @@ import {
   IsEnum,
   IsDateString,
   IsArray,
+  IsInt,
+  Min,
+  Max,
 } from 'class-validator';
 import {
   AuditType,
   AuditEngagementStatus,
   FindingSeverity,
   FindingStatus,
+  AuditPriority,
+  InherentRiskLevel,
+  WorkingPaperStatus,
+  CommitteeActionStatus,
 } from '../schemas';
 
 export class CreateAuditDto {
@@ -88,4 +95,98 @@ export class UpdateFindingDto {
   @IsOptional()
   @IsEnum(FindingStatus)
   status?: FindingStatus;
+  // ── Reporting-tab metadata, previously client-only (AuditDetail.tsx
+  // findingMeta) — see AuditFinding schema comment. ──
+  @ApiPropertyOptional() @IsOptional() @IsString() ref?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() process?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() evidence?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() verifiedBy?: string;
+}
+
+// ── Planning tab ──
+export class UpdatePlanningDto {
+  @ApiPropertyOptional({ enum: AuditPriority })
+  @IsOptional()
+  @IsEnum(AuditPriority)
+  priority?: AuditPriority;
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  riskAreas?: string[];
+  @ApiPropertyOptional() @IsOptional() @IsString() budget?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() committeeDate?: string;
+}
+
+export class AddObjectiveDto {
+  @ApiProperty() @IsString() objective: string;
+}
+
+export class AddRiskAreaDto {
+  @ApiProperty() @IsString() area: string;
+}
+
+export class AddRiskAssessmentDto {
+  @ApiProperty() @IsString() area: string;
+  @ApiProperty({ enum: InherentRiskLevel })
+  @IsEnum(InherentRiskLevel)
+  inherent: InherentRiskLevel;
+  @ApiPropertyOptional() @IsOptional() @IsString() controls?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() approach?: string;
+}
+
+// ── Fieldwork tab ──
+export class AddProgressDto {
+  @ApiProperty() @IsString() area: string;
+}
+
+export class UpdateProgressDto {
+  @ApiProperty() @IsInt() @Min(0) @Max(100) pct: number;
+}
+
+export class AddSampleDto {
+  @ApiProperty() @IsString() population: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() size?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() method?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() dates?: string;
+}
+
+export class AddNoteDto {
+  @ApiProperty() @IsString() title: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() detail?: string;
+}
+
+export class AddWorkingPaperDto {
+  @ApiProperty() @IsString() desc: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() preparer?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() reviewer?: string;
+}
+
+export class UpdateWorkingPaperDto {
+  @ApiProperty({ enum: WorkingPaperStatus })
+  @IsEnum(WorkingPaperStatus)
+  status: WorkingPaperStatus;
+}
+
+// ── Reporting tab ──
+export class SetReportStageDto {
+  @ApiProperty() @IsInt() @Min(0) @Max(4) stage: number;
+}
+
+// ── Committee tab ──
+export class SetExecSummaryDto {
+  @ApiProperty() @IsString() execSummary: string;
+}
+
+export class AddCommitteeActionDto {
+  @ApiProperty() @IsString() action: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() due?: string;
+}
+
+export class UpdateCommitteeActionDto {
+  @ApiProperty({ enum: CommitteeActionStatus })
+  @IsEnum(CommitteeActionStatus)
+  status: CommitteeActionStatus;
 }

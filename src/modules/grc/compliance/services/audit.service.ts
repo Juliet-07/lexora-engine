@@ -26,6 +26,20 @@ import {
   ResolveRequestDto,
   AddFindingDto,
   UpdateFindingDto,
+  UpdatePlanningDto,
+  AddObjectiveDto,
+  AddRiskAreaDto,
+  AddRiskAssessmentDto,
+  AddProgressDto,
+  UpdateProgressDto,
+  AddSampleDto,
+  AddNoteDto,
+  AddWorkingPaperDto,
+  UpdateWorkingPaperDto,
+  SetReportStageDto,
+  SetExecSummaryDto,
+  AddCommitteeActionDto,
+  UpdateCommitteeActionDto,
 } from '../dtos';
 import { HrTeam, HrTeamDocument } from 'src/modules/hr/schemas';
 import {
@@ -142,10 +156,41 @@ export class AuditService {
       .sort({ createdAt: -1 })
       .lean();
     // .lean() skips Mongoose's schema-default hydration, so an
-    // engagement created before `folders` existed on the schema comes
-    // back with no `folders` field at all rather than `[]` — normalize
-    // it here rather than requiring a DB migration for old documents.
-    return list.map((e) => ({ ...e, folders: e.folders ?? [] }));
+    // engagement created before a field existed on the schema comes
+    // back with that field missing entirely rather than its default —
+    // normalize every such field here rather than requiring a DB
+    // migration for old documents (same read-path-normalization
+    // pattern used throughout this codebase: folders below, Board
+    // Management, Governance Codes, etc.). Covers everything added in
+    // the Extras-layer backend migration (priority/riskAreas/
+    // objectives/committeeDate/budget/riskAssessment/progress/samples/
+    // notes/workingPapers/reportStage/execSummary/committeeActions),
+    // plus the new per-finding fields.
+    return list.map((e) => ({
+      ...e,
+      folders: e.folders ?? [],
+      priority: e.priority ?? 'Normal',
+      riskAreas: e.riskAreas ?? [],
+      objectives: e.objectives ?? [],
+      committeeDate: e.committeeDate ?? null,
+      budget: e.budget ?? '',
+      riskAssessment: e.riskAssessment ?? [],
+      progress: e.progress ?? [],
+      samples: e.samples ?? [],
+      notes: e.notes ?? [],
+      workingPapers: e.workingPapers ?? [],
+      reportStage: e.reportStage ?? 0,
+      execSummary: e.execSummary ?? '',
+      committeeActions: e.committeeActions ?? [],
+      findings: (e.findings ?? []).map((f: any) => ({
+        ...f,
+        ref: f.ref ?? '',
+        owner: f.owner ?? '',
+        process: f.process ?? '',
+        evidence: f.evidence ?? '',
+        verifiedBy: f.verifiedBy ?? '',
+      })),
+    }));
   }
 
   private async getRawDoc(
@@ -441,7 +486,7 @@ export class AuditService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // FINDINGS — unchanged this round
+  // FINDINGS
   // ═══════════════════════════════════════════════════════════
 
   async addFinding(tenantId: string, id: string, dto: AddFindingDto) {
@@ -458,6 +503,13 @@ export class AuditService {
       managementResponse: '',
       remediationDueDate: null,
       createdAt: new Date(),
+      // Server-generated, matching the "WP-01"/"F-01" convention used
+      // elsewhere on this doc — never client-supplied.
+      ref: `F-${String(a.findings.length + 1).padStart(2, '0')}`,
+      owner: '',
+      process: '',
+      evidence: '',
+      verifiedBy: '',
     } as any);
     a.markModified('findings');
     await a.save();
@@ -478,7 +530,216 @@ export class AuditService {
     if (dto.remediationDueDate !== undefined)
       f.remediationDueDate = new Date(dto.remediationDueDate);
     if (dto.status !== undefined) f.status = dto.status;
+    if (dto.owner !== undefined) (f as any).owner = dto.owner;
+    if (dto.process !== undefined) (f as any).process = dto.process;
+    if (dto.evidence !== undefined) (f as any).evidence = dto.evidence;
+    if (dto.verifiedBy !== undefined) (f as any).verifiedBy = dto.verifiedBy;
     a.markModified('findings');
+    await a.save();
+    return a;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // PLANNING TAB — previously the client-only `Extras` layer
+  // (localStorage, see AGENTS.md). Migrated to real fields so the
+  // scope statement, risk areas and preliminary risk assessment
+  // persist server-side, are shared across the team, and (for risk
+  // areas / risk assessment) actually have an "Add" control at all.
+  // ═══════════════════════════════════════════════════════════
+
+  async updatePlanning(tenantId: string, id: string, dto: UpdatePlanningDto) {
+    const a = await this.getRawDoc(tenantId, id);
+    if (dto.priority !== undefined) a.priority = dto.priority;
+    if (dto.riskAreas !== undefined) a.riskAreas = dto.riskAreas;
+    if (dto.budget !== undefined) a.budget = dto.budget;
+    if (dto.committeeDate !== undefined)
+      a.committeeDate = dto.committeeDate ? new Date(dto.committeeDate) : null;
+    a.markModified('riskAreas');
+    await a.save();
+    return a;
+  }
+
+  async addObjective(tenantId: string, id: string, dto: AddObjectiveDto) {
+    const a = await this.getRawDoc(tenantId, id);
+    const objective = dto.objective?.trim();
+    if (!objective) throw new BadRequestException('Objective is required.');
+    a.objectives.push(objective);
+    a.markModified('objectives');
+    await a.save();
+    return a;
+  }
+
+  async addRiskArea(tenantId: string, id: string, dto: AddRiskAreaDto) {
+    const a = await this.getRawDoc(tenantId, id);
+    const area = dto.area?.trim();
+    if (!area) throw new BadRequestException('Risk area is required.');
+    if (!a.riskAreas.includes(area)) a.riskAreas.push(area);
+    a.markModified('riskAreas');
+    await a.save();
+    return a;
+  }
+
+  async addRiskAssessment(
+    tenantId: string,
+    id: string,
+    dto: AddRiskAssessmentDto,
+  ) {
+    const a = await this.getRawDoc(tenantId, id);
+    a.riskAssessment.push({
+      area: dto.area,
+      inherent: dto.inherent,
+      controls: dto.controls ?? '',
+      approach: dto.approach ?? '',
+    } as any);
+    a.markModified('riskAssessment');
+    await a.save();
+    return a;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // FIELDWORK TAB
+  // ═══════════════════════════════════════════════════════════
+
+  async addProgress(tenantId: string, id: string, dto: AddProgressDto) {
+    const a = await this.getRawDoc(tenantId, id);
+    const area = dto.area?.trim();
+    if (!area) throw new BadRequestException('Workstream area is required.');
+    a.progress.push({ area, pct: 0 } as any);
+    a.markModified('progress');
+    await a.save();
+    return a;
+  }
+
+  async updateProgress(
+    tenantId: string,
+    id: string,
+    index: number,
+    dto: UpdateProgressDto,
+  ) {
+    const a = await this.getRawDoc(tenantId, id);
+    const p = a.progress[index];
+    if (!p) throw new NotFoundException('Workstream not found');
+    p.pct = dto.pct;
+    a.markModified('progress');
+    await a.save();
+    return a;
+  }
+
+  // Previously a dead end — the frontend rendered this table from
+  // local state with no way to add a row at all (the compliance
+  // feedback this migration was prompted by).
+  async addSample(tenantId: string, id: string, dto: AddSampleDto) {
+    const a = await this.getRawDoc(tenantId, id);
+    const population = dto.population?.trim();
+    if (!population) throw new BadRequestException('Population is required.');
+    a.samples.push({
+      population,
+      size: dto.size ?? '',
+      method: dto.method ?? '',
+      dates: dto.dates ?? '',
+    } as any);
+    a.markModified('samples');
+    await a.save();
+    return a;
+  }
+
+  async addNote(tenantId: string, id: string, dto: AddNoteDto) {
+    const a = await this.getRawDoc(tenantId, id);
+    const title = dto.title?.trim();
+    if (!title) throw new BadRequestException('Title is required.');
+    a.notes.push({
+      date: new Date(),
+      title,
+      detail: dto.detail ?? '',
+    } as any);
+    a.markModified('notes');
+    await a.save();
+    return a;
+  }
+
+  async addWorkingPaper(tenantId: string, id: string, dto: AddWorkingPaperDto) {
+    const a = await this.getRawDoc(tenantId, id);
+    const desc = dto.desc?.trim();
+    if (!desc) throw new BadRequestException('Description is required.');
+    a.workingPapers.push({
+      ref: `WP-${String(a.workingPapers.length + 1).padStart(2, '0')}`,
+      desc,
+      preparer: dto.preparer ?? '',
+      reviewer: dto.reviewer ?? '',
+      status: 'Draft',
+    } as any);
+    a.markModified('workingPapers');
+    await a.save();
+    return a;
+  }
+
+  async updateWorkingPaper(
+    tenantId: string,
+    id: string,
+    index: number,
+    dto: UpdateWorkingPaperDto,
+  ) {
+    const a = await this.getRawDoc(tenantId, id);
+    const wp = a.workingPapers[index];
+    if (!wp) throw new NotFoundException('Working paper not found');
+    wp.status = dto.status;
+    a.markModified('workingPapers');
+    await a.save();
+    return a;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // REPORTING TAB
+  // ═══════════════════════════════════════════════════════════
+
+  async setReportStage(tenantId: string, id: string, dto: SetReportStageDto) {
+    const a = await this.getRawDoc(tenantId, id);
+    a.reportStage = dto.stage;
+    await a.save();
+    return a;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // COMMITTEE TAB
+  // ═══════════════════════════════════════════════════════════
+
+  async setExecSummary(tenantId: string, id: string, dto: SetExecSummaryDto) {
+    const a = await this.getRawDoc(tenantId, id);
+    a.execSummary = dto.execSummary;
+    await a.save();
+    return a;
+  }
+
+  async addCommitteeAction(
+    tenantId: string,
+    id: string,
+    dto: AddCommitteeActionDto,
+  ) {
+    const a = await this.getRawDoc(tenantId, id);
+    const action = dto.action?.trim();
+    if (!action) throw new BadRequestException('Action is required.');
+    a.committeeActions.push({
+      action,
+      owner: dto.owner ?? '',
+      due: dto.due ? new Date(dto.due) : null,
+      status: 'To be raised',
+    } as any);
+    a.markModified('committeeActions');
+    await a.save();
+    return a;
+  }
+
+  async updateCommitteeAction(
+    tenantId: string,
+    id: string,
+    index: number,
+    dto: UpdateCommitteeActionDto,
+  ) {
+    const a = await this.getRawDoc(tenantId, id);
+    const ca = a.committeeActions[index];
+    if (!ca) throw new NotFoundException('Committee action not found');
+    ca.status = dto.status;
+    a.markModified('committeeActions');
     await a.save();
     return a;
   }

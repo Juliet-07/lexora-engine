@@ -30,6 +30,20 @@ import {
   ResolveRequestDto,
   AddFindingDto,
   UpdateFindingDto,
+  UpdatePlanningDto,
+  AddObjectiveDto,
+  AddRiskAreaDto,
+  AddRiskAssessmentDto,
+  AddProgressDto,
+  UpdateProgressDto,
+  AddSampleDto,
+  AddNoteDto,
+  AddWorkingPaperDto,
+  UpdateWorkingPaperDto,
+  SetReportStageDto,
+  SetExecSummaryDto,
+  AddCommitteeActionDto,
+  UpdateCommitteeActionDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -241,5 +255,152 @@ export class AuditController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.updateFinding(t || u, id, Number(index), dto);
+  }
+
+  // ── Planning tab ───────────────────────────────────────────────
+  @Patch(':id/planning')
+  updatePlanning(
+    @Param('id') id: string,
+    @Body() dto: UpdatePlanningDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updatePlanning(t || u, id, dto);
+  }
+
+  @Post(':id/objectives')
+  addObjective(
+    @Param('id') id: string,
+    @Body() dto: AddObjectiveDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addObjective(t || u, id, dto);
+  }
+
+  @Post(':id/risk-areas')
+  addRiskArea(
+    @Param('id') id: string,
+    @Body() dto: AddRiskAreaDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addRiskArea(t || u, id, dto);
+  }
+
+  @Post(':id/risk-assessment')
+  addRiskAssessment(
+    @Param('id') id: string,
+    @Body() dto: AddRiskAssessmentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addRiskAssessment(t || u, id, dto);
+  }
+
+  // ── Fieldwork tab ──────────────────────────────────────────────
+  @Post(':id/progress')
+  addProgress(
+    @Param('id') id: string,
+    @Body() dto: AddProgressDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addProgress(t || u, id, dto);
+  }
+
+  @Patch(':id/progress/:index')
+  updateProgress(
+    @Param('id') id: string,
+    @Param('index') index: string,
+    @Body() dto: UpdateProgressDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateProgress(t || u, id, Number(index), dto);
+  }
+
+  @Post(':id/samples')
+  addSample(
+    @Param('id') id: string,
+    @Body() dto: AddSampleDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addSample(t || u, id, dto);
+  }
+
+  @Post(':id/notes')
+  addNote(
+    @Param('id') id: string,
+    @Body() dto: AddNoteDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addNote(t || u, id, dto);
+  }
+
+  @Post(':id/working-papers')
+  addWorkingPaper(
+    @Param('id') id: string,
+    @Body() dto: AddWorkingPaperDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addWorkingPaper(t || u, id, dto);
+  }
+
+  @Patch(':id/working-papers/:index')
+  updateWorkingPaper(
+    @Param('id') id: string,
+    @Param('index') index: string,
+    @Body() dto: UpdateWorkingPaperDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateWorkingPaper(t || u, id, Number(index), dto);
+  }
+
+  // ── Reporting tab ──────────────────────────────────────────────
+  @Patch(':id/report-stage')
+  setReportStage(
+    @Param('id') id: string,
+    @Body() dto: SetReportStageDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.setReportStage(t || u, id, dto);
+  }
+
+  // ── Committee tab ──────────────────────────────────────────────
+  @Patch(':id/exec-summary')
+  setExecSummary(
+    @Param('id') id: string,
+    @Body() dto: SetExecSummaryDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.setExecSummary(t || u, id, dto);
+  }
+
+  @Post(':id/committee-actions')
+  addCommitteeAction(
+    @Param('id') id: string,
+    @Body() dto: AddCommitteeActionDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addCommitteeAction(t || u, id, dto);
+  }
+
+  @Patch(':id/committee-actions/:index')
+  updateCommitteeAction(
+    @Param('id') id: string,
+    @Param('index') index: string,
+    @Body() dto: UpdateCommitteeActionDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateCommitteeAction(t || u, id, Number(index), dto);
   }
 }
