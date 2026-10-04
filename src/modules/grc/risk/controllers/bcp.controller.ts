@@ -11,6 +11,8 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { BcpService } from '../services';
 import {
   CreateBcpPlanDto,
+  SetPlanStatusDto,
+  AdvancePlanPhaseDto,
   CreateBcpTestDto,
   CompleteBcpTestDto,
   CreateRtoRpoDto,
@@ -52,6 +54,24 @@ export class BcpController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.bcpService.getAllPlans(t || u);
+  }
+  @Patch('plans/:id/status')
+  setPlanStatus(
+    @Param('id') id: string,
+    @Body() dto: SetPlanStatusDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.setPlanStatus(t || u, id, dto);
+  }
+  @Patch('plans/:id/phase')
+  advancePlanPhase(
+    @Param('id') id: string,
+    @Body() dto: AdvancePlanPhaseDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.advancePlanPhase(t || u, id, dto);
   }
 
   @Post('tests')

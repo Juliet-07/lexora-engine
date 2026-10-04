@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -24,9 +28,12 @@ import {
   AttestationStatus,
   AlternateVendorStatus,
   BcpFindingStatus,
+  BcpPlanStatus,
 } from '../schemas';
 import {
   CreateBcpPlanDto,
+  SetPlanStatusDto,
+  AdvancePlanPhaseDto,
   CreateBcpTestDto,
   CompleteBcpTestDto,
   CreateRtoRpoDto,
@@ -100,6 +107,64 @@ export class BcpService {
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
+  }
+
+  // One legal step at a time, driven by an explicit action button in
+  // the plan detail drawer (Send for review / Approve / Back to draft
+  // / Reopen for review) — not a freeform status field, so an
+  // out-of-sequence jump (Draft straight to Approved) is rejected
+  // even if something sends it.
+  private static readonly PLAN_STATUS_TRANSITIONS: Record<
+    BcpPlanStatus,
+    BcpPlanStatus[]
+  > = {
+    [BcpPlanStatus.DRAFT]: [BcpPlanStatus.UNDER_REVIEW],
+    [BcpPlanStatus.UNDER_REVIEW]: [BcpPlanStatus.APPROVED, BcpPlanStatus.DRAFT],
+    [BcpPlanStatus.APPROVED]: [BcpPlanStatus.UNDER_REVIEW],
+  };
+
+  async setPlanStatus(tenantId: string, id: string, dto: SetPlanStatusDto) {
+    const plan = await this.planModel.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!plan) throw new NotFoundException('Plan not found');
+    const allowed = BcpService.PLAN_STATUS_TRANSITIONS[plan.status] ?? [];
+    if (!allowed.includes(dto.status)) {
+      throw new BadRequestException(
+        `A plan in "${plan.status}" can't move directly to "${dto.status}".`,
+      );
+    }
+    plan.status = dto.status;
+    await plan.save();
+    return plan;
+  }
+
+  async advancePlanPhase(
+    tenantId: string,
+    id: string,
+    dto: AdvancePlanPhaseDto,
+  ) {
+    const plan = await this.planModel.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!plan) throw new NotFoundException('Plan not found');
+    const maxPhase = 6; // LIFECYCLE.length - 1 on the frontend
+    const next =
+      dto.direction === 'next'
+        ? Math.min(plan.phase + 1, maxPhase)
+        : Math.max(plan.phase - 1, 0);
+    if (next === plan.phase) {
+      throw new BadRequestException(
+        dto.direction === 'next'
+          ? 'Already at the final lifecycle stage.'
+          : 'Already at the first lifecycle stage.',
+      );
+    }
+    plan.phase = next;
+    await plan.save();
+    return plan;
   }
 
   async createTest(tenantId: string, dto: CreateBcpTestDto) {

@@ -48,6 +48,26 @@ export class CreateBcpPlanDto {
   @ApiPropertyOptional() @IsOptional() @IsDateString() nextReviewDate?: string;
 }
 
+// A plan's status/phase are never collected from the tenant on
+// create (see CreateBcpPlanDto's comments) — this is the
+// status-change endpoint those comments anticipated. Each field is
+// an explicit, standalone action button (Send for review / Approve /
+// Back to draft / Reopen, Advance stage / Move back a stage) in the
+// plan detail drawer, not a freeform field edit — BcpService#setPlanStatus
+// / #advancePlanPhase validate that the requested change is one
+// legal step, not an arbitrary jump.
+export class SetPlanStatusDto {
+  @ApiProperty({ enum: BcpPlanStatus })
+  @IsEnum(BcpPlanStatus)
+  status: BcpPlanStatus;
+}
+
+export class AdvancePlanPhaseDto {
+  @ApiProperty({ enum: ['next', 'back'] })
+  @IsEnum(['next', 'back'] as any)
+  direction: 'next' | 'back';
+}
+
 export class CreateBcpTestDto {
   @ApiProperty() @IsString() scenario: string;
   @ApiPropertyOptional() @IsOptional() @IsString() planId?: string;
