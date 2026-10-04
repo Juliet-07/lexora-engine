@@ -22,6 +22,7 @@ import {
   LinkRelatedRiskDto,
 } from '../dtos';
 import { RiskAppetiteService } from './risk-appetite.service';
+import { scoreToRiskBand } from 'src/common/utils/grc-health-score.util';
 
 export interface AppetiteEntryLike {
   category: RiskCategory;
@@ -29,12 +30,6 @@ export interface AppetiteEntryLike {
   amberThresholdPct: number;
 }
 
-const BAND_THRESHOLDS: [number, string][] = [
-  [17, 'Extreme'],
-  [10, 'High'],
-  [5, 'Medium'],
-  [1, 'Low'],
-];
 const REVIEW_FREQUENCY_DAYS: Record<string, number> = {
   Extreme: 90,
   High: 180,
@@ -56,10 +51,7 @@ export class RiskService {
   }
 
   scoreToBand(score: number): 'Extreme' | 'High' | 'Medium' | 'Low' {
-    for (const [min, band] of BAND_THRESHOLDS) {
-      if (score >= min) return band as any;
-    }
-    return 'Low';
+    return scoreToRiskBand(score);
   }
 
   residualScore(risk: {

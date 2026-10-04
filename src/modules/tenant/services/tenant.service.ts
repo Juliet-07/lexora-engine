@@ -74,6 +74,15 @@ import {
   ControlEffectiveness,
 } from '../../grc/risk/schemas/risk.schema';
 import { IncidentStatus } from '../../grc/risk/schemas/incident.schema';
+import {
+  Deficiency,
+  DeficiencyDocument,
+  DefStatus,
+} from '../../grc/risk/schemas/control.schema';
+import {
+  computeGrcHealthScore,
+  scoreToRiskBand,
+} from 'src/common/utils/grc-health-score.util';
 
 // Role hierarchy — members can only assign roles below their own level
 const ROLE_HIERARCHY: Record<string, number> = {
@@ -105,6 +114,8 @@ export class TenantService {
     private readonly incidentModel: Model<IncidentDocument>,
     @InjectModel(ComplianceObligation.name)
     private readonly obligationModel: Model<ComplianceObligationDocument>,
+    @InjectModel(Deficiency.name)
+    private readonly deficiencyModel: Model<DeficiencyDocument>,
     @InjectModel(Deal.name)
     private readonly dealModel: Model<DealDocument>,
     @InjectModel(Mandate.name)
@@ -153,6 +164,7 @@ export class TenantService {
       openRisks,
       openIncidents,
       overdueObligations,
+      openDeficiencies,
       liveDeals,
       dealsWon,
       // ── CRM ───────────────────────────────────────────────
@@ -252,6 +264,13 @@ export class TenantService {
         })
         .select('title regulator status nextDueDate')
         .lean(),
+      // ── GRC: deficiencies — feeds the shared computeGrcHealthScore,
+      // same as GRC Overview's own health score (PO feedback, Oct
+      // 2026: the dashboard's GRC score never counted these before).
+      this.deficiencyModel.countDocuments({
+        tenantId: tId,
+        status: { $ne: DefStatus.CLOSED },
+      }),
       // ── GRC: deals ──────────────────────────────────────────
       this.dealModel
         .find({ tenantId: tId, status: DealStatus.ACTIVE })
@@ -361,32 +380,48 @@ export class TenantService {
     };
 
     const criticalRisks = openRisks.filter((r) => residualScore(r) >= 17);
-    const kycScore = kycTotal ? Math.round((kycApproved / kycTotal) * 100) : 0;
+    const dueObligations = overdueObligations.filter(
+      (o) => o.status === ObligationStatus.DUE,
+    );
+    const trueOverdueObligations = overdueObligations.filter(
+      (o) => o.status === ObligationStatus.OVERDUE,
+    );
+
+    // Each module's score defaults to 100 (nothing onboarded yet means
+    // nothing is unhealthy yet), not 0 — a brand-new tenant with zero
+    // clients/employees/mandates should land at a perfect score, the
+    // same convention GRC's penalty-based formula already followed
+    // (PO feedback, Oct 2026: previously only GRC defaulted to 100,
+    // so a new tenant's blended "Org health" read as a misleadingly
+    // low ~25–50% instead of 100%).
+    const kycScore = kycTotal
+      ? Math.round((kycApproved / kycTotal) * 100)
+      : 100;
     const hrScore = totalEmployees
       ? Math.round((activeEmployees / totalEmployees) * 100)
-      : 0;
+      : 100;
     const crmScore = activeMandates.length
       ? Math.round(
           (activeMandates.filter((m) => m.rag === 'Green').length /
             activeMandates.length) *
             100,
         )
-      : 0;
-    const grcScore = Math.max(
-      0,
-      100 -
-        criticalRisks.length * 8 -
-        overdueObligations.length * 6 -
-        openIncidents.length * 4,
-    );
+      : 100;
+    // Same formula, same weights, same inputs as GRC Overview's own
+    // "GRC Health Score" (OverviewService#getOverview →
+    // computeGrcHealthScore) — previously this was a separate,
+    // looser, flat-count formula that didn't count deficiencies at
+    // all and penalized merely-"Due" obligations as if they were
+    // already overdue, so the dashboard and GRC Overview could (and
+    // did) disagree (PO feedback, Oct 2026).
+    const grcScore = computeGrcHealthScore({
+      openRiskBands: openRisks.map((r) => scoreToRiskBand(residualScore(r))),
+      overdueObligations: trueOverdueObligations.length,
+      openIncidents: openIncidents.length,
+      openDeficiencies,
+    });
     const overallScore = Math.round(
       (kycScore + grcScore + crmScore + hrScore) / 4,
-    );
-    const dueObligations = overdueObligations.filter(
-      (o) => o.status === ObligationStatus.DUE,
-    );
-    const trueOverdueObligations = overdueObligations.filter(
-      (o) => o.status === ObligationStatus.OVERDUE,
     );
     const atRiskMandates = activeMandates.filter((m) => m.rag !== 'Green');
     const receivables = openInvoices.reduce(
@@ -523,6 +558,7 @@ export class TenantService {
         openIncidents: openIncidents.length,
         dueObligations: dueObligations.length,
         overdueObligations: trueOverdueObligations.length,
+        openDeficiencies,
         liveDeals: liveDeals.length,
         dealsWon,
         dealValue,

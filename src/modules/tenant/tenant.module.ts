@@ -30,6 +30,10 @@ import {
   ComplianceObligation,
   ComplianceObligationSchema,
 } from '../grc/compliance/schemas/obligation.schema';
+import {
+  Deficiency,
+  DeficiencySchema,
+} from '../grc/risk/schemas/control.schema';
 import { Deal, DealSchema } from '../grc/deals/schemas/deal.schema';
 import { Mandate, MandateSchema } from '../crm/projects/schemas/mandate.schema';
 import {
@@ -81,6 +85,7 @@ import { TenantNotificationController } from './controllers';
       { name: Risk.name, schema: RiskSchema },
       { name: Incident.name, schema: IncidentSchema },
       { name: ComplianceObligation.name, schema: ComplianceObligationSchema },
+      { name: Deficiency.name, schema: DeficiencySchema },
       { name: Deal.name, schema: DealSchema },
       { name: Mandate.name, schema: MandateSchema },
       { name: ClientPipelineRecord.name, schema: ClientPipelineSchema },
