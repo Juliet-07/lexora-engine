@@ -30,6 +30,7 @@ import { HrModule } from './modules/hr/hr.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { CrmModule } from './modules/crm/crm.module';
 import { GrcModule } from './modules/grc/grc.module';
+import { BoardPortalModule } from './modules/board/board.module';
 
 @Module({
   imports: [
@@ -84,6 +85,7 @@ import { GrcModule } from './modules/grc/grc.module';
     HrModule,
     CrmModule,
     GrcModule,
+    BoardPortalModule,
     PaymentModule,
   ],
   providers: [

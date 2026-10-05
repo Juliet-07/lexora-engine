@@ -24,8 +24,8 @@ import {
   GovernanceCodeService,
   MeetingService,
   BoardDashboardService,
-} from '../services';
-import { BoardTrainingService } from '../services/board-training.service';
+} from 'src/modules/grc/governance/services';
+import { BoardTrainingService } from 'src/modules/grc/governance/services/board-training.service';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import { UserType } from 'src/common/interfaces/user-role.enum';
 import {
@@ -40,8 +40,8 @@ import {
   ToggleBoardPackReadDto,
   AddBoardPackNoteDto,
   SubmitMeetingConflictDto,
-} from '../dtos/index.dto';
-import { CompleteBoardTrainingDto } from '../dtos/board-training.dto';
+} from 'src/modules/grc/governance/dtos/index.dto';
+import { CompleteBoardTrainingDto } from 'src/modules/grc/governance/dtos/board-training.dto';
 
 const trainingProofStorage = diskStorage({
   destination: (_req, _file, cb) => {
@@ -67,6 +67,16 @@ const trainingProofStorage = diskStorage({
 // permission to begin with. Scoped entirely to the calling board
 // member's own record (via their JWT's `sub`), never a tenantId +
 // arbitrary :id the way the tenant-side controller is.
+//
+// Lives in its own top-level `board-portal` module/folder (sibling to
+// `grc`, `hr`, etc.) rather than inside Governance, so every endpoint
+// a signed-in board member calls is in one place regardless of which
+// feature module actually owns the data. It still injects the real
+// services from their owning modules (Governance here) rather than
+// redefining any schema or service of its own — see board-portal.module.ts.
+// Other domains' board-facing routes (e.g. ESG's disclosure sign-off)
+// get their own controller added here the same way, each one importing
+// its owning module and exported services, never duplicating them.
 @ApiTags('Board Portal')
 @ApiBearerAuth()
 @UserTypes(UserType.BOARD_MEMBER)

@@ -34,7 +34,6 @@ import {
   CommitteeController,
   BoardMemberController,
   BoardOnboardingTrainingModuleController,
-  BoardPortalController,
   GovernanceCodeController,
   BoardTrainingController,
   OrgStructureController,
@@ -119,7 +118,6 @@ import { HrTeam, HrTeamSchema } from 'src/modules/hr/schemas/hr.schema';
     CommitteeController,
     BoardMemberController,
     BoardOnboardingTrainingModuleController,
-    BoardPortalController,
     GovernanceCodeController,
     BoardTrainingController,
     ResolutionController,
@@ -133,6 +131,10 @@ import { HrTeam, HrTeamSchema } from 'src/modules/hr/schemas/hr.schema';
     GovernanceCodeService,
     BoardTrainingService,
     ResolutionService,
+    // Exported for BoardPortalModule's board-portal.controller.ts
+    // (the director's own Dashboard route) — not used cross-module
+    // anywhere else.
+    BoardDashboardService,
   ],
 })
 export class GovernanceModule {}
