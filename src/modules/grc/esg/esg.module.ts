@@ -53,12 +53,14 @@ import {
 // (BoardMemberService) and ESG Committee Chair lookup
 // (CommitteeService) — a one-directional import, same as RiskModule
 // above; GovernanceModule never imports EsgModule, so this creates no
-// cycle (see esg-board-portal.controller.ts for why its routes live
-// in a separate controller rather than on Governance's own).
+// cycle. The board-portal routes that call EsgFrameworkService (the
+// Board Chair's e-signing docket) live on BoardPortalController in
+// src/modules/board/ instead — that module imports EsgModule (below,
+// via `exports`) rather than EsgModule reaching into board/, which
+// would create the cycle this comment used to warn about.
 import { GovernanceModule } from '../governance/governance.module';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserSchema } from 'src/modules/auth/schemas';
-import { BoardPortalController } from 'src/modules/board/board.controller';
 
 @Module({
   imports: [
@@ -99,7 +101,6 @@ import { BoardPortalController } from 'src/modules/board/board.controller';
     EsgMaterialityController,
     EsgFrameworkController,
     EsgDashboardController,
-    BoardPortalController,
   ],
   exports: [
     EsgContextService,
