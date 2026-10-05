@@ -49,10 +49,21 @@ import {
   ComplianceObligation,
   ComplianceObligationSchema,
 } from '../compliance/schemas';
+// For the ESG disclosure approval chain's Board Chair lookup
+// (BoardMemberService) and ESG Committee Chair lookup
+// (CommitteeService) — a one-directional import, same as RiskModule
+// above; GovernanceModule never imports EsgModule, so this creates no
+// cycle (see esg-board-portal.controller.ts for why its routes live
+// in a separate controller rather than on Governance's own).
+import { GovernanceModule } from '../governance/governance.module';
+import { EmailService } from 'src/common/utils/mailing/email.service';
+import { User, UserSchema } from 'src/modules/auth/schemas';
+import { BoardPortalController } from 'src/modules/board/board.controller';
 
 @Module({
   imports: [
     RiskModule, // for RiskService — real risk escalation + real Governance scoring
+    GovernanceModule, // for BoardMemberService/CommitteeService — ESG approval chain
     MongooseModule.forFeature([
       { name: EsgOrgContext.name, schema: EsgOrgContextSchema },
       { name: EsgScoreHistory.name, schema: EsgScoreHistorySchema },
@@ -71,6 +82,7 @@ import {
       { name: Deficiency.name, schema: DeficiencySchema },
       { name: Incident.name, schema: IncidentSchema },
       { name: ComplianceObligation.name, schema: ComplianceObligationSchema },
+      { name: User.name, schema: UserSchema },
     ]),
   ],
   providers: [
@@ -79,6 +91,7 @@ import {
     EsgMaterialityService,
     EsgFrameworkService,
     EsgDashboardService,
+    EmailService,
   ],
   controllers: [
     EsgContextController,
@@ -86,6 +99,7 @@ import {
     EsgMaterialityController,
     EsgFrameworkController,
     EsgDashboardController,
+    BoardPortalController,
   ],
   exports: [
     EsgContextService,

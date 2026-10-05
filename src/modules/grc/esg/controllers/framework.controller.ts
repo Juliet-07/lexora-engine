@@ -24,9 +24,13 @@ import {
   ReorderFrameworksDto,
   CreateIndicatorDto,
   UpdateIndicatorResponseDto,
+  UpdateIndicatorRequirementDto,
+  UpdateIndicatorApplicabilityDto,
+  SendForEsgApprovalDto,
+  DecideEsgChairApprovalDto,
   CompileReportDto,
 } from '../dtos';
-import { CurrentUser, UserTypes } from 'src/common/decorators';
+import { CurrentUser, UserTypes, Public } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
 import {
   UserType,
@@ -182,6 +186,53 @@ export class EsgFrameworkController {
       id,
       signedOffBy || 'Sustainability Lead',
     );
+  }
+
+  @Patch('indicators/:id/requirement')
+  updateRequirement(
+    @Param('id') id: string,
+    @Body() dto: UpdateIndicatorRequirementDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateRequirement(t || u, id, dto);
+  }
+
+  @Patch('indicators/:id/applicability')
+  updateApplicability(
+    @Param('id') id: string,
+    @Body() dto: UpdateIndicatorApplicabilityDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateApplicability(t || u, id, dto);
+  }
+
+  @Post('indicators/:id/send-for-approval')
+  sendForApproval(
+    @Param('id') id: string,
+    @Body() dto: SendForEsgApprovalDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.sendForApproval(t || u, id, dto);
+  }
+
+  // ── ESG Committee Chair's external, unauthenticated link ──────
+
+  @Public()
+  @Get('indicators/esg-chair-approve/:token')
+  getEsgChairApprovalSnapshot(@Param('token') token: string) {
+    return this.service.getEsgChairApprovalSnapshot(token);
+  }
+
+  @Public()
+  @Post('indicators/esg-chair-approve/:token')
+  decideEsgChairApproval(
+    @Param('token') token: string,
+    @Body() dto: DecideEsgChairApprovalDto,
+  ) {
+    return this.service.decideEsgChairApproval(token, dto);
   }
 
   // ── Reports ──────────────────────────────────────────────────

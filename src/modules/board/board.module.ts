@@ -1,6 +1,14 @@
 import { Module } from '@nestjs/common';
 import { GovernanceModule } from 'src/modules/grc/governance/governance.module';
 import { BoardPortalController } from './board.controller';
+import { EsgFrameworkService } from '../grc/esg/services';
+import {
+  BoardMemberService,
+  BoardTrainingService,
+  GovernanceCodeService,
+  MeetingService,
+} from '../grc/governance/services';
+import { BoardDashboardService } from './services';
 
 // Every endpoint a signed-in board member (UserType.BOARD_MEMBER) calls
 // from their own portal (lexora-board) lives here, in one place —
@@ -23,6 +31,14 @@ import { BoardPortalController } from './board.controller';
 // their old location).
 @Module({
   imports: [GovernanceModule],
+  providers: [
+    BoardDashboardService,
+    EsgFrameworkService,
+    MeetingService,
+    BoardMemberService,
+    GovernanceCodeService,
+    BoardTrainingService,
+  ],
   controllers: [BoardPortalController],
 })
 export class BoardPortalModule {}

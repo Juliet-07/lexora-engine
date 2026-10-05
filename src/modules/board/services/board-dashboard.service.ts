@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { BoardMemberService } from './board.service';
 import {
+  BoardMemberService,
   GovernanceCodeService,
   MeetingService,
 } from 'src/modules/grc/governance/services';

@@ -94,6 +94,57 @@ export class IndicatorEvidence {
 export const IndicatorEvidenceSchema =
   SchemaFactory.createForClass(IndicatorEvidence);
 
+export enum EsgApprovalDecision {
+  PENDING = 'Pending',
+  APPROVED = 'Approved',
+  DECLINED = 'Declined',
+}
+
+// The ESG Committee Chair signs externally — they're never logged
+// into any Lexora app, so this row carries its own emailed-link
+// token (same shape as PolicyService's board-approval round, built
+// before board members had portal logins). The Board Chair signs
+// in-app instead (see EsgBoardChairApproval below), so their row
+// carries no token at all.
+@Schema({ _id: false })
+export class EsgCommitteeChairApproval {
+  @Prop({ type: Types.ObjectId, ref: 'Committee', default: null })
+  committeeId: Types.ObjectId | null;
+  @Prop({ type: Types.ObjectId, ref: 'BoardMember', default: null })
+  boardMemberId: Types.ObjectId | null;
+  @Prop({ default: '' }) name: string;
+  @Prop({ default: '', lowercase: true }) email: string;
+  @Prop({ enum: EsgApprovalDecision, default: EsgApprovalDecision.PENDING })
+  decision: EsgApprovalDecision;
+  @Prop({ default: '' }) notes: string;
+  @Prop({ default: null }) decidedAt: Date | null;
+  @Prop({ default: null }) requestedAt: Date | null;
+  @Prop({ default: null }) token: string | null;
+}
+export const EsgCommitteeChairApprovalSchema = SchemaFactory.createForClass(
+  EsgCommitteeChairApproval,
+);
+
+// Decided in-app from the Board Portal (board-portal.controller-style
+// authenticated route, no token needed) — but gated server-side so it
+// can never be recorded before the ESG Committee Chair's own row
+// above is Approved (see EsgFrameworkService#decideBoardChairApproval).
+@Schema({ _id: false })
+export class EsgBoardChairApproval {
+  @Prop({ type: Types.ObjectId, ref: 'BoardMember', default: null })
+  boardMemberId: Types.ObjectId | null;
+  @Prop({ default: '' }) name: string;
+  @Prop({ default: '', lowercase: true }) email: string;
+  @Prop({ enum: EsgApprovalDecision, default: EsgApprovalDecision.PENDING })
+  decision: EsgApprovalDecision;
+  @Prop({ default: '' }) notes: string;
+  @Prop({ default: null }) decidedAt: Date | null;
+  @Prop({ default: null }) requestedAt: Date | null;
+}
+export const EsgBoardChairApprovalSchema = SchemaFactory.createForClass(
+  EsgBoardChairApproval,
+);
+
 @Schema({ timestamps: true, collection: 'esg_report_indicators' })
 export class ReportIndicator {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -110,6 +161,18 @@ export class ReportIndicator {
   @Prop({ required: true }) code: string;
   @Prop({ required: true, trim: true }) title: string;
   @Prop({ default: '' }) owner: string;
+
+  // The quoted requirement text (e.g. "Describe the governance
+  // structure, including committees of the highest governance
+  // body.") — distinct from `title`, which stays a short label.
+  @Prop({ default: '' }) requirement: string;
+
+  // Applicability — tenant-set, not derived from a fixed catalog
+  // (this codebase seeds frameworks/indicators as starting points
+  // the tenant then owns and edits, never a locked taxonomy).
+  @Prop({ default: true }) isApplicable: boolean;
+  @Prop({ default: '' }) applicabilityNote: string;
+
   @Prop({ default: '' }) response: string;
 
   @Prop({ type: [IndicatorEvidenceSchema], default: [] })
@@ -117,8 +180,21 @@ export class ReportIndicator {
 
   @Prop({ enum: IndicatorStatus, default: IndicatorStatus.NOT_STARTED })
   status: IndicatorStatus;
+
+  // Legacy single-signer stamp — kept so anything already relying on
+  // it (frameworkCoverage()'s "signed off" count) still reads
+  // correctly; now set from boardChairApproval the moment that
+  // completes, rather than from the old single `signOff()` action.
   @Prop({ default: null }) signedOffBy: string | null;
   @Prop({ default: null }) signedOffAt: Date | null;
+
+  // The two-party approval chain — Board Chair's row can only be
+  // decided once ESG Committee Chair's row is Approved (enforced in
+  // EsgFrameworkService, not just in the UI).
+  @Prop({ type: EsgCommitteeChairApprovalSchema, default: () => ({}) })
+  esgChairApproval: EsgCommitteeChairApproval;
+  @Prop({ type: EsgBoardChairApprovalSchema, default: () => ({}) })
+  boardChairApproval: EsgBoardChairApproval;
 }
 export const ReportIndicatorSchema =
   SchemaFactory.createForClass(ReportIndicator);

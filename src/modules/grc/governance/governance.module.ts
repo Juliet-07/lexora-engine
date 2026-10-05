@@ -26,7 +26,6 @@ import {
   MeetingAckReminderService,
   MeetingNoticeReminderService,
   ResolutionService,
-  BoardDashboardService,
   OrgStructureService,
 } from './services';
 import {
@@ -110,7 +109,6 @@ import { HrTeam, HrTeamSchema } from 'src/modules/hr/schemas/hr.schema';
     MeetingAckReminderService,
     MeetingNoticeReminderService,
     ResolutionService,
-    BoardDashboardService,
     OrgStructureService,
   ],
   controllers: [
@@ -131,10 +129,6 @@ import { HrTeam, HrTeamSchema } from 'src/modules/hr/schemas/hr.schema';
     GovernanceCodeService,
     BoardTrainingService,
     ResolutionService,
-    // Exported for BoardPortalModule's board-portal.controller.ts
-    // (the director's own Dashboard route) — not used cross-module
-    // anywhere else.
-    BoardDashboardService,
   ],
 })
 export class GovernanceModule {}

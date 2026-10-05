@@ -23,7 +23,6 @@ import {
   BoardMemberService,
   GovernanceCodeService,
   MeetingService,
-  BoardDashboardService,
 } from 'src/modules/grc/governance/services';
 import { BoardTrainingService } from 'src/modules/grc/governance/services/board-training.service';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
@@ -42,6 +41,9 @@ import {
   SubmitMeetingConflictDto,
 } from 'src/modules/grc/governance/dtos/index.dto';
 import { CompleteBoardTrainingDto } from 'src/modules/grc/governance/dtos/board-training.dto';
+import { EsgFrameworkService } from '../grc/esg/services';
+import { DecideBoardChairApprovalDto } from '../grc/esg/dtos';
+import { BoardDashboardService } from './services';
 
 const trainingProofStorage = diskStorage({
   destination: (_req, _file, cb) => {
@@ -88,6 +90,7 @@ export class BoardPortalController {
     private readonly meetingService: MeetingService,
     private readonly boardDashboardService: BoardDashboardService,
     private readonly boardTrainingService: BoardTrainingService,
+    private readonly service: EsgFrameworkService,
   ) {}
 
   @Get('me')
@@ -409,5 +412,20 @@ export class BoardPortalController {
       email,
       file,
     );
+  }
+
+  // SIGNINGS
+  @Get('esg-approvals')
+  getPending(@CurrentUser('sub') u: string) {
+    return this.service.getPendingForBoardChair(u);
+  }
+
+  @Post('esg-approvals/:id/decide')
+  decide(
+    @Param('id') id: string,
+    @Body() dto: DecideBoardChairApprovalDto,
+    @CurrentUser('sub') u: string,
+  ) {
+    return this.service.decideBoardChairApproval(u, id, dto);
   }
 }
