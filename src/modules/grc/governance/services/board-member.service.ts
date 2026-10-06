@@ -867,6 +867,8 @@ export class BoardMemberService {
 
   async update(tenantId: string, id: string, dto: UpdateBoardMemberDto) {
     const member = await this.getById(tenantId, id);
+    const wasOffboarded =
+      member.lifecycleStatus === BoardMemberLifecycleStatus.OFFBOARDED;
     if (dto.name !== undefined) member.name = dto.name;
     if (dto.role !== undefined) member.role = dto.role;
     if (dto.email !== undefined) member.email = dto.email.toLowerCase();
@@ -878,6 +880,21 @@ export class BoardMemberService {
     if (dto.lifecycleStatus !== undefined)
       member.lifecycleStatus = dto.lifecycleStatus;
     await member.save();
+
+    // Same login gate as initiateOffboarding below — this is the other
+    // path a director's lifecycleStatus can reach/leave Offboarded
+    // from (a direct edit rather than the offboarding flow). Keep the
+    // login in sync either direction: deactivated the moment they
+    // become Offboarded here too, and restored if a tenant reverses
+    // an offboarding by editing the status back off it.
+    const isOffboarded =
+      member.lifecycleStatus === BoardMemberLifecycleStatus.OFFBOARDED;
+    if (member.userId && isOffboarded !== wasOffboarded) {
+      await this.userModel.findByIdAndUpdate(member.userId, {
+        status: isOffboarded ? AccountStatus.INACTIVE : AccountStatus.ACTIVE,
+      });
+    }
+
     return member;
   }
 
@@ -1898,6 +1915,19 @@ export class BoardMemberService {
     member.lifecycleStatus = BoardMemberLifecycleStatus.OFFBOARDED;
     member.markModified('offboarding');
     await member.save();
+
+    // An offboarded director's own board-portal login is deactivated
+    // the moment offboarding is initiated — same real gate AuthService
+    // already enforces for AccountStatus.INACTIVE on every user type,
+    // not a separate board-specific check. Nothing else about the
+    // account (their historical records, past meeting/committee data)
+    // is touched; this only blocks future logins.
+    if (member.userId) {
+      await this.userModel.findByIdAndUpdate(member.userId, {
+        status: AccountStatus.INACTIVE,
+      });
+    }
+
     return member;
   }
 
