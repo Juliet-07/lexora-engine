@@ -467,6 +467,40 @@ export class SuperAdminService {
     id: string,
     dto: UpdateTenantStatusDto,
   ): Promise<UserDocument> {
+    const existing = await this.userModel.findOne({
+      _id: id,
+      userType: UserType.TENANT,
+    });
+    if (!existing) throw new NotFoundException('Tenant not found');
+
+    // Reactivating a tenant this way — a direct status flip, no plan,
+    // no invoice, no payment — is only legitimate when their
+    // subscription itself is still genuinely valid (e.g. they were
+    // suspended for an unrelated reason while their plan period
+    // hadn't actually ended). If their subscription has expired,
+    // "just reactivate them" would hand back access they haven't
+    // paid for; that has to go through assignTenantSubscription (or
+    // the tenant's own invoice-and-payment flow in PaymentService),
+    // which only reactivates once a real payment is recorded.
+    if (
+      dto.status === AccountStatus.ACTIVE &&
+      existing.status !== AccountStatus.ACTIVE
+    ) {
+      const sub = await this.subscriptionModel
+        .findOne({ tenantId: new Types.ObjectId(id) })
+        .lean();
+      const isExpired =
+        sub?.status === SubscriptionStatus.EXPIRED ||
+        (sub?.currentPeriodEnd && sub.currentPeriodEnd < new Date());
+      if (isExpired) {
+        throw new BadRequestException(
+          "This tenant's subscription has expired — reactivating directly is not allowed. " +
+            'Assign them a plan (with payment recorded) or confirm their invoice payment instead; ' +
+            'that reactivates the tenant and their team together.',
+        );
+      }
+    }
+
     const tenant = await this.userModel
       .findOneAndUpdate(
         { _id: id, userType: UserType.TENANT },
@@ -479,6 +513,21 @@ export class SuperAdminService {
       .select('-password');
 
     if (!tenant) throw new NotFoundException('Tenant not found');
+
+    // Keep the tenant's own team in step with their account, the same
+    // way updateTenantSubscriptionStatus and the subscription-expiry
+    // cascade already do — reactivating/deactivating the tenant here
+    // without this would leave every client/employee stuck on
+    // whatever status they already had.
+    if (dto.status === AccountStatus.ACTIVE) {
+      await this.subscriptionExpiryService.cascadeReactivateTenantUsers(id);
+    } else if (
+      dto.status === AccountStatus.INACTIVE ||
+      dto.status === AccountStatus.SUSPENDED
+    ) {
+      await this.subscriptionExpiryService.cascadeDeactivateTenantUsers(id);
+    }
+
     return tenant;
   }
 
@@ -797,13 +846,35 @@ export class SuperAdminService {
       ? existing.activeModules
       : allModules;
 
+    // Same guard as updateTenantStatus: a tenant that's deactivated
+    // *because their subscription genuinely expired* can't be waved
+    // back to life by simply assigning a non-Free plan with no
+    // payment attached — that's the exact one-click-reactivation gap
+    // this whole round is fixing. Assigning a plan to a tenant who
+    // isn't currently deactivated (a fresh signup, or an upgrade on an
+    // already-active subscription) is unaffected.
+    const wasExpired = existing?.status === SubscriptionStatus.EXPIRED;
+    const tenantWasDeactivated =
+      tenant.status === AccountStatus.INACTIVE ||
+      tenant.status === AccountStatus.SUSPENDED;
+    const isFree = dto.plan === SubscriptionPlan.FREE;
+    if (
+      !isFree &&
+      wasExpired &&
+      tenantWasDeactivated &&
+      !(dto.paymentAmount && dto.paymentAmount > 0)
+    ) {
+      throw new BadRequestException(
+        "This tenant's subscription had expired, so reactivating them this way requires recording the payment for the new plan — set paymentAmount (and paymentReference/paymentNotes as needed) alongside the plan assignment.",
+      );
+    }
+
     const now = new Date();
     const periodEnd = new Date(
       dto.endsAt ||
         new Date(now.getFullYear(), now.getMonth() + 1, now.getDate()),
     );
 
-    const isFree = dto.plan === SubscriptionPlan.FREE;
     const trialEndsAt = isFree
       ? new Date(new Date().setDate(new Date().getDate() + 7))
       : null;

@@ -687,20 +687,38 @@ export class TenantClientsService {
     if (!client)
       throw new NotFoundException('Client not found or is not inactive');
 
+    // Reactivation only ever restores account access — it never
+    // touches KYC. That holds whether the client was swept inactive
+    // because the tenant's own subscription lapsed
+    // (cascadeDeactivateTenantUsers, flagged with
+    // deactivatedByTenantCascade) or because compliance rejected them
+    // (rejectClient, kycStatus: 'rejected'): once a client has actually
+    // completed KYC it cannot be reversed by simply reactivating them,
+    // and even a rejected client isn't auto-reset back into onboarding
+    // just by being switched back on. The one real way to put a client
+    // back into a KYC flow is the tenant explicitly asking for it —
+    // that's exactly what the separate KYC-update-request feature
+    // (requestKycUpdate/reviewKycUpdate below) is for, and it's the
+    // only thing that should ever touch an active client's KYC data
+    // again.
+    const profile = await this.profileModel.findOne({
+      userId: new Types.ObjectId(clientId),
+    });
+
     await this.userModel.findByIdAndUpdate(clientId, {
-      status: AccountStatus.PENDING,
+      status: AccountStatus.ACTIVE,
+      $unset: { 'metadata.deactivatedByTenantCascade': '' },
     });
 
     await this.profileModel.findOneAndUpdate(
       { userId: new Types.ObjectId(clientId) },
       {
-        kycStatus: 'not_started',
         $push: {
           'metadata.auditTrail': {
             action: 'reactivated',
             performedBy: reactivatedBy,
             timestamp: new Date(),
-            note: 'Account reactivated — client may re-submit onboarding',
+            note: `Account reactivated — KYC status left as-is (${profile?.kycStatus ?? 'not_started'})`,
           },
         },
       },
@@ -709,7 +727,9 @@ export class TenantClientsService {
     return {
       success: true,
       message:
-        'Client reactivated. They can now log in and redo their onboarding.',
+        profile?.kycStatus === 'rejected'
+          ? 'Client reactivated. Their KYC is still marked Rejected — use "Request KYC update" if you want them to resubmit.'
+          : 'Client reactivated. Their existing KYC is unaffected.',
     };
   }
 
