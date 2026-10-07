@@ -71,6 +71,8 @@ import {
   Rag,
 } from 'src/modules/crm/projects/schemas';
 import { InvoiceService } from 'src/modules/crm/finance/services';
+import { Deal, DealDocument, DDStatus } from '../../deals/schemas';
+import { EsgDashboardService } from '../../esg/services';
 import {
   buildReportPdf,
   ReportDefinition,
@@ -105,7 +107,10 @@ export class ReadinessService {
     private readonly periodModel: Model<AccountingPeriodDocument>,
     @InjectModel(Mandate.name)
     private readonly mandateModel: Model<MandateDocument_>,
+    @InjectModel(Deal.name)
+    private readonly dealModel: Model<DealDocument>,
     private readonly invoiceService: InvoiceService,
+    private readonly esgDashboardService: EsgDashboardService,
   ) {}
 
   // ── Real auto-scoring — one method per connected dimension ─────
@@ -319,6 +324,47 @@ export class ReadinessService {
     return Math.round(((healthyMandateRate + collectionRate) / 2) * 100);
   }
 
+  // The ESG submodule already computes a real, weighted E/S/G
+  // composite (0-100) for its own dashboard — reusing it here keeps
+  // this single source of truth rather than re-deriving the same
+  // formula a second time. A tenant with no ESG metrics recorded yet
+  // naturally scores low (pillarScore returns 0 for an empty metric
+  // set), so no separate "no data" branch is needed here.
+  private async scoreESG(tenantId: string): Promise<number> {
+    const dashboard = await this.esgDashboardService.getDashboard(tenantId);
+    return dashboard.total;
+  }
+
+  // The Deal module's data room is deliberately per-transaction (one
+  // room per deal), not a single company-wide room — so "readiness"
+  // here is a company-wide rollup across every deal: how often a
+  // data room actually got used, blended with how far due-diligence
+  // checklists across those deals have actually progressed. No deals
+  // at all means no real diligence practice to show yet, same "no
+  // data = 0" precedent as scoreOperationalCommercial above.
+  private async scoreDataRoom(tenantId: string): Promise<number> {
+    const tId = new Types.ObjectId(tenantId);
+    const deals = await this.dealModel
+      .find({ tenantId: tId })
+      .select('dataRoom dd')
+      .lean();
+    if (deals.length === 0) return 0;
+
+    const dealsWithFiles = deals.filter(
+      (d: any) => (d.dataRoom?.files?.length ?? 0) > 0,
+    ).length;
+    const dataRoomUsageRate = dealsWithFiles / deals.length;
+
+    const allDdItems = deals.flatMap((d: any) => d.dd ?? []);
+    const ddProgressRate =
+      allDdItems.length === 0
+        ? 0
+        : allDdItems.filter((i: any) => i.status !== DDStatus.NOT_STARTED)
+            .length / allDdItems.length;
+
+    return Math.round(((dataRoomUsageRate + ddProgressRate) / 2) * 100);
+  }
+
   private async computeAutoScore(
     tenantId: string,
     dim: ReadinessDimension,
@@ -336,6 +382,10 @@ export class ReadinessService {
         return this.scoreOperationalCommercial(tenantId);
       case ReadinessDimension.HR_MANAGEMENT:
         return this.scoreHr(tenantId);
+      case ReadinessDimension.ESG:
+        return this.scoreESG(tenantId);
+      case ReadinessDimension.DATA_ROOM:
+        return this.scoreDataRoom(tenantId);
       default:
         return 0;
     }

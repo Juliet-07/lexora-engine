@@ -52,6 +52,7 @@ import {
   AccountingPeriodSchema,
 } from 'src/modules/crm/finance/schemas';
 import { Mandate, MandateSchema } from 'src/modules/crm/projects/schemas';
+import { EsgModule } from '../esg/esg.module';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { Mandate, MandateSchema } from 'src/modules/crm/projects/schemas';
       { name: Mandate.name, schema: MandateSchema },
     ]),
     FinanceModule,
+    EsgModule,
   ],
   providers: [ValuationService, PortfolioService, ReadinessService],
   controllers: [ValuationController, PortfolioController, ReadinessController],

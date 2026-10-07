@@ -11,6 +11,15 @@ export type ReadinessAssessmentDocument = ReadinessAssessment & Document;
 // correct themselves. Flipping a dimension from manual to auto
 // later — e.g. once CRM's finance engine exists — is a one-line
 // change to DIMENSION_COMPUTE_MODE, not a rebuild.
+//
+// All 8 are now auto: ESG & Sustainability and Data Room
+// Completeness were the last two manual baselines, flipped once the
+// ESG submodule and the Deal pipeline's data room existed to back
+// them for real (see ReadinessService.scoreESG/scoreDataRoom). This
+// only changes computeMode going forward — an assessment version
+// created while a dimension was still manual keeps that version's
+// own stored computeMode (see buildScores), so past versions aren't
+// silently rewritten.
 // ─────────────────────────────────────────────────────────────
 
 export enum ReadinessDimension {
@@ -34,8 +43,8 @@ export const DIMENSION_COMPUTE_MODE: Record<ReadinessDimension, ComputeMode> = {
   [ReadinessDimension.TAX_COMPLIANCE]: 'auto',
   [ReadinessDimension.OPERATIONAL_COMMERCIAL]: 'auto',
   [ReadinessDimension.HR_MANAGEMENT]: 'auto',
-  [ReadinessDimension.ESG]: 'manual',
-  [ReadinessDimension.DATA_ROOM]: 'manual',
+  [ReadinessDimension.ESG]: 'auto',
+  [ReadinessDimension.DATA_ROOM]: 'auto',
 };
 
 export const DIMENSION_SOURCE: Record<ReadinessDimension, string> = {
@@ -49,9 +58,10 @@ export const DIMENSION_SOURCE: Record<ReadinessDimension, string> = {
     'CRM → Mandates & Invoicing (delivery health, collection rate)',
   [ReadinessDimension.HR_MANAGEMENT]:
     'HR module (contracts, onboarding, performance reviews)',
-  [ReadinessDimension.ESG]: 'Manual — no connected ESG register yet',
+  [ReadinessDimension.ESG]:
+    'GRC → ESG dashboard (environmental/social/governance composite score)',
   [ReadinessDimension.DATA_ROOM]:
-    'Manual — Deals data room is per-transaction, not company-wide',
+    'GRC → Deal pipeline (data room usage & due-diligence progress across deals)',
 };
 
 export enum GapPriority {
