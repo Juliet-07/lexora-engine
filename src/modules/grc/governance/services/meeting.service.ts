@@ -1860,6 +1860,15 @@ export class MeetingService {
         status: m.status,
         agenda: m.agenda ?? [],
         boardPack: m.boardPack ?? [],
+        // Board Packs page — the pack's own cover page, the same rich
+        // HTML the tenant's Company Secretary drafts in
+        // BoardPackExecutiveSummary (MeetingWorkspace.tsx). This was
+        // previously dropped on the floor here: the field existed on
+        // the schema and the tenant could save it, but this
+        // board-portal payload never carried it through, so it never
+        // reached the director reading the pack.
+        executiveSummary: m.executiveSummary ?? '',
+        executiveSummaryUpdatedAt: m.executiveSummaryUpdatedAt ?? null,
         minutes: minutesReady ? (m.minutes ?? null) : null,
         minutesPdfUrl: minutesReady ? (m.minutesPdfUrl ?? null) : null,
         minutesSentAt: m.minutesSentAt ?? null,
