@@ -46,7 +46,10 @@ import {
 } from 'src/modules/grc/governance/dtos/index.dto';
 import { CompleteBoardTrainingDto } from 'src/modules/grc/governance/dtos/board-training.dto';
 import { EsgFrameworkService } from '../grc/esg/services';
-import { DecideBoardChairApprovalDto } from '../grc/esg/dtos';
+import {
+  DecideBoardChairApprovalDto,
+  DecideEsgChairApprovalDto,
+} from '../grc/esg/dtos';
 import {
   BoardDashboardService,
   BoardMessagingService,
@@ -596,18 +599,54 @@ export class BoardPortalController {
     );
   }
 
-  // SIGNINGS
+  // ── ESG — Signings ────────────────────────────────────────────
+  // Two separate dockets, one per role in the two-party approval
+  // chain — a director can show up in either, or both. Both are
+  // in-app: committee members (the ESG Committee Chair included) are
+  // always real board members, so neither role needs an external
+  // emailed link any more (see EsgFrameworkService#sendForApproval).
+
   @Get('esg-approvals')
+  @ApiOperation({
+    summary:
+      "ESG disclosures awaiting the signed-in director's sign-off as " +
+      'Board Chair — only listed once the ESG Committee Chair has approved',
+  })
   getPending(@CurrentUser('sub') u: string) {
     return this.service.getPendingForBoardChair(u);
   }
 
   @Post('esg-approvals/:id/decide')
+  @ApiOperation({
+    summary: 'Approve or decline an ESG disclosure as Board Chair',
+  })
   decide(
     @Param('id') id: string,
     @Body() dto: DecideBoardChairApprovalDto,
     @CurrentUser('sub') u: string,
   ) {
     return this.service.decideBoardChairApproval(u, id, dto);
+  }
+
+  @Get('esg-committee-approvals')
+  @ApiOperation({
+    summary:
+      "ESG disclosures awaiting the signed-in director's review as ESG " +
+      'Committee Chair — the first step in the approval chain',
+  })
+  getCommitteeApprovals(@CurrentUser('sub') u: string) {
+    return this.service.getPendingForCommitteeChair(u);
+  }
+
+  @Post('esg-committee-approvals/:id/decide')
+  @ApiOperation({
+    summary: 'Approve or decline an ESG disclosure as ESG Committee Chair',
+  })
+  decideCommittee(
+    @Param('id') id: string,
+    @Body() dto: DecideEsgChairApprovalDto,
+    @CurrentUser('sub') u: string,
+  ) {
+    return this.service.decideCommitteeChairApproval(u, id, dto);
   }
 }

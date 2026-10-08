@@ -100,12 +100,13 @@ export enum EsgApprovalDecision {
   DECLINED = 'Declined',
 }
 
-// The ESG Committee Chair signs externally — they're never logged
-// into any Lexora app, so this row carries its own emailed-link
-// token (same shape as PolicyService's board-approval round, built
-// before board members had portal logins). The Board Chair signs
-// in-app instead (see EsgBoardChairApproval below), so their row
-// carries no token at all.
+// The ESG Committee Chair reviews in-app, from the board portal —
+// committee members are always drawn from the board roster (see
+// CommitteeMember#boardMemberId), so the Chair always has a portal
+// login, same as the Board Chair below. `token` is legacy: earlier
+// rounds emailed this chair an unauthenticated link instead, and any
+// already-sent link like that is still honored (getEsgChairApprovalSnapshot/
+// decideEsgChairApproval), but sendForApproval no longer issues new ones.
 @Schema({ _id: false })
 export class EsgCommitteeChairApproval {
   @Prop({ type: Types.ObjectId, ref: 'Committee', default: null })

@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { randomBytes } from 'crypto';
 import {
   EsgFramework,
   EsgFrameworkDocument,
@@ -373,14 +372,16 @@ export class EsgFrameworkService {
   }
 
   // ── Two-party approval chain ────────────────────────────────
-  // ESG Committee Chair signs externally (emailed token, mirrors
-  // PolicyService#openBoardApprovalRound — they have no portal
-  // login). Board Chair signs in-app via the board portal (mirrors
-  // GovernanceCodeService#getPendingForBoardMember/decideBoardApproval
-  // — they're already an authenticated BoardPortalController caller).
-  // The Board Chair's row is hard-gated server-side on the ESG
-  // Committee Chair's row already being Approved — "one cannot sign
-  // if the other hasn't[, yet]" from the PO's own framing.
+  // Both parties review in-app, from the board portal — committee
+  // members are always drawn from the board roster (see
+  // CommitteeMember#boardMemberId, same precedent the Minutes
+  // chair-review/adoption workflow established: "committee members
+  // will be created from the members of the board so board and
+  // committee meeting will still be addressed via board portal"), so
+  // the ESG Committee Chair always has a portal login, same as the
+  // Board Chair. The Board Chair's row is hard-gated server-side on
+  // the ESG Committee Chair's row already being Approved — "one
+  // cannot sign if the other hasn't[, yet]" from the PO's own framing.
 
   async sendForApproval(
     tenantId: string,
@@ -406,6 +407,11 @@ export class EsgFrameworkService {
         `"${committee.name}" has no Chair assigned yet — assign one under Governance → Committees before sending for approval.`,
       );
     }
+    if (!chairMember.boardMemberId) {
+      throw new BadRequestException(
+        `"${chairMember.name}" (the Chair of "${committee.name}") isn't linked to a board member record, so they have no board portal to review this in. Re-add them as a committee member from the board roster under Governance → Committees, then try again.`,
+      );
+    }
 
     const boardChair = await this.boardMemberService.getCurrentChair(tenantId);
     if (!boardChair) {
@@ -417,14 +423,16 @@ export class EsgFrameworkService {
     const now = new Date();
     i.esgChairApproval = {
       committeeId: committee._id,
-      boardMemberId: chairMember.boardMemberId ?? null,
+      boardMemberId: chairMember.boardMemberId,
       name: chairMember.name,
       email: String(chairMember.email).toLowerCase(),
       decision: EsgApprovalDecision.PENDING,
       notes: '',
       decidedAt: null,
       requestedAt: now,
-      token: randomBytes(24).toString('hex'),
+      // No external link issued any more — see the schema's own
+      // comment on EsgCommitteeChairApproval#token.
+      token: null,
     } as any;
     i.boardChairApproval = {
       boardMemberId: boardChair._id,
@@ -441,12 +449,13 @@ export class EsgFrameworkService {
     await i.save();
 
     const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const boardAppUrl = process.env.BOARD_APP_URL || 'http://localhost:8083';
     await this.emailService
       .sendPolicyForAcknowledgment({
         to: i.esgChairApproval.email,
         recipientName: i.esgChairApproval.name,
         policyTitle: `${i.code} — ${i.title}`,
-        ackLink: `${process.env.TENANT_APP_URL}/esg-approve/${i.esgChairApproval.token}`,
+        ackLink: `${boardAppUrl}/e-signing`,
         businessName,
       })
       .catch(() => {});
@@ -459,10 +468,29 @@ export class EsgFrameworkService {
         to: i.boardChairApproval.email,
         recipientName: i.boardChairApproval.name,
         policyTitle: `${i.code} — ${i.title}`,
-        ackLink: `${process.env.BOARD_APP_URL || 'http://localhost:8083'}/e-signing`,
+        ackLink: `${boardAppUrl}/e-signing`,
         businessName,
       })
       .catch(() => {});
+
+    // Real-time + in-app notification for the ESG Committee Chair —
+    // this is the gap being fixed: previously only an email was sent,
+    // with nowhere on the board portal to act on it.
+    const chairUserId = await this.boardMemberService.getUserIdForBoardMember(
+      chairMember.boardMemberId.toString(),
+    );
+    if (chairUserId) {
+      const notification: BoardNotificationEvent = {
+        tenantId,
+        recipientBoardMemberId: chairMember.boardMemberId.toString(),
+        recipientUserId: chairUserId,
+        type: BoardNotificationType.ESG,
+        title: `ESG disclosure awaiting your review: ${i.code} — ${i.title}`,
+        description: `As Chair of "${committee.name}", review and sign off in your board portal.`,
+        link: '/e-signing',
+      };
+      this.eventEmitter.emit(BOARD_NOTIFICATION_EVENT, notification);
+    }
 
     return i.toObject();
   }
@@ -499,47 +527,131 @@ export class EsgFrameworkService {
       'esgChairApproval.token': token,
     });
     if (!i) throw new NotFoundException('This approval link is invalid.');
+    const declined = this.applyEsgChairDecision(i, dto);
+    if (declined) {
+      await i.save();
+      return i.toObject();
+    }
+    await i.save();
+    await this.notifyBoardChairReady(i);
+    return i.toObject();
+  }
+
+  // ── Board Portal — the signed-in ESG Committee Chair's own view ──
+  // Mirrors the Board Chair section below exactly: committee members
+  // (the Chair included) are always real board members, so this
+  // review happens in-app rather than over an emailed external link —
+  // the gap the PO flagged ("no place on the board portal for the
+  // committee to review and approve").
+
+  async getPendingForCommitteeChair(userId: string) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    const rows = await this.indicatorModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        'esgChairApproval.boardMemberId': new Types.ObjectId(boardMemberId),
+      })
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    const frameworkIds = [
+      ...new Set(rows.map((r: any) => String(r.frameworkId))),
+    ];
+    const frameworks = await this.frameworkModel
+      .find({ _id: { $in: frameworkIds } })
+      .select('label')
+      .lean();
+    const labelFor = (id: any) =>
+      frameworks.find((f) => String(f._id) === String(id))?.label ?? '';
+
+    return rows.map((r: any) => {
+      const n = this.normalizeIndicator(r);
+      return {
+        id: n._id,
+        code: n.code,
+        title: n.title,
+        requirement: n.requirement,
+        response: n.response,
+        evidence: n.evidence ?? [],
+        frameworkLabel: labelFor(n.frameworkId),
+        myDecision: n.esgChairApproval.decision,
+        myNotes: n.esgChairApproval.notes,
+        myDecidedAt: n.esgChairApproval.decidedAt,
+      };
+    });
+  }
+
+  async decideCommitteeChairApproval(
+    userId: string,
+    id: string,
+    dto: DecideEsgChairApprovalDto,
+  ) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    const i = await this.getRawIndicator(tenantId, id);
+    if (
+      !i.esgChairApproval.boardMemberId ||
+      i.esgChairApproval.boardMemberId.toString() !== boardMemberId
+    ) {
+      throw new ForbiddenException(
+        'You have not been asked to review this disclosure.',
+      );
+    }
+    const declined = this.applyEsgChairDecision(i, dto);
+    if (declined) {
+      await i.save();
+      return i.toObject();
+    }
+    await i.save();
+    await this.notifyBoardChairReady(i);
+    return i.toObject();
+  }
+
+  // Shared by the (legacy, link-based) public decision and the in-app
+  // board-portal one above. Returns true when the disclosure was
+  // declined (caller still needs to persist either way, but skips the
+  // "notify the Board Chair" step on a decline).
+  private applyEsgChairDecision(
+    i: ReportIndicatorDocument,
+    dto: DecideEsgChairApprovalDto,
+  ): boolean {
     if (i.esgChairApproval.decision !== EsgApprovalDecision.PENDING) {
       throw new BadRequestException('This approval has already been recorded.');
     }
-
     i.esgChairApproval.decision = dto.decision;
     i.esgChairApproval.notes = dto.notes ?? '';
     i.esgChairApproval.decidedAt = new Date();
     i.markModified('esgChairApproval');
-
     if (dto.decision === EsgApprovalDecision.DECLINED) {
       i.status = IndicatorStatus.IN_PROGRESS;
-      await i.save();
-      return i.toObject();
+      return true;
     }
+    return false;
+  }
 
-    await i.save();
-
-    // The Board Chair's own docket (getPendingForBoardChair below)
-    // only lists this once the ESG Committee Chair has approved —
-    // this is the moment it actually becomes actionable for them, so
-    // it's the right point to notify, not when sendForApproval first
-    // emailed both of them (see that method's own comment).
-    if (i.boardChairApproval?.boardMemberId) {
-      const boardChairUserId =
-        await this.boardMemberService.getUserIdForBoardMember(
-          i.boardChairApproval.boardMemberId.toString(),
-        );
-      const notification: BoardNotificationEvent = {
-        tenantId: i.tenantId.toString(),
-        recipientBoardMemberId: i.boardChairApproval.boardMemberId.toString(),
-        recipientUserId: boardChairUserId,
-        type: BoardNotificationType.ESG,
-        title: `ESG disclosure awaiting your sign-off: ${i.code} — ${i.title}`,
-        description:
-          'The ESG Committee Chair has approved — your sign-off is next.',
-        link: '/e-signing',
-      };
-      this.eventEmitter.emit(BOARD_NOTIFICATION_EVENT, notification);
-    }
-
-    return i.toObject();
+  // The Board Chair's own docket (getPendingForBoardChair below) only
+  // lists an indicator once the ESG Committee Chair has approved —
+  // this is the moment it actually becomes actionable for them, so
+  // it's the right point to notify, not when sendForApproval first
+  // emailed/notified both of them (see that method's own comment).
+  private async notifyBoardChairReady(i: ReportIndicatorDocument) {
+    if (!i.boardChairApproval?.boardMemberId) return;
+    const boardChairUserId =
+      await this.boardMemberService.getUserIdForBoardMember(
+        i.boardChairApproval.boardMemberId.toString(),
+      );
+    const notification: BoardNotificationEvent = {
+      tenantId: i.tenantId.toString(),
+      recipientBoardMemberId: i.boardChairApproval.boardMemberId.toString(),
+      recipientUserId: boardChairUserId,
+      type: BoardNotificationType.ESG,
+      title: `ESG disclosure awaiting your sign-off: ${i.code} — ${i.title}`,
+      description:
+        'The ESG Committee Chair has approved — your sign-off is next.',
+      link: '/e-signing',
+    };
+    this.eventEmitter.emit(BOARD_NOTIFICATION_EVENT, notification);
   }
 
   // ── Board Portal — the signed-in Board Chair's own view ──────
