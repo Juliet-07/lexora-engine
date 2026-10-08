@@ -31,6 +31,7 @@ import {
   CreateMeetingDto,
   AddAttendeeDto,
   AddAgendaItemDto,
+  UpdateAgendaItemDto,
   UpdateNotesDto,
   UpdateMinutesDto,
   RecordAttendanceDto,
@@ -241,6 +242,17 @@ export class MeetingController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.meetingService.addAgendaItem(t || u, id, dto);
+  }
+
+  @Patch(':id/agenda/:index')
+  updateAgendaItem(
+    @Param('id') id: string,
+    @Param('index') index: string,
+    @Body() dto: UpdateAgendaItemDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.meetingService.updateAgendaItem(t || u, id, Number(index), dto);
   }
 
   @Delete(':id/agenda/:index')

@@ -144,6 +144,18 @@ export class AddAgendaItemDto {
   type?: AgendaItemType;
 }
 
+// Every field optional — a PATCH editing only what the tenant changed
+// on an existing agenda item, unlike AddAgendaItemDto's required title.
+export class UpdateAgendaItemDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() title?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() presenter?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() durationMinutes?: number;
+  @ApiPropertyOptional({ enum: AgendaItemType })
+  @IsOptional()
+  @IsEnum(AgendaItemType)
+  type?: AgendaItemType;
+}
+
 // Creates a board-pack row the tenant is asking for but hasn't
 // received yet (fileUrl stays null until someone uploads against it
 // — see MeetingService#fulfillBoardPackDoc) — the reference

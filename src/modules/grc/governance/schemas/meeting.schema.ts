@@ -8,6 +8,12 @@ export enum MeetingAudienceType {
   COMMITTEE = 'Committee',
   EXECUTIVE = 'Executive',
   AD_HOC = 'Ad-hoc',
+  // Shareholder meetings — statutory, not tied to a board/committee
+  // roster, so they fall through the same "no auto roster, manual
+  // attendees" path as Executive/Ad-hoc (see
+  // MeetingService#computeAutoAttendees/assertManualAttendeesAllowed).
+  AGM = 'AGM',
+  EGM = 'EGM',
 }
 
 export enum MeetingMode {
@@ -360,6 +366,7 @@ export enum MinuteSectionKind {
   NOTING = 'Noting',
   DISCUSSION = 'Discussion',
   RESOLUTION = 'Resolution',
+  INFORMATIONAL = 'Informational',
 }
 
 export enum MinutesDraftStatus {

@@ -31,6 +31,7 @@ import {
   CreateMeetingDto,
   AddAttendeeDto,
   AddAgendaItemDto,
+  UpdateAgendaItemDto,
   UpdateNotesDto,
   UpdateMinutesDto,
   RecordAttendanceDto,
@@ -291,6 +292,48 @@ export class MeetingService {
       type: dto.type ?? AgendaItemType.NOTING,
     } as any);
     meeting.markModified('agenda');
+    await meeting.save();
+    return meeting;
+  }
+
+  async updateAgendaItem(
+    tenantId: string,
+    id: string,
+    index: number,
+    dto: UpdateAgendaItemDto,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const item = meeting.agenda[index];
+    if (!item) throw new NotFoundException('Agenda item not found');
+    if (
+      dto.presenter &&
+      meeting.attendees.length > 0 &&
+      !meeting.attendees.some(
+        (a) =>
+          a.name.trim().toLowerCase() === dto.presenter!.trim().toLowerCase(),
+      )
+    ) {
+      throw new BadRequestException(
+        "The presenter must be one of this meeting's attendees.",
+      );
+    }
+    const previousTitle = item.title;
+    if (dto.title !== undefined) item.title = dto.title;
+    if (dto.presenter !== undefined) item.presenter = dto.presenter;
+    if (dto.durationMinutes !== undefined)
+      item.durationMinutes = dto.durationMinutes;
+    if (dto.type !== undefined) item.type = dto.type;
+    meeting.markModified('agenda');
+    // Renaming an item keeps any board-pack documents filed under its
+    // old title pointed at the new one, rather than silently orphaning
+    // them into the general bucket — the opposite of removeAgendaItem
+    // below, which deliberately clears the link when the item is gone.
+    if (dto.title !== undefined && dto.title !== previousTitle) {
+      meeting.boardPack.forEach((d) => {
+        if (d.agendaItemTitle === previousTitle) d.agendaItemTitle = dto.title!;
+      });
+      meeting.markModified('boardPack');
+    }
     await meeting.save();
     return meeting;
   }
