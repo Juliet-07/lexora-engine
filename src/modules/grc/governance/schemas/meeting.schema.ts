@@ -373,9 +373,55 @@ export enum MinutesDraftStatus {
   DRAFT = 'Draft',
   SENT_FOR_CHAIR_REVIEW = 'Sent for Chair review',
   CHAIR_APPROVED = 'Chair approved',
-  TABLED_FOR_BOARD_ADOPTION = 'Tabled for Board adoption',
+  // Value renamed from 'Tabled for Board adoption' (PO feedback, Oct
+  // 2026: "it shouldn't be only board adoption, it should just be
+  // tabled for adoption") — this stage now covers every meeting type,
+  // not only Board. The enum KEY is left as-is to avoid churning every
+  // existing reference to it.
+  TABLED_FOR_BOARD_ADOPTION = 'Tabled for adoption',
   ADOPTED_AND_SIGNED = 'Adopted and signed',
 }
+
+// Decision on a single chair-review round. Mirrors the string style of
+// MinutesReview.decision ('approved' | 'changes-requested') rather than
+// the ESG module's Approved/Declined caps enum, since this sits right
+// next to that exact mechanism and both now live on the same meeting.
+export enum MinutesApprovalDecision {
+  PENDING = 'Pending',
+  APPROVED = 'Approved',
+  CHANGES_REQUESTED = 'Changes requested',
+}
+
+// ── Chair review — "the tenant should be able to send the minutes to
+// the chair (board or committee) for review and approval" (PO, Oct
+// 2026). Modeled directly on the ESG module's two-party approval chain
+// (EsgCommitteeChairApproval/EsgBoardChairApproval): a Board or
+// Committee meeting's chair is always a real board member and reviews
+// in-app from the board portal (`boardMemberId` set, no `token`);
+// every other meeting type's chair reviews via an emailed public link
+// (`token` set, no `boardMemberId`) — exactly one of the two is ever
+// populated for a given review, decided once by resolveChairForReview
+// at send time and never mixed. Approving here is what auto-advances
+// minutesDraft.status to Chair approved (MeetingService#decideChairReview
+// / decideChairReviewAsBoardMember) — no separate tenant action needed.
+@Schema({ _id: false })
+export class MinutesChairReview {
+  @Prop({ type: Types.ObjectId, ref: 'BoardMember', default: null })
+  boardMemberId: Types.ObjectId | null;
+  @Prop({ default: '' }) name: string;
+  @Prop({ default: '', lowercase: true }) email: string;
+  @Prop({ default: null }) token: string | null;
+  @Prop({
+    enum: MinutesApprovalDecision,
+    default: MinutesApprovalDecision.PENDING,
+  })
+  decision: MinutesApprovalDecision;
+  @Prop({ default: '' }) notes: string;
+  @Prop({ default: null }) requestedAt: Date | null;
+  @Prop({ default: null }) decidedAt: Date | null;
+}
+export const MinutesChairReviewSchema =
+  SchemaFactory.createForClass(MinutesChairReview);
 
 export enum MinuteResolutionOutcome {
   PASSED = 'Passed',
@@ -436,6 +482,26 @@ export class MinutesDraft {
   status: MinutesDraftStatus;
   @Prop({ default: null }) updatedAt: Date | null;
   @Prop({ default: null }) updatedBy: string | null;
+
+  // Set by MeetingService#sendMinutesForChairReview, decided by
+  // decideChairReview (public) or decideChairReviewAsBoardMember
+  // (board portal). Null until the first "Send for Chair review".
+  @Prop({ type: MinutesChairReviewSchema, default: null })
+  chairReview: MinutesChairReview | null;
+
+  // Board/Committee attendees "adopt" in-app — this is their half of
+  // the adoption step, parallel to the meeting-level
+  // minutesReviews/minutesReviewTokens mechanism, which stays
+  // unchanged as the OTHER meeting types' (Executive/Ad-hoc/AGM/EGM)
+  // public-link half (committee members are themselves board members,
+  // per the PO's own correction, so Board and Committee meetings both
+  // use this board-portal path; everyone else uses the public link).
+  // Reuses the existing MinutesReview shape rather than inventing a
+  // new one — only the 'approved' decision is ever written here (the
+  // board-portal "Adopt" action has no decline path, unlike chair
+  // review), but the shape stays general in case that changes.
+  @Prop({ type: [MinutesReviewSchema], default: [] })
+  boardAdoptions: MinutesReview[];
 }
 export const MinutesDraftSchema = SchemaFactory.createForClass(MinutesDraft);
 

@@ -39,6 +39,8 @@ import {
   ToggleBoardPackReadDto,
   AddBoardPackNoteDto,
   SubmitMeetingConflictDto,
+  DecideMinutesChairReviewDto,
+  SubmitBoardAdoptionDto,
 } from 'src/modules/grc/governance/dtos/index.dto';
 import { CompleteBoardTrainingDto } from 'src/modules/grc/governance/dtos/board-training.dto';
 import { EsgFrameworkService } from '../grc/esg/services';
@@ -270,6 +272,50 @@ export class BoardPortalController {
       boardMemberId,
       name,
       email,
+      dto,
+    );
+  }
+
+  @Post('meetings/:id/minutes/chair-review/decide')
+  @ApiOperation({
+    summary:
+      "The signed-in Board/Committee Chair's decision on a minutes " +
+      'chair-review request — approving auto-advances the minutes to ' +
+      'Chair approved',
+  })
+  async decideMinutesChairReview(
+    @Param('id') id: string,
+    @Body() dto: DecideMinutesChairReviewDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.meetingService.decideChairReviewAsBoardMember(
+      tenantId,
+      boardMemberId,
+      id,
+      dto,
+    );
+  }
+
+  @Post('meetings/:id/minutes/adopt')
+  @ApiOperation({
+    summary:
+      "Adopt a Board/Committee meeting's minutes, in-app — once every " +
+      'attendee has adopted, the minutes are automatically Adopted and signed',
+  })
+  async adoptMinutes(
+    @Param('id') id: string,
+    @Body() dto: SubmitBoardAdoptionDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { tenantId, name, email } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.meetingService.submitBoardAdoption(
+      tenantId,
+      id,
+      email,
+      name,
       dto,
     );
   }

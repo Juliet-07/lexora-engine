@@ -341,3 +341,21 @@ export class SetMinutesDraftStatusDto {
   @IsEnum(MinutesDraftStatus)
   status: MinutesDraftStatus;
 }
+
+// Decision on a chair-review round — shared by the public
+// minutes-chair-review/:token route and the board-portal
+// decide-chair-review route, mirroring SubmitMinutesReviewDto's own
+// 'approved' | 'changes-requested' string style.
+export class DecideMinutesChairReviewDto {
+  @ApiProperty({ enum: ['approved', 'changes-requested'] })
+  @IsEnum(['approved', 'changes-requested'])
+  decision: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+}
+
+// A board-portal attendee "adopting" the minutes — no decision field,
+// since (unlike chair review) there is no decline path here; just an
+// optional note.
+export class SubmitBoardAdoptionDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() comment?: string;
+}

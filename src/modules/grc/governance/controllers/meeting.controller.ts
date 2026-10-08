@@ -46,6 +46,7 @@ import {
   SubmitPublicNoticeRsvpDto,
   UpdateMinutesDraftDto,
   SetMinutesDraftStatusDto,
+  DecideMinutesChairReviewDto,
   RecordMeetingConflictDto,
   AddBoardPackRequirementDto,
   UpdateBoardPackDueDateDto,
@@ -563,6 +564,28 @@ export class MeetingController {
     );
   }
 
+  @Post(':id/minutes-draft/send-for-chair-review')
+  @ApiOperation({
+    summary:
+      'Send the minutes to the meeting Chair for review and approval — ' +
+      'Board/Committee chairs review in-app on the board portal, every ' +
+      'other meeting type reviews via an emailed public link',
+  })
+  async sendMinutesForChairReview(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    return this.meetingService.sendMinutesForChairReview(
+      tenantId,
+      id,
+      businessName,
+      businessName,
+    );
+  }
+
   @Post(':id/mark-held')
   markHeld(
     @Param('id') id: string,
@@ -714,5 +737,27 @@ export class MeetingController {
     @Body() dto: SubmitMinutesReviewDto,
   ) {
     return this.meetingService.submitMinutesReview(token, dto);
+  }
+
+  @Public()
+  @Get('minutes-chair-review/:token')
+  @ApiOperation({
+    summary:
+      'Public — fetch the Chair review page snapshot for a token ' +
+      '(Executive/Ad-hoc/AGM/EGM meetings only — Board/Committee chairs ' +
+      'review on the board portal instead)',
+  })
+  getChairReviewSnapshot(@Param('token') token: string) {
+    return this.meetingService.getChairReviewSnapshot(token);
+  }
+
+  @Public()
+  @Post('minutes-chair-review/:token')
+  @ApiOperation({ summary: "Public — submit the Chair's review decision" })
+  decideChairReview(
+    @Param('token') token: string,
+    @Body() dto: DecideMinutesChairReviewDto,
+  ) {
+    return this.meetingService.decideChairReview(token, dto);
   }
 }

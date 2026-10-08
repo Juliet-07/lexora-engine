@@ -22,6 +22,8 @@ import {
   MeetingConflictSource,
   ConflictType,
   AgendaItemType,
+  MinutesApprovalDecision,
+  CommitteeMemberRole,
 } from '../schemas';
 import {
   MEETING_CHECKLIST_ITEMS,
@@ -47,6 +49,8 @@ import {
   SubmitPublicNoticeRsvpDto,
   UpdateMinutesDraftDto,
   SetMinutesDraftStatusDto,
+  DecideMinutesChairReviewDto,
+  SubmitBoardAdoptionDto,
   ToggleBoardPackReadDto,
   AddBoardPackNoteDto,
   RecordMeetingConflictDto,
@@ -608,6 +612,7 @@ export class MeetingService {
 
   async updateMinutes(tenantId: string, id: string, dto: UpdateMinutesDto) {
     const meeting = await this.getById(tenantId, id);
+    this.assertMinutesNotAdopted(meeting);
     meeting.minutes = dto.minutes;
     await meeting.save();
     return meeting;
@@ -714,6 +719,12 @@ export class MeetingService {
     return meeting;
   }
 
+  // Tenant action: "send the minutes to all attendees" for adoption —
+  // only reachable once the Chair has approved (PO, Oct 2026: "when
+  // chair has reviewed and approved, then tenant sends the minute to
+  // all attendees"). Board/Committee attendees adopt in-app from their
+  // board portal (they're real board members); every other meeting
+  // type's attendees get the existing emailed public review link.
   async sendMinutes(tenantId: string, id: string, businessName: string) {
     const meeting = await this.getById(tenantId, id);
     if (meeting.status !== MeetingStatus.HELD) {
@@ -723,6 +734,21 @@ export class MeetingService {
     }
     if (!meeting.minutes?.trim()) {
       throw new BadRequestException('Write the minutes before sending them.');
+    }
+    // Chair approved → first send, which tables it for adoption below.
+    // Already Tabled for adoption → this is a resend/reminder, still
+    // allowed (e.g. a late attendee). Anything earlier (not yet
+    // reviewed) or later (already Adopted and signed) is blocked.
+    const minutesStatus = meeting.minutesDraft?.status;
+    if (
+      minutesStatus !== MinutesDraftStatus.CHAIR_APPROVED &&
+      minutesStatus !== MinutesDraftStatus.TABLED_FOR_BOARD_ADOPTION
+    ) {
+      throw new BadRequestException(
+        minutesStatus === MinutesDraftStatus.ADOPTED_AND_SIGNED
+          ? 'These minutes have already been adopted and signed.'
+          : 'The Chair must review and approve these minutes before they can be sent to attendees for adoption.',
+      );
     }
 
     const pdfBuffer = await this.generateMinutesPdf(meeting, businessName);
@@ -750,14 +776,22 @@ export class MeetingService {
       recipients.push({ name: meeting.chair, email: chairEmail });
     }
 
+    const boardPortal = this.isBoardPortalMeetingType(meeting.type);
     const reviewLinkByEmail = new Map<string, string>();
-    for (const r of recipients) {
-      const token = this.ensureMinutesReviewToken(meeting, r.email, r.name);
-      reviewLinkByEmail.set(
-        r.email.toLowerCase(),
-        `${process.env.TENANT_APP_URL}/minutes-review/${token}`,
-      );
+    if (!boardPortal) {
+      // Executive / Ad-hoc / AGM / EGM — the existing emailed,
+      // public-token review link, unchanged.
+      for (const r of recipients) {
+        const token = this.ensureMinutesReviewToken(meeting, r.email, r.name);
+        reviewLinkByEmail.set(
+          r.email.toLowerCase(),
+          `${process.env.TENANT_APP_URL}/minutes-review/${token}`,
+        );
+      }
     }
+    meeting.minutesDraft.status = MinutesDraftStatus.TABLED_FOR_BOARD_ADOPTION;
+    meeting.minutesDraft.updatedAt = new Date();
+    meeting.markModified('minutesDraft');
     await meeting.save();
 
     await Promise.all(
@@ -768,7 +802,14 @@ export class MeetingService {
               to: r.email,
               attendeeName: r.name,
               meetingTitle: meeting.title,
-              reviewLink: reviewLinkByEmail.get(r.email.toLowerCase())!,
+              // Board/Committee attendees already have a portal login
+              // and see this meeting there — point them at the board
+              // portal's own Meetings page instead of a public token
+              // link, mirroring dispatch()'s existing boardPortalLink
+              // convention.
+              reviewLink: boardPortal
+                ? `${process.env.BOARD_APP_URL}/meetings`
+                : reviewLinkByEmail.get(r.email.toLowerCase())!,
               businessName,
             },
             attachments,
@@ -1501,7 +1542,7 @@ export class MeetingService {
     actorName: string,
   ) {
     const meeting = await this.getById(tenantId, id);
-    const prevStatus = meeting.minutesDraft?.status ?? MinutesDraftStatus.DRAFT;
+    this.assertMinutesNotAdopted(meeting);
     meeting.minutesDraft = {
       chair: dto.chair ?? meeting.minutesDraft?.chair ?? '',
       minuteTaker: dto.minuteTaker ?? meeting.minutesDraft?.minuteTaker ?? '',
@@ -1509,7 +1550,13 @@ export class MeetingService {
       conflicts: dto.conflicts ?? meeting.minutesDraft?.conflicts ?? '',
       sections: dto.sections as any,
       actions: dto.actions as any,
-      status: prevStatus,
+      status: meeting.minutesDraft?.status ?? MinutesDraftStatus.DRAFT,
+      // Carried forward untouched — this save is about the content
+      // (sections/actions/etc.), never the workflow state, which is
+      // only ever changed by the dedicated review/send/decide actions
+      // below.
+      chairReview: meeting.minutesDraft?.chairReview ?? null,
+      boardAdoptions: meeting.minutesDraft?.boardAdoptions ?? [],
       updatedAt: new Date(),
       updatedBy: actorName,
     } as any;
@@ -1518,6 +1565,111 @@ export class MeetingService {
     return meeting;
   }
 
+  // Tenant action: send the minutes to the meeting's Chair for review
+  // and approval (PO, Oct 2026). A Board meeting's chair is the
+  // current Board Chair and a Committee meeting's chair is that
+  // committee's Chair-role member — both real board members, so they
+  // review in-app from the board portal. Every other meeting type's
+  // named chair reviews via an emailed public link, resolved against
+  // the meeting's own attendees. Re-callable from Draft, or again
+  // after the Chair has requested changes, to resend a revised draft.
+  async sendMinutesForChairReview(
+    tenantId: string,
+    id: string,
+    businessName: string,
+    actorName: string,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    if (meeting.status !== MeetingStatus.HELD) {
+      throw new BadRequestException(
+        'Mark the meeting as held before sending minutes for review.',
+      );
+    }
+    if (!meeting.minutes?.trim()) {
+      throw new BadRequestException(
+        'Generate the final minutes before sending them for review.',
+      );
+    }
+    const currentStatus =
+      meeting.minutesDraft?.status ?? MinutesDraftStatus.DRAFT;
+    if (
+      currentStatus !== MinutesDraftStatus.DRAFT &&
+      currentStatus !== MinutesDraftStatus.SENT_FOR_CHAIR_REVIEW
+    ) {
+      throw new BadRequestException(
+        'These minutes have already passed Chair review.',
+      );
+    }
+    // Minutes can be generated (meeting.minutes) from the structured
+    // drafter without ever saving a minutesDraft (e.g. the older,
+    // free-text flow) — fall back to a fresh one here rather than
+    // crashing, matching updateMinutesDraft's own field defaults.
+    if (!meeting.minutesDraft) {
+      meeting.minutesDraft = {
+        chair: meeting.chair,
+        minuteTaker: '',
+        quorumText: '',
+        conflicts: '',
+        sections: [],
+        actions: [],
+        status: MinutesDraftStatus.DRAFT,
+        updatedAt: null,
+        updatedBy: null,
+        chairReview: null,
+        boardAdoptions: [],
+      } as any;
+    }
+
+    const draft = meeting.minutesDraft!;
+    const chair = await this.resolveChairForReview(tenantId, meeting);
+
+    const pdfBuffer = await this.generateMinutesPdf(meeting, businessName);
+    const dir = join(process.cwd(), 'uploads', 'grc', 'meetings', 'minutes');
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const filename = `${meeting._id}-${Date.now()}.pdf`;
+    writeFileSync(join(dir, filename), pdfBuffer);
+    meeting.minutesPdfUrl = `/uploads/grc/meetings/minutes/${filename}`;
+
+    const reviewToken =
+      chair.channel === 'public' ? randomBytes(24).toString('hex') : null;
+    draft.chairReview = {
+      boardMemberId: chair.boardMemberId as any,
+      name: chair.name,
+      email: chair.email,
+      token: reviewToken,
+      decision: MinutesApprovalDecision.PENDING,
+      notes: '',
+      requestedAt: new Date(),
+      decidedAt: null,
+    } as any;
+    draft.status = MinutesDraftStatus.SENT_FOR_CHAIR_REVIEW;
+    draft.updatedAt = new Date();
+    draft.updatedBy = actorName;
+    meeting.markModified('minutesDraft');
+    await meeting.save();
+
+    await this.emailService
+      .sendPolicyForAcknowledgment({
+        to: chair.email,
+        recipientName: chair.name,
+        policyTitle: `${meeting.title} — Minutes (Chair review)`,
+        ackLink:
+          chair.channel === 'board-portal'
+            ? `${process.env.BOARD_APP_URL}/meetings`
+            : `${process.env.TENANT_APP_URL}/minutes-chair-review/${reviewToken}`,
+        businessName,
+      })
+      .catch(() => {});
+
+    return meeting;
+  }
+
+  // Every forward transition is now automatic, driven by the Chair's
+  // review decision and attendee adoption — this endpoint only ever
+  // resets a draft back to Draft (e.g. to redo it after a Chair asked
+  // for changes, without resending), and is blocked entirely once the
+  // minutes have been adopted and signed, per the PO's "once adopted,
+  // minutes can no longer be edited".
   async setMinutesDraftStatus(
     tenantId: string,
     id: string,
@@ -1527,6 +1679,12 @@ export class MeetingService {
     const meeting = await this.getById(tenantId, id);
     if (!meeting.minutesDraft) {
       throw new BadRequestException('There is no minutes draft yet.');
+    }
+    this.assertMinutesNotAdopted(meeting);
+    if (dto.status !== MinutesDraftStatus.DRAFT) {
+      throw new BadRequestException(
+        'Use "Send for Chair review" or "Send to attendees" to advance the minutes status — it can only be reset to Draft here.',
+      );
     }
     meeting.minutesDraft.status = dto.status;
     meeting.minutesDraft.updatedAt = new Date();
@@ -1595,6 +1753,22 @@ export class MeetingService {
       // Minutes are only shown once formally sent — a director isn't
       // shown a draft/unsent minutes text.
       const minutesReady = !!m.minutesSentAt;
+
+      // Chair review / adoption — surfaced here rather than a separate
+      // dedicated page (this director's one place for everything
+      // pertaining to a meeting). chairReview.boardMemberId is only
+      // ever set for Board/Committee meetings (see
+      // MeetingService#resolveChairForReview), so isMyChairReview is
+      // naturally false for every other director on those meetings.
+      const draft = m.minutesDraft ?? null;
+      const chairReview = draft?.chairReview ?? null;
+      const isMyChairReview =
+        !!chairReview?.boardMemberId &&
+        chairReview.boardMemberId.toString() === boardMemberId;
+      const myBoardAdoption =
+        (draft?.boardAdoptions ?? []).find(
+          (r: any) => r.attendeeEmail?.toLowerCase() === lowerEmail,
+        ) ?? null;
       return {
         _id: m._id,
         title: m.title,
@@ -1610,6 +1784,31 @@ export class MeetingService {
         minutes: minutesReady ? (m.minutes ?? null) : null,
         minutesPdfUrl: minutesReady ? (m.minutesPdfUrl ?? null) : null,
         minutesSentAt: m.minutesSentAt ?? null,
+        minutesDraftStatus: draft?.status ?? null,
+        // This director's own pending/decided chair-review round —
+        // only populated when they're the resolved Chair for this
+        // meeting. Carries the PDF directly since minutesReady above
+        // only flips true once minutes are sent for adoption, a later
+        // stage than chair review.
+        myChairReview: isMyChairReview
+          ? {
+              decision: chairReview.decision,
+              notes: chairReview.notes,
+              requestedAt: chairReview.requestedAt,
+              decidedAt: chairReview.decidedAt,
+              pdfUrl: m.minutesPdfUrl ?? null,
+            }
+          : null,
+        // Whether THIS attendee can/has adopted the minutes.
+        myBoardAdoption: myBoardAdoption
+          ? {
+              decision: myBoardAdoption.decision,
+              submittedAt: myBoardAdoption.submittedAt,
+            }
+          : null,
+        canAdoptMinutes:
+          draft?.status === MinutesDraftStatus.TABLED_FOR_BOARD_ADOPTION &&
+          !myBoardAdoption,
         notice: m.notice?.dispatchedAt
           ? {
               body: m.notice.body,
@@ -2040,8 +2239,272 @@ export class MeetingService {
       submittedAt: new Date(),
     } as any);
     meeting.markModified('minutesReviews');
+    this.maybeFinalizeAdoption(meeting);
     await meeting.save();
     return { success: true };
+  }
+
+  // ── Public — minutes CHAIR review, no auth (Executive/Ad-hoc/AGM/
+  // EGM meetings — Board/Committee chairs review in-app from the
+  // board portal instead; see the BoardPortalController routes). ───
+
+  async getChairReviewSnapshot(token: string) {
+    const meeting = await this.meetingModel
+      .findOne({ 'minutesDraft.chairReview.token': token })
+      .lean();
+    if (!meeting) throw new NotFoundException('This review link is invalid.');
+    const review = (meeting as any).minutesDraft.chairReview;
+    return {
+      title: meeting.title,
+      type: meeting.type,
+      date: meeting.date,
+      pdfUrl: meeting.minutesPdfUrl,
+      prefillName: review.name,
+      decision: review.decision,
+      notes: review.notes,
+      decidedAt: review.decidedAt,
+    };
+  }
+
+  async decideChairReview(token: string, dto: DecideMinutesChairReviewDto) {
+    const meeting = await this.meetingModel.findOne({
+      'minutesDraft.chairReview.token': token,
+    });
+    if (!meeting) throw new NotFoundException('This review link is invalid.');
+    return this.recordChairReviewDecision(meeting, dto);
+  }
+
+  // ── Board portal — the Chair (Board or Committee) deciding in-app.
+
+  async decideChairReviewAsBoardMember(
+    tenantId: string,
+    boardMemberId: string,
+    meetingId: string,
+    dto: DecideMinutesChairReviewDto,
+  ) {
+    const meeting = await this.getById(tenantId, meetingId);
+    const review = meeting.minutesDraft?.chairReview;
+    if (!review || !review.boardMemberId) {
+      throw new ForbiddenException(
+        'You have not been asked to review these minutes.',
+      );
+    }
+    if (review.boardMemberId.toString() !== boardMemberId) {
+      throw new ForbiddenException(
+        'You have not been asked to review these minutes.',
+      );
+    }
+    return this.recordChairReviewDecision(meeting, dto);
+  }
+
+  private async recordChairReviewDecision(
+    meeting: GovernanceMeetingDocument,
+    dto: DecideMinutesChairReviewDto,
+  ) {
+    if (!meeting.minutesDraft) {
+      throw new NotFoundException('This review link is invalid.');
+    }
+    const review = meeting.minutesDraft.chairReview;
+    if (!review) throw new NotFoundException('This review link is invalid.');
+    if (review.decision !== MinutesApprovalDecision.PENDING) {
+      throw new BadRequestException('This review has already been recorded.');
+    }
+
+    review.decision =
+      dto.decision === 'approved'
+        ? MinutesApprovalDecision.APPROVED
+        : MinutesApprovalDecision.CHANGES_REQUESTED;
+    review.notes = dto.notes ?? '';
+    review.decidedAt = new Date();
+
+    // Approving is what auto-advances the stage (PO, Oct 2026: "if the
+    // chair recieves and approves on their end it automatically moves
+    // to chair approved") — no separate tenant action needed. A
+    // changes-requested decision leaves the draft at Sent for Chair
+    // review, with the feedback visible, so the tenant can revise and
+    // resend via sendMinutesForChairReview.
+    if (review.decision === MinutesApprovalDecision.APPROVED) {
+      meeting.minutesDraft.status = MinutesDraftStatus.CHAIR_APPROVED;
+    }
+    meeting.minutesDraft.updatedAt = new Date();
+    meeting.markModified('minutesDraft');
+    await meeting.save();
+    return { success: true };
+  }
+
+  // ── Board portal — a Board/Committee attendee adopting the minutes.
+
+  async submitBoardAdoption(
+    tenantId: string,
+    meetingId: string,
+    email: string,
+    name: string,
+    dto: SubmitBoardAdoptionDto,
+  ) {
+    const meeting = await this.getById(tenantId, meetingId);
+    const lowerEmail = email.toLowerCase();
+    if (!meeting.minutesDraft) {
+      throw new BadRequestException(
+        'These minutes have not been sent for adoption yet.',
+      );
+    }
+    const draft = meeting.minutesDraft;
+    if (draft.status !== MinutesDraftStatus.TABLED_FOR_BOARD_ADOPTION) {
+      throw new BadRequestException(
+        'These minutes have not been sent for adoption yet.',
+      );
+    }
+    if (!meeting.attendees.some((a) => a.email.toLowerCase() === lowerEmail)) {
+      throw new ForbiddenException(
+        'You are not listed as an attendee of this meeting.',
+      );
+    }
+    if (
+      draft.boardAdoptions.some(
+        (r) =>
+          r.attendeeEmail.toLowerCase() === lowerEmail &&
+          r.decision === 'approved',
+      )
+    ) {
+      throw new BadRequestException('You have already adopted these minutes.');
+    }
+
+    draft.boardAdoptions.push({
+      attendeeEmail: lowerEmail,
+      attendeeName: name,
+      decision: 'approved',
+      comment: dto.comment ?? '',
+      submittedAt: new Date(),
+    } as any);
+    meeting.markModified('minutesDraft');
+    this.maybeFinalizeAdoption(meeting);
+    await meeting.save();
+    return { success: true };
+  }
+
+  // Board and Committee meetings are the two types the PO confirmed
+  // route through the board portal — their attendees (committee
+  // members included) are always real board members. Every other
+  // type (Executive/Ad-hoc/AGM/EGM) uses the public, emailed-link path.
+  private isBoardPortalMeetingType(type: string): boolean {
+    return type === 'Board' || type === 'Committee';
+  }
+
+  private assertMinutesNotAdopted(meeting: GovernanceMeetingDocument) {
+    if (
+      meeting.minutesDraft?.status === MinutesDraftStatus.ADOPTED_AND_SIGNED
+    ) {
+      throw new BadRequestException(
+        'These minutes have been adopted and signed and can no longer be edited.',
+      );
+    }
+  }
+
+  // Checked after every individual adoption (public or board-portal)
+  // — once every attendee has adopted, the stage is "properly closed"
+  // automatically (PO, Oct 2026), with no separate tenant action.
+  private maybeFinalizeAdoption(meeting: GovernanceMeetingDocument) {
+    if (
+      !meeting.minutesDraft ||
+      meeting.minutesDraft.status !==
+        MinutesDraftStatus.TABLED_FOR_BOARD_ADOPTION
+    ) {
+      return;
+    }
+    if (meeting.attendees.length === 0) return;
+
+    const approvals = this.isBoardPortalMeetingType(meeting.type)
+      ? meeting.minutesDraft.boardAdoptions
+      : meeting.minutesReviews;
+    const allAdopted = meeting.attendees.every((a) =>
+      approvals.some(
+        (r) =>
+          r.attendeeEmail.toLowerCase() === a.email.toLowerCase() &&
+          r.decision === 'approved',
+      ),
+    );
+    if (allAdopted) {
+      meeting.minutesDraft.status = MinutesDraftStatus.ADOPTED_AND_SIGNED;
+      meeting.minutesDraft.updatedAt = new Date();
+      meeting.markModified('minutesDraft');
+    }
+  }
+
+  // Resolves who reviews these minutes as Chair, and how. Board and
+  // Committee meetings always resolve to a real board member who
+  // reviews in-app (PO's own correction: committee members are
+  // themselves board members); every other meeting type resolves the
+  // named chair against the meeting's own attendees and reviews via a
+  // public emailed link — distinct from resolveChairEmail above, which
+  // only ever CCs an email and must keep its existing behaviour for
+  // dispatch()/sendMinutes().
+  private async resolveChairForReview(
+    tenantId: string,
+    meeting: GovernanceMeetingDocument,
+  ): Promise<{
+    channel: 'board-portal' | 'public';
+    boardMemberId: Types.ObjectId | null;
+    name: string;
+    email: string;
+  }> {
+    if (meeting.type === 'Board') {
+      const chair = await this.boardMemberService.getCurrentChair(tenantId);
+      if (!chair) {
+        throw new BadRequestException(
+          'No active Board Chair is set — assign a director the "Chair" role under Board Management before sending for review.',
+        );
+      }
+      return {
+        channel: 'board-portal',
+        boardMemberId: chair._id as any,
+        name: chair.name,
+        email: String(chair.email).toLowerCase(),
+      };
+    }
+
+    if (meeting.type === 'Committee' && meeting.committeeId) {
+      const committee = await this.committeeService.getById(
+        tenantId,
+        meeting.committeeId.toString(),
+      );
+      const chairMember = committee.members.find(
+        (m) => m.role === CommitteeMemberRole.CHAIR,
+      );
+      if (!chairMember) {
+        throw new BadRequestException(
+          `"${committee.name}" has no Chair assigned yet — assign one under Governance → Committees before sending for review.`,
+        );
+      }
+      if (!chairMember.boardMemberId) {
+        throw new BadRequestException(
+          `"${chairMember.name}" (this committee's Chair) is not linked to a board member record — relink them under Governance → Committees before sending for review.`,
+        );
+      }
+      return {
+        channel: 'board-portal',
+        boardMemberId: chairMember.boardMemberId as any,
+        name: chairMember.name,
+        email: String(chairMember.email).toLowerCase(),
+      };
+    }
+
+    // Executive / Ad-hoc / AGM / EGM — the named chair must be one of
+    // this meeting's own attendees; there's no roster to fall back to.
+    const chairName = meeting.chair?.trim().toLowerCase();
+    const attendee = meeting.attendees.find(
+      (a) => a.name.trim().toLowerCase() === chairName,
+    );
+    if (!attendee) {
+      throw new BadRequestException(
+        `The named chair "${meeting.chair}" is not listed as an attendee of this meeting — add them as an attendee first.`,
+      );
+    }
+    return {
+      channel: 'public',
+      boardMemberId: null,
+      name: attendee.name,
+      email: attendee.email.toLowerCase(),
+    };
   }
 
   private computeLocation(dto: {
