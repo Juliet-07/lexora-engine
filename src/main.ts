@@ -6,6 +6,7 @@ import { AppModule } from './app.module';
 import * as fs from 'fs';
 import { join } from 'path';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 import * as express from 'express';
 
 async function bootstrap() {
@@ -21,6 +22,13 @@ async function bootstrap() {
 
   app.use(express.json({ limit: '15mb' }));
   app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+
+  // ─── Real-time (Socket.IO) ──────────────────────────────────
+  // Explicit, rather than relying on Nest's default — this is the
+  // platform's first WebSocket gateway (RealtimeGateway, for the
+  // board portal's live notifications/messaging), so there's no
+  // prior setup to fall back on.
+  app.useWebSocketAdapter(new IoAdapter(app));
 
   // ─── Global Prefix ──────────────────────────────────────────
   app.setGlobalPrefix('api');

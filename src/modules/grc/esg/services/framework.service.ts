@@ -42,6 +42,12 @@ import {
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  BOARD_NOTIFICATION_EVENT,
+  BoardNotificationEvent,
+  BoardNotificationType,
+} from 'src/modules/board/board-notification.event';
 
 const slugify = (s: string) =>
   s
@@ -63,6 +69,7 @@ export class EsgFrameworkService {
     private readonly boardMemberService: BoardMemberService,
     private readonly committeeService: CommitteeService,
     private readonly emailService: EmailService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // ── Frameworks — seed once, then fully tenant-owned ─────────
@@ -508,6 +515,30 @@ export class EsgFrameworkService {
     }
 
     await i.save();
+
+    // The Board Chair's own docket (getPendingForBoardChair below)
+    // only lists this once the ESG Committee Chair has approved —
+    // this is the moment it actually becomes actionable for them, so
+    // it's the right point to notify, not when sendForApproval first
+    // emailed both of them (see that method's own comment).
+    if (i.boardChairApproval?.boardMemberId) {
+      const boardChairUserId =
+        await this.boardMemberService.getUserIdForBoardMember(
+          i.boardChairApproval.boardMemberId.toString(),
+        );
+      const notification: BoardNotificationEvent = {
+        tenantId: i.tenantId.toString(),
+        recipientBoardMemberId: i.boardChairApproval.boardMemberId.toString(),
+        recipientUserId: boardChairUserId,
+        type: BoardNotificationType.ESG,
+        title: `ESG disclosure awaiting your sign-off: ${i.code} — ${i.title}`,
+        description:
+          'The ESG Committee Chair has approved — your sign-off is next.',
+        link: '/e-signing',
+      };
+      this.eventEmitter.emit(BOARD_NOTIFICATION_EVENT, notification);
+    }
+
     return i.toObject();
   }
 

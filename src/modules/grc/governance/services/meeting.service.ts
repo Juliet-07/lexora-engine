@@ -79,6 +79,11 @@ import {
 import { buildReportPdf } from 'src/common/utils/pdf/report-builder.util';
 import * as PDFKitImport from 'pdfkit';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import {
+  BOARD_NOTIFICATION_EVENT,
+  BoardNotificationEvent,
+  BoardNotificationType,
+} from 'src/modules/board/board-notification.event';
 
 const PDFDocument = ((PDFKitImport as any).default ??
   PDFKitImport) as typeof import('pdfkit');
@@ -663,11 +668,12 @@ export class MeetingService {
     // "receive everything pertaining to it... both via email and on
     // their board portal" pattern already used for committees.
     const boardMembers = await this.boardMemberService.getAll(tenantId);
-    const boardMemberEmails = new Set(
+    const boardMemberByEmail = new Map(
       (boardMembers as any[])
-        .map((b) => b.email?.toLowerCase())
-        .filter(Boolean),
+        .filter((b) => b.email)
+        .map((b) => [b.email.toLowerCase(), b]),
     );
+    const boardMemberEmails = new Set(boardMemberByEmail.keys());
 
     // A real, unguessable token per recipient — persisted BEFORE any
     // email goes out, so tokens exist even if a send fails partway
@@ -716,6 +722,27 @@ export class MeetingService {
     meeting.status = MeetingStatus.SENT;
     meeting.sentAt = new Date();
     await meeting.save();
+
+    // In-app docket entry for every recipient who's also a real board
+    // member — alongside the email above, not instead of it (PO,
+    // Oct 2026: "Notifications feature should be made functional and
+    // real time"). Fire-and-forget: a notification failing to create
+    // should never fail the dispatch itself.
+    for (const r of recipients) {
+      const member = boardMemberByEmail.get(r.email.toLowerCase());
+      if (!member) continue;
+      const notification: BoardNotificationEvent = {
+        tenantId,
+        recipientBoardMemberId: member._id.toString(),
+        recipientUserId: member.userId ? member.userId.toString() : null,
+        type: BoardNotificationType.MEETING,
+        title: `Meeting notice: ${meeting.title}`,
+        description: `You've been sent the board pack for "${meeting.title}" — review and RSVP.`,
+        link: '/meetings',
+      };
+      this.eventEmitter.emit(BOARD_NOTIFICATION_EVENT, notification);
+    }
+
     return meeting;
   }
 
@@ -820,6 +847,26 @@ export class MeetingService {
 
     meeting.minutesSentAt = new Date();
     await meeting.save();
+
+    if (boardPortal) {
+      const members = await this.boardMemberService.getActiveMembersByEmails(
+        tenantId,
+        recipients.map((r) => r.email),
+      );
+      for (const m of members) {
+        const notification: BoardNotificationEvent = {
+          tenantId,
+          recipientBoardMemberId: m.boardMemberId,
+          recipientUserId: m.userId,
+          type: BoardNotificationType.MINUTES,
+          title: `Minutes tabled for adoption: ${meeting.title}`,
+          description: 'Adopt the minutes in your board portal.',
+          link: '/meetings',
+        };
+        this.eventEmitter.emit(BOARD_NOTIFICATION_EVENT, notification);
+      }
+    }
+
     return meeting;
   }
 
@@ -1139,11 +1186,12 @@ export class MeetingService {
     })) as any;
 
     const boardMembers = await this.boardMemberService.getAll(tenantId);
-    const boardMemberEmails = new Set(
+    const boardMemberByEmail = new Map(
       (boardMembers as any[])
-        .map((b) => b.email?.toLowerCase())
-        .filter(Boolean),
+        .filter((b) => b.email)
+        .map((b) => [b.email.toLowerCase(), b]),
     );
+    const boardMemberEmails = new Set(boardMemberByEmail.keys());
 
     // A real token per non-board-member recipient, so an Employee/
     // guest attendee with no portal login can still RSVP — mirrors
@@ -1185,6 +1233,21 @@ export class MeetingService {
           .catch(() => {}),
       ),
     );
+
+    for (const r of meeting.attendees) {
+      const member = boardMemberByEmail.get(r.email.toLowerCase());
+      if (!member) continue;
+      const notification: BoardNotificationEvent = {
+        tenantId,
+        recipientBoardMemberId: member._id.toString(),
+        recipientUserId: member.userId ? member.userId.toString() : null,
+        type: BoardNotificationType.MEETING,
+        title: `Meeting notice: ${meeting.title}`,
+        description: `RSVP requested for "${meeting.title}" — respond in your board portal.`,
+        link: '/meetings',
+      };
+      this.eventEmitter.emit(BOARD_NOTIFICATION_EVENT, notification);
+    }
 
     return meeting;
   }
@@ -1660,6 +1723,22 @@ export class MeetingService {
         businessName,
       })
       .catch(() => {});
+
+    if (chair.channel === 'board-portal' && chair.boardMemberId) {
+      const chairUserId = await this.boardMemberService.getUserIdForBoardMember(
+        chair.boardMemberId.toString(),
+      );
+      const notification: BoardNotificationEvent = {
+        tenantId,
+        recipientBoardMemberId: chair.boardMemberId.toString(),
+        recipientUserId: chairUserId,
+        type: BoardNotificationType.MINUTES,
+        title: `Minutes awaiting your review: ${meeting.title}`,
+        description: 'Review and approve the minutes in your board portal.',
+        link: '/meetings',
+      };
+      this.eventEmitter.emit(BOARD_NOTIFICATION_EVENT, notification);
+    }
 
     return meeting;
   }

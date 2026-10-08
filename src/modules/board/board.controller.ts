@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -41,11 +42,17 @@ import {
   SubmitMeetingConflictDto,
   DecideMinutesChairReviewDto,
   SubmitBoardAdoptionDto,
+  AddSkillDto,
 } from 'src/modules/grc/governance/dtos/index.dto';
 import { CompleteBoardTrainingDto } from 'src/modules/grc/governance/dtos/board-training.dto';
 import { EsgFrameworkService } from '../grc/esg/services';
 import { DecideBoardChairApprovalDto } from '../grc/esg/dtos';
-import { BoardDashboardService } from './services';
+import {
+  BoardDashboardService,
+  BoardMessagingService,
+  BoardNotificationService,
+} from './services';
+import { SendBoardMessageDto, UpdateMyBoardProfileDto } from './dtos/index.dto';
 
 const trainingProofStorage = diskStorage({
   destination: (_req, _file, cb) => {
@@ -93,12 +100,141 @@ export class BoardPortalController {
     private readonly boardDashboardService: BoardDashboardService,
     private readonly boardTrainingService: BoardTrainingService,
     private readonly service: EsgFrameworkService,
+    private readonly messagingService: BoardMessagingService,
+    private readonly notificationService: BoardNotificationService,
   ) {}
 
   @Get('me')
   @ApiOperation({ summary: "The signed-in board member's own profile" })
   getMe(@CurrentUser('sub') userId: string) {
     return this.boardMemberService.getMyProfile(userId);
+  }
+
+  @Patch('me')
+  @ApiOperation({
+    summary:
+      "Edit the signed-in board member's own phone/email — Profile & " +
+      'Settings. Password changes go through the existing ' +
+      '/auth/change-password endpoint instead.',
+  })
+  updateMe(
+    @Body() dto: UpdateMyBoardProfileDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.boardMemberService.updateMyProfile(userId, dto);
+  }
+
+  // ── Board Directory — "board members are able to see other board
+  // members and message them" ─────────────────────────────────────
+
+  @Get('directory')
+  @ApiOperation({
+    summary: "Every other active director on this director's own board",
+  })
+  getDirectory(@CurrentUser('sub') userId: string) {
+    return this.boardMemberService.getDirectoryForPortal(userId);
+  }
+
+  @Get('messages/threads')
+  @ApiOperation({ summary: 'My message threads, most recent first' })
+  getMessageThreads(@CurrentUser('sub') userId: string) {
+    return this.messagingService.getThreads(userId);
+  }
+
+  @Get('messages/:counterpartId')
+  @ApiOperation({
+    summary: 'Full message history with one other director',
+  })
+  getMessageThread(
+    @Param('counterpartId') counterpartId: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.messagingService.getThread(userId, counterpartId);
+  }
+
+  @Post('messages/:counterpartId')
+  @ApiOperation({ summary: 'Send a message to another director' })
+  sendMessage(
+    @Param('counterpartId') counterpartId: string,
+    @Body() dto: SendBoardMessageDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.messagingService.sendMessage(userId, counterpartId, dto);
+  }
+
+  // ── Skills Matrix — "see the skills matrix of other board members
+  // and also submit additional skills of their own" ───────────────
+
+  @Get('skills-matrix')
+  @ApiOperation({
+    summary: 'Every director on this board and their recorded skills',
+  })
+  getSkillsMatrix(@CurrentUser('sub') userId: string) {
+    return this.boardMemberService.getSkillsMatrixForPortal(userId);
+  }
+
+  @Post('skills')
+  @ApiOperation({
+    summary:
+      "Submit a skill of the signed-in director's own, in case the " +
+      "tenant hasn't recorded it yet — shows immediately on the " +
+      'matrix, tagged as self-submitted',
+  })
+  addMySkill(@Body() dto: AddSkillDto, @CurrentUser('sub') userId: string) {
+    return this.boardMemberService.addMySkill(userId, dto);
+  }
+
+  @Delete('skills/:index')
+  @ApiOperation({
+    summary:
+      'Withdraw a skill the signed-in director submitted themselves ' +
+      '— not one the tenant added',
+  })
+  removeMySkill(
+    @Param('index') index: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.boardMemberService.removeMySkill(userId, Number(index));
+  }
+
+  // ── Notifications — functional, real-time (Socket.IO, see
+  // RealtimeGateway); these REST routes are the initial list/unread
+  // count and mark-read actions, the live push arrives separately
+  // over the 'notification:new' socket event. ─────────────────────
+
+  @Get('notifications')
+  @ApiOperation({ summary: 'My notifications, newest first' })
+  async getMyNotifications(@CurrentUser('sub') userId: string) {
+    const { boardMemberId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.notificationService.getMyNotifications(boardMemberId);
+  }
+
+  @Get('notifications/unread-count')
+  @ApiOperation({ summary: 'Real, live unread count — for a badge' })
+  async getUnreadNotificationCount(@CurrentUser('sub') userId: string) {
+    const { boardMemberId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.notificationService.getUnreadCount(boardMemberId);
+  }
+
+  @Post('notifications/:id/read')
+  @ApiOperation({ summary: 'Mark one notification read' })
+  async markNotificationRead(
+    @Param('id') id: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { boardMemberId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.notificationService.markRead(boardMemberId, id);
+  }
+
+  @Post('notifications/mark-all-read')
+  @ApiOperation({ summary: 'Mark every notification read' })
+  async markAllNotificationsRead(@CurrentUser('sub') userId: string) {
+    const { boardMemberId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.notificationService.markAllRead(boardMemberId);
   }
 
   @Get('dashboard')

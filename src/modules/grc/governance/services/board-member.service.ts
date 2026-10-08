@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -14,6 +15,7 @@ import {
   BoardMemberLifecycleStatus,
   BoardOnboardingStageId,
   BoardSignableDocument,
+  SkillAddedBy,
   SUCCESSION_STAGE_DEFS,
   KNOWLEDGE_TRANSFER_CHECKLIST_DEFAULTS,
   ONBOARDING_CHECKLIST_DEFAULTS,
@@ -952,6 +954,7 @@ export class BoardMemberService {
       yearsExperience: dto.yearsExperience ?? 0,
       qualified: dto.qualified ?? true,
       notes: dto.notes ?? '',
+      addedBy: SkillAddedBy.TENANT,
     } as any);
     member.markModified('skills');
     await member.save();
@@ -964,6 +967,68 @@ export class BoardMemberService {
     member.markModified('skills');
     await member.save();
     return member;
+  }
+
+  // ── Board portal, self-service — Skills Matrix ──────────────────
+  // "Board member can see the skills matrix of other board members
+  // and also submit additional skills of their own (in the case that
+  // the tenant has not added it)" (PO, Oct 2026). Reuses the exact
+  // same `skills` array the tenant's own Board Mgt matrix reads/writes
+  // — one shared collection, not a parallel one — tagged `addedBy` so
+  // a self-submitted entry is distinguishable without needing a
+  // separate approval step before it shows up anywhere.
+  async getSkillsMatrixForPortal(userId: string) {
+    const { tenantId } = await this.resolveBoardMember(userId);
+    const members = await this.boardMemberModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        lifecycleStatus: { $ne: BoardMemberLifecycleStatus.OFFBOARDED },
+      })
+      .select('name role skills')
+      .sort({ name: 1 })
+      .lean();
+    return members.map((m) => ({
+      boardMemberId: m._id,
+      name: m.name,
+      role: m.role,
+      skills: m.skills ?? [],
+    }));
+  }
+
+  async addMySkill(userId: string, dto: AddSkillDto) {
+    const member = await this.getByUserId(userId);
+    member.skills.push({
+      name: dto.name,
+      category: dto.category,
+      level: dto.level,
+      yearsExperience: dto.yearsExperience ?? 0,
+      qualified: dto.qualified ?? true,
+      notes: dto.notes ?? '',
+      addedBy: SkillAddedBy.SELF,
+    } as any);
+    member.markModified('skills');
+    await member.save();
+    return member.skills;
+  }
+
+  // A director may only withdraw a skill they submitted themselves —
+  // never one the tenant added, even one about them — so this re-uses
+  // getByUserId (scoped to the caller's own record) rather than the
+  // tenant controller's getById(tenantId, id), and additionally checks
+  // `addedBy` before letting the index be spliced at all.
+  async removeMySkill(userId: string, index: number) {
+    const member = await this.getByUserId(userId);
+    const entry = member.skills[index];
+    if (!entry) throw new NotFoundException('Skill not found');
+    if (entry.addedBy !== SkillAddedBy.SELF) {
+      throw new ForbiddenException(
+        'You can only remove a skill you submitted yourself.',
+      );
+    }
+    member.skills.splice(index, 1);
+    member.markModified('skills');
+    await member.save();
+    return member.skills;
   }
 
   // ── Remuneration ─────────────────────────────────────────────
@@ -1307,11 +1372,18 @@ export class BoardMemberService {
       this.userModel,
       member.tenantId.toString(),
     );
+    // Phone lives only on the User doc (BoardMember has no phone
+    // field of its own — see updateMyProfile below), so it's read
+    // from there for the Profile & Settings page.
+    const user = member.userId
+      ? await this.userModel.findById(member.userId).select('phone').lean()
+      : null;
     return {
       id: member._id,
       name: member.name,
       role: member.role,
       email: member.email,
+      phone: user?.phone ?? '',
       appointedAt: member.appointedAt,
       termEnds: member.termEnds,
       lifecycleStatus: member.lifecycleStatus,
@@ -1335,6 +1407,130 @@ export class BoardMemberService {
       // figure. Not paginated: a director's own log is never large.
       training: member.training ?? [],
     };
+  }
+
+  // Board portal, self-service — "Board member can edit their own
+  // details, like phone number and email and it updates the db"
+  // (PO, Oct 2026). Password changes reuse AuthController's existing
+  // /auth/change-password as-is (already works for every UserType,
+  // BOARD_MEMBER included) — no backend change needed for that half.
+  //
+  // Phone only ever lives on the User doc, so a phone edit is a
+  // single update there. Email is genuinely duplicated — `User.email`
+  // is what the director actually logs in with, `BoardMember.email`
+  // is what every directory/meeting-attendee/contract lookup matches
+  // against — so both are written together here, unlike the tenant's
+  // own BoardMemberService#update(), which (a pre-existing
+  // inconsistency, left alone since it's outside this ask) only ever
+  // touches the BoardMember copy. A changed email is checked for
+  // uniqueness first, the same guard `create()` already applies when
+  // a director is first appointed.
+  async updateMyProfile(
+    userId: string,
+    dto: { phone?: string; email?: string },
+  ) {
+    const member = await this.getByUserId(userId);
+    if (!member.userId) {
+      throw new BadRequestException(
+        'This board member has no linked portal account.',
+      );
+    }
+    const userUpdate: Record<string, unknown> = {};
+
+    if (dto.phone !== undefined) {
+      userUpdate.phone = dto.phone;
+    }
+
+    if (dto.email !== undefined) {
+      const email = dto.email.toLowerCase().trim();
+      if (!email) throw new BadRequestException('Email cannot be empty.');
+      if (email !== member.email) {
+        const taken = await this.userModel.findOne({
+          email,
+          _id: { $ne: member.userId },
+        });
+        if (taken) {
+          throw new ConflictException('That email address is already in use.');
+        }
+        userUpdate.email = email;
+        member.email = email;
+      }
+    }
+
+    if (Object.keys(userUpdate).length > 0) {
+      await this.userModel.findByIdAndUpdate(member.userId, userUpdate);
+    }
+    await member.save();
+    return this.getMyProfile(userId);
+  }
+
+  // Board portal, self-service — "Board members are able to see other
+  // board members" (PO, Oct 2026). Every active/onboarding director
+  // on the caller's own tenant, with enough to populate a directory
+  // card and start a message thread — never another tenant's board,
+  // and never an offboarded director (same exclusion getAll()'s own
+  // `isActive` flag uses).
+  async getDirectoryForPortal(userId: string) {
+    const { boardMemberId, tenantId } = await this.resolveBoardMember(userId);
+    const members = await this.boardMemberModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        lifecycleStatus: { $ne: BoardMemberLifecycleStatus.OFFBOARDED },
+      })
+      .select(
+        'name role email bio appointedAt termEnds lifecycleStatus attendancePercentage committees',
+      )
+      .sort({ name: 1 })
+      .lean();
+    return members.map((m) => ({
+      id: m._id,
+      name: m.name,
+      role: m.role,
+      email: m.email,
+      bio: m.bio ?? '',
+      appointedAt: m.appointedAt,
+      termEnds: m.termEnds,
+      lifecycleStatus: m.lifecycleStatus,
+      attendancePercentage: m.attendancePercentage ?? 100,
+      committees: (m.committees ?? []).map((c: any) => c.name),
+      isYou: m._id.toString() === boardMemberId,
+    }));
+  }
+
+  // ── Board-portal notifications — resolving BoardMember → User id ──
+  // Other services (MeetingService, GovernanceCodeService,
+  // EsgFrameworkService) emit a 'board.notification' event to put
+  // something into a director's in-app docket; they identify the
+  // recipient by boardMemberId (the id they already have on hand from
+  // their own domain), but the realtime push needs the director's
+  // actual User id (the JWT subject their browser is listening as).
+  // These two small lookups bridge that gap without a direct model
+  // injection into every emitting service.
+  async getUserIdForBoardMember(boardMemberId: string): Promise<string | null> {
+    const member = await this.boardMemberModel
+      .findById(boardMemberId)
+      .select('userId')
+      .lean();
+    return member?.userId ? member.userId.toString() : null;
+  }
+
+  async getActiveMembersByEmails(
+    tenantId: string,
+    emails: string[],
+  ): Promise<
+    Array<{ boardMemberId: string; userId: string | null; email: string }>
+  > {
+    if (!emails.length) return [];
+    const lower = [...new Set(emails.map((e) => e.toLowerCase()))];
+    const members = await this.boardMemberModel
+      .find({ tenantId: new Types.ObjectId(tenantId), email: { $in: lower } })
+      .select('userId email')
+      .lean();
+    return members.map((m) => ({
+      boardMemberId: m._id.toString(),
+      userId: m.userId ? m.userId.toString() : null,
+      email: m.email,
+    }));
   }
 
   // Board portal, self-service — the "Board of Directors" overview

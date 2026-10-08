@@ -328,6 +328,20 @@ export class TrainingRecord {
 export const TrainingRecordSchema =
   SchemaFactory.createForClass(TrainingRecord);
 
+// Who put this entry on the matrix — the tenant (Board Management's
+// own "add credential" action, unchanged) or the director themself,
+// self-submitting a skill the tenant hasn't recorded yet (board
+// portal's Skills Matrix, Oct 2026). Defaults to Tenant so every
+// pre-existing skill (added before this field existed) reads
+// correctly with no backfill needed. Shown as a small badge on both
+// the tenant's and the board portal's matrix so a self-submitted
+// entry is never mistaken for one the tenant itself vetted — it is
+// visible immediately either way, there is no separate approval gate.
+export enum SkillAddedBy {
+  TENANT = 'Tenant',
+  SELF = 'Self',
+}
+
 @Schema({ _id: false })
 export class BoardSkill {
   @Prop({ required: true }) name: string;
@@ -336,6 +350,8 @@ export class BoardSkill {
   @Prop({ default: 0 }) yearsExperience: number;
   @Prop({ default: true }) qualified: boolean;
   @Prop({ default: '' }) notes: string;
+  @Prop({ enum: SkillAddedBy, default: SkillAddedBy.TENANT })
+  addedBy: SkillAddedBy;
 }
 export const BoardSkillSchema = SchemaFactory.createForClass(BoardSkill);
 

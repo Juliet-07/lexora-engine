@@ -28,6 +28,12 @@ import { BoardMemberService } from './board-member.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  BOARD_NOTIFICATION_EVENT,
+  BoardNotificationEvent,
+  BoardNotificationType,
+} from 'src/modules/board/board-notification.event';
 
 @Injectable()
 export class GovernanceCodeService {
@@ -39,6 +45,7 @@ export class GovernanceCodeService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly boardMemberService: BoardMemberService,
     private readonly emailService: EmailService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private sectionsToBody(
@@ -247,6 +254,19 @@ export class GovernanceCodeService {
           .catch(() => {}),
       ),
     );
+
+    for (const b of active) {
+      const notification: BoardNotificationEvent = {
+        tenantId,
+        recipientBoardMemberId: b._id.toString(),
+        recipientUserId: b.userId ? b.userId.toString() : null,
+        type: BoardNotificationType.GOVERNANCE_CODE,
+        title: `Governance code awaiting your approval: ${code.title}`,
+        description: 'Review and approve this code in your board portal.',
+        link: '/governance-codes',
+      };
+      this.eventEmitter.emit(BOARD_NOTIFICATION_EVENT, notification);
+    }
 
     return code;
   }
