@@ -50,6 +50,7 @@ import {
   RecordMeetingConflictDto,
   AddBoardPackRequirementDto,
   UpdateBoardPackDueDateDto,
+  AddBoardPackNoteDto,
 } from '../dtos/index.dto';
 import { CurrentUser, Public, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -121,6 +122,22 @@ export class MeetingController {
       .select('firstName lastName')
       .lean();
     return `${me?.firstName ?? ''} ${me?.lastName ?? ''}`.trim();
+  }
+
+  /** Same lookup as currentUserName, plus the account's email — used
+   * for the board-pack-notes reply endpoint, where the author's email
+   * is stored alongside their name just like a director's note. */
+  private async currentUserContact(
+    userId: string,
+  ): Promise<{ name: string; email: string }> {
+    const me = await this.userModel
+      .findById(userId)
+      .select('firstName lastName email')
+      .lean();
+    return {
+      name: `${me?.firstName ?? ''} ${me?.lastName ?? ''}`.trim(),
+      email: (me?.email ?? '').toLowerCase(),
+    };
   }
 
   /** Resolve the logged-in employee record for the "my board pack
@@ -337,6 +354,27 @@ export class MeetingController {
       Number(index),
       file,
       uploadedBy,
+    );
+  }
+
+  @Post(':id/board-pack/notes')
+  @ApiOperation({
+    summary:
+      "Reply, as the tenant, to a director's note or question on a board pack document",
+  })
+  async addBoardPackNoteAsTenant(
+    @Param('id') id: string,
+    @Body() dto: AddBoardPackNoteDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const { name, email } = await this.currentUserContact(u);
+    return this.meetingService.addBoardPackNoteAsTenant(
+      t || u,
+      id,
+      name,
+      email,
+      dto,
     );
   }
 

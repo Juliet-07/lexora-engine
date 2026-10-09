@@ -181,6 +181,10 @@ export class BoardPackNote {
   @Prop({ required: true, lowercase: true }) authorEmail: string;
   @Prop({ required: true, trim: true }) text: string;
   @Prop({ required: true, default: () => new Date() }) createdAt: Date;
+  // True when this entry is the tenant's (Company Secretary's) reply
+  // rather than a director's original note/question — lets both
+  // portals style a reply differently in the same thread.
+  @Prop({ default: false }) fromTenant: boolean;
 }
 export const BoardPackNoteSchema = SchemaFactory.createForClass(BoardPackNote);
 

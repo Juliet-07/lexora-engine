@@ -2141,6 +2141,37 @@ export class MeetingService {
       authorEmail: lowerEmail,
       text,
       createdAt: new Date(),
+      fromTenant: false,
+    } as any);
+    meeting.markModified('boardPackNotes');
+    await meeting.save();
+    return meeting;
+  }
+
+  // The tenant side (Company Secretary / GRC staff) replying in the
+  // same thread as addBoardPackNote above. Deliberately skips the
+  // attendee gate that method enforces — tenant staff posting here are
+  // not meeting attendees — and flags fromTenant so both portals can
+  // tell a reply apart from a director's own note/question.
+  async addBoardPackNoteAsTenant(
+    tenantId: string,
+    id: string,
+    authorName: string,
+    authorEmail: string,
+    dto: AddBoardPackNoteDto,
+  ) {
+    const meeting = await this.getById(tenantId, id);
+    const doc = meeting.boardPack.find((d) => d.fileUrl === dto.fileUrl);
+    if (!doc) throw new NotFoundException('Board pack document not found.');
+    const text = dto.text.trim();
+    if (!text) throw new BadRequestException('Note cannot be empty.');
+    meeting.boardPackNotes.push({
+      fileUrl: dto.fileUrl,
+      authorName: authorName || 'Company Secretary',
+      authorEmail: (authorEmail || '').toLowerCase(),
+      text,
+      createdAt: new Date(),
+      fromTenant: true,
     } as any);
     meeting.markModified('boardPackNotes');
     await meeting.save();
