@@ -37,6 +37,7 @@ import {
 import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
 import { OffboardingService } from './offboarding.service';
+import { PayrollPolicyService } from './payroll-policy.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   TenantSubscription,
@@ -71,6 +72,7 @@ export class EmployeeService {
     private readonly offboardingService: OffboardingService,
     private readonly mailService: EmailService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly payrollPolicyService: PayrollPolicyService,
     // private readonly probationService: ProbationService,
   ) {}
 
@@ -211,13 +213,40 @@ export class EmployeeService {
     if (existing)
       throw new ConflictException(`Location "${dto.name}" already exists`);
 
-    return this.locationModel.create({
+    const location = await this.locationModel.create({
       tenantId: new Types.ObjectId(tenantId),
       ...dto,
       city: dto.city ?? null,
       address: dto.address ?? null,
       timezone: dto.timezone ?? null,
     });
+
+    // Payroll works differently per location/country. For a Rwanda-based
+    // location, seed the statutory Rwanda deduction preset (PAYE, RSSB
+    // pension, maternity, CBHI, etc.) automatically so payroll is accurate
+    // from day one — the tenant isn't required to discover and click
+    // "Apply Rwanda preset" in Payroll settings before running payroll.
+    // Locations in other countries are left unconfigured so the tenant can
+    // define their own deduction/bracket rules for that country.
+    if (this.isRwandaCountry(dto.country)) {
+      try {
+        await this.payrollPolicyService.applyRwandaPreset(
+          tenantId,
+          (location._id as Types.ObjectId).toString(),
+          false,
+        );
+      } catch {
+        // Non-fatal — the tenant can still apply the preset manually from
+        // Payroll → Policy if this best-effort seed fails for any reason.
+      }
+    }
+
+    return location;
+  }
+
+  private isRwandaCountry(country: string | undefined | null): boolean {
+    const normalized = (country ?? '').trim().toLowerCase();
+    return normalized === 'rwanda' || normalized === 'rw';
   }
 
   async getLocations(tenantId: string): Promise<HrLocationDocument[]> {

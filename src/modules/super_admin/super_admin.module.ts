@@ -37,7 +37,12 @@ import {
   PaymentTransactionSchema,
 } from '../payment/payment.schema';
 import { EmailModule } from 'src/common/utils/mailing/email.module';
-import { Employee, EmployeeSchema } from '../hr/schemas';
+import {
+  Employee,
+  EmployeeSchema,
+  PayrollPolicy,
+  PayrollPolicySchema,
+} from '../hr/schemas';
 import {
   PlatformContractTemplateController,
   PlatformTemplateFolderController,
@@ -63,6 +68,7 @@ import { ReactivationController } from './controllers/reactivation.controller';
       { name: TenantSubscription.name, schema: TenantSubscriptionSchema },
       { name: RiskRules.name, schema: RiskRulesSchema },
       { name: Employee.name, schema: EmployeeSchema },
+      { name: PayrollPolicy.name, schema: PayrollPolicySchema },
       {
         name: PlatformContractTemplate.name,
         schema: PlatformContractTemplateSchema,

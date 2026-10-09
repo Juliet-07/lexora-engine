@@ -58,7 +58,13 @@ import {
   EmployeeHierarchyRole,
   EmploymentStatus,
   EmploymentType,
+  PayrollPolicy,
+  PayrollPolicyDocument,
 } from 'src/modules/hr/schemas';
+import {
+  RWANDA_DEDUCTION_PRESET,
+  RWANDA_ALLOWANCE_PRESET,
+} from 'src/modules/hr/rwanda-preset';
 
 @Injectable()
 export class SuperAdminService {
@@ -74,6 +80,8 @@ export class SuperAdminService {
     private readonly riskRulesModel: Model<RiskRulesDocument>,
     @InjectModel(Employee.name)
     private readonly employeeModel: Model<EmployeeDocument>,
+    @InjectModel(PayrollPolicy.name)
+    private readonly payrollPolicyModel: Model<PayrollPolicyDocument>,
     private readonly mailService: EmailService,
     private readonly subscriptionExpiryService: SubscriptionExpiryService,
     @InjectModel(PaymentTransaction.name)
@@ -220,6 +228,14 @@ export class SuperAdminService {
       tenant.lastName,
       tenant.email,
     );
+
+    // Seed a tenant-wide default payroll policy using the Rwanda statutory
+    // preset (PAYE, RSSB pension, maternity, CBHI, etc.) so payroll runs
+    // produce accurate deductions from day one. The app is launching in
+    // Rwanda, so this is the sane default — tenants who add a location in
+    // another country (or want different rules) can replace or override it
+    // per-location from Payroll → Policy.
+    await this.createDefaultPayrollPolicy(tenant._id as Types.ObjectId);
 
     // Send credentials by email
     if (!isPaidPlan) {
@@ -1119,6 +1135,26 @@ export class SuperAdminService {
       annualLeaveBalance: 21,
       sickLeaveBalance: 10,
       metadata: { isOwnerRecord: true },
+    });
+  }
+
+  private async createDefaultPayrollPolicy(
+    tenantId: Types.ObjectId,
+  ): Promise<void> {
+    const existing = await this.payrollPolicyModel.findOne({
+      tenantId,
+      locationId: null,
+    });
+    if (existing) return;
+
+    await this.payrollPolicyModel.create({
+      tenantId,
+      locationId: null,
+      currency: 'RWF',
+      payFrequency: 'monthly',
+      allowanceTypes: RWANDA_ALLOWANCE_PRESET,
+      deductions: RWANDA_DEDUCTION_PRESET,
+      effectiveFrom: new Date(),
     });
   }
 }
