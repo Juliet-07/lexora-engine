@@ -85,6 +85,20 @@ export class PlatformContractTemplate {
   })
   status: PlatformTemplateStatus;
   @Prop({ default: '' }) createdBy: string;
+
+  // ── HR-pipeline-specific metadata ──
+  // Meaningful only when moduleKey is 'hr' — HR's generation flow
+  // (hr/services/contract.service.ts) reads these to decide template
+  // compatibility and whether the generated document is a two-party
+  // contract or a one-way letter. Not used by any other module's
+  // pipeline today; left null/true (its defaults) for every other
+  // template. null for hrWorkerCategory means "applies to either" —
+  // not required to match a specific worker category.
+  @Prop({ enum: ['employee', 'consultant'], default: null })
+  hrWorkerCategory: 'employee' | 'consultant' | null;
+
+  @Prop({ default: true })
+  hrRequiresSignature: boolean;
 }
 export const PlatformContractTemplateSchema = SchemaFactory.createForClass(
   PlatformContractTemplate,

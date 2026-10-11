@@ -14,9 +14,10 @@ import {
   InteractionType,
 } from '../schemas/contract.schema';
 import {
-  ContractTemplate,
-  ContractTemplateDocument,
-} from '../schemas/contract-template.schema';
+  PlatformContractTemplate,
+  PlatformContractTemplateDocument,
+  PlatformTemplateStatus,
+} from '../../super_admin/schemas/contract-template.schema';
 import {
   SigningToken,
   SigningTokenDocument,
@@ -46,8 +47,8 @@ export class ContractService {
   constructor(
     @InjectModel(Contract.name)
     private readonly contractModel: Model<ContractDocument>,
-    @InjectModel(ContractTemplate.name)
-    private readonly templateModel: Model<ContractTemplateDocument>,
+    @InjectModel(PlatformContractTemplate.name)
+    private readonly templateModel: Model<PlatformContractTemplateDocument>,
     @InjectModel(SigningToken.name)
     private readonly tokenModel: Model<SigningTokenDocument>,
     @InjectModel(Candidate.name)
@@ -76,15 +77,22 @@ export class ContractService {
     });
     if (!candidate) throw new NotFoundException('Candidate not found');
 
+    // Templates are no longer tenant-authored — this looks up a
+    // template published by the super admin for the "hr" module
+    // (not tenant-scoped; every tenant shares the same library).
     const template = await this.templateModel.findOne({
       _id: dto.templateId,
-      tenantId: tId,
+      moduleKey: 'hr',
+      status: PlatformTemplateStatus.PUBLISHED,
     });
     if (!template) throw new NotFoundException('Contract template not found');
 
-    if (template.workerCategory !== candidate.workerCategory) {
+    if (
+      template.hrWorkerCategory &&
+      template.hrWorkerCategory !== candidate.workerCategory
+    ) {
       throw new BadRequestException(
-        `This template is for ${template.workerCategory}s, but the candidate is a ${candidate.workerCategory}.`,
+        `This template is for ${template.hrWorkerCategory}s, but the candidate is a ${candidate.workerCategory}.`,
       );
     }
 
@@ -99,13 +107,13 @@ export class ContractService {
     return this.contractModel.create({
       tenantId: tId,
       templateId: template._id,
-      templateName: template.name,
+      templateName: template.title,
       candidateId: candidate._id,
       employeeId: null,
       signerName: candidate.name,
       signerEmail: candidate.email,
       workerCategory: candidate.workerCategory,
-      renderedBody: renderContractBody(template.body, fields),
+      renderedBody: renderContractBody(template.content, fields),
       status: ContractStatus.DRAFT,
     });
   }
@@ -125,14 +133,18 @@ export class ContractService {
 
     const template = await this.templateModel.findOne({
       _id: dto.templateId,
-      tenantId: tId,
+      moduleKey: 'hr',
+      status: PlatformTemplateStatus.PUBLISHED,
     });
     if (!template) throw new NotFoundException('Contract template not found');
 
     const employeeCategory = (employee as any).workerCategory ?? 'employee';
-    if (template.workerCategory !== employeeCategory) {
+    if (
+      template.hrWorkerCategory &&
+      template.hrWorkerCategory !== employeeCategory
+    ) {
       throw new BadRequestException(
-        `This template is for ${template.workerCategory}s, but this employee is classified as a ${employeeCategory}.`,
+        `This template is for ${template.hrWorkerCategory}s, but this employee is classified as a ${employeeCategory}.`,
       );
     }
 
@@ -155,15 +167,15 @@ export class ContractService {
     return this.contractModel.create({
       tenantId: tId,
       templateId: template._id,
-      templateName: template.name,
+      templateName: template.title,
       candidateId: null,
       employeeId: employee._id,
       signerName: `${employee.firstName} ${employee.lastName}`,
       signerEmail: employee.email,
       workerCategory: employeeCategory,
-      renderedBody: renderContractBody(template.body, fields),
+      renderedBody: renderContractBody(template.content, fields),
       status: ContractStatus.DRAFT,
-      requiresSignature: template.requiresSignature,
+      requiresSignature: template.hrRequiresSignature ?? true,
     });
   }
 

@@ -99,7 +99,16 @@ export class Contract {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   tenantId: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'ContractTemplate', required: true })
+  // Points at a published PlatformContractTemplate (super_admin
+  // module) going forward. A contract generated before this change
+  // points at the old, tenant-authored ContractTemplate collection
+  // instead — never populated either way, so this ref string is
+  // documentation only.
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'PlatformContractTemplate',
+    required: true,
+  })
   templateId: Types.ObjectId;
 
   @Prop({ required: true })

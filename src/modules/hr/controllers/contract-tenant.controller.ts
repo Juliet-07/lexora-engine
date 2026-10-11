@@ -3,7 +3,6 @@ import {
   Get,
   Post,
   Patch,
-  Delete,
   Body,
   Param,
   Query,
@@ -25,8 +24,6 @@ import { Response } from 'express';
 import { ContractTemplateService } from '../services/contract-template.service';
 import { ContractService } from '../services/contract.service';
 import {
-  CreateContractTemplateDto,
-  UpdateContractTemplateDto,
   GenerateContractFromCandidateDto,
   GenerateContractForEmployeeDto,
   SendContractDto,
@@ -40,6 +37,10 @@ import { UserType } from '../../../common/interfaces/user-role.enum';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
 import { resolveBusinessName } from '../../../common/utils/resolve-business-name.util';
 
+// Read-only: a contract template is now authored and published by
+// the super admin (Contract Templates, module "hr") — the tenant
+// picks from the published list here but can no longer create,
+// edit, or delete one.
 @ApiTags('HR — Contract Templates (Tenant)')
 @ApiBearerAuth('bearerAuth')
 @UserTypes(UserType.TENANT)
@@ -50,68 +51,17 @@ export class ContractTemplateController {
   @Get()
   @ApiQuery({ name: 'workerCategory', required: false })
   @ApiOperation({
-    summary: 'List contract templates, optionally filtered by worker category',
+    summary:
+      'List published HR contract templates, optionally filtered by worker category',
   })
-  getAll(
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-    @Query('workerCategory') workerCategory?: string,
-  ) {
-    return this.templateService.getAll(t || u, workerCategory);
-  }
-
-  // Static route BEFORE :templateId
-  @Get('merge-fields')
-  @ApiOperation({
-    summary: 'List the available merge-field placeholders for templates',
-  })
-  getMergeFields() {
-    return { fields: this.templateService.getAvailableMergeFields() };
+  getAll(@Query('workerCategory') workerCategory?: string) {
+    return this.templateService.getAll(workerCategory);
   }
 
   @Get(':templateId')
-  @ApiOperation({ summary: 'Get a single contract template' })
-  getOne(
-    @Param('templateId') templateId: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.templateService.getById(t || u, templateId);
-  }
-
-  @Post()
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create a new contract template' })
-  create(
-    @Body() dto: CreateContractTemplateDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.templateService.create(t || u, dto);
-  }
-
-  @Patch(':templateId')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Update a contract template' })
-  update(
-    @Param('templateId') templateId: string,
-    @Body() dto: UpdateContractTemplateDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.templateService.update(t || u, templateId, dto);
-  }
-
-  @Delete(':templateId')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Delete a contract template' })
-  async delete(
-    @Param('templateId') templateId: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    await this.templateService.delete(t || u, templateId);
-    return { success: true };
+  @ApiOperation({ summary: 'Get a single published contract template' })
+  getOne(@Param('templateId') templateId: string) {
+    return this.templateService.getById(templateId);
   }
 }
 

@@ -1,41 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsString,
-  IsOptional,
-  IsBoolean,
-  IsIn,
-  IsMongoId,
-} from 'class-validator';
-
-export class CreateContractTemplateDto {
-  @ApiProperty() @IsString() name: string;
-
-  @ApiProperty({ enum: ['employee', 'consultant'] })
-  @IsIn(['employee', 'consultant'])
-  workerCategory: 'employee' | 'consultant';
-
-  @ApiProperty({
-    description: 'Template body with {{placeholder}} merge fields',
-  })
-  @IsString()
-  body: string;
-
-  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
-
-  @ApiPropertyOptional({ enum: ['contract', 'letter'], default: 'contract' })
-  @IsOptional()
-  @IsIn(['contract', 'letter'])
-  category?: 'contract' | 'letter';
-
-  @ApiPropertyOptional({
-    description:
-      'False for a one-way letter (e.g. a suspension letter) that only the tenant signs',
-    default: true,
-  })
-  @IsOptional()
-  @IsBoolean()
-  requiresSignature?: boolean;
-}
+import { IsString, IsOptional, IsMongoId } from 'class-validator';
 
 export class EditContractBodyDto {
   @ApiProperty({ description: 'The full updated document text' })
@@ -48,23 +12,6 @@ export class EditContractBodyDto {
   @IsOptional()
   @IsString()
   changeNote?: string;
-}
-
-export class UpdateContractTemplateDto {
-  @ApiPropertyOptional() @IsOptional() @IsString() name?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() body?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() isActive?: boolean;
-
-  @ApiPropertyOptional({ enum: ['contract', 'letter'] })
-  @IsOptional()
-  @IsIn(['contract', 'letter'])
-  category?: 'contract' | 'letter';
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsBoolean()
-  requiresSignature?: boolean;
 }
 
 export class GenerateContractFromCandidateDto {

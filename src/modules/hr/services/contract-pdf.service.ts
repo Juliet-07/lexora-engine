@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import * as PDFDocument from 'pdfkit';
 import { ContractDocument } from '../schemas/contract.schema';
+import { renderRichText } from 'src/common/utils/pdf/render-rich-text.util';
 
 const PURPLE = '#4B0082';
 const GOLD = '#c9a84c';
@@ -37,16 +38,12 @@ export class ContractPdfService {
       doc.moveDown(4);
       doc.y = 110;
 
-      // Document body
-      doc
-        .fillColor(INK)
-        .font('Helvetica')
-        .fontSize(11)
-        .text(contract.renderedBody, 50, doc.y, {
-          width: doc.page.width - 100,
-          align: 'left',
-          lineGap: 4,
-        });
+      // Document body — renderedBody is rich HTML (the template it
+      // came from is authored in a rich-text editor), not plain
+      // text, so it goes through the shared HTML-aware renderer
+      // rather than doc.text(), which would print literal tags.
+      doc.fillColor(INK).font('Helvetica').fontSize(11);
+      renderRichText(doc, contract.renderedBody);
 
       // Signature blocks — start a fresh page if already deep into
       // the document, so signatures don't get cramped against a
@@ -196,15 +193,9 @@ export class ContractPdfService {
       doc.moveDown(4);
       doc.y = 110;
 
-      doc
-        .fillColor(INK)
-        .font('Helvetica')
-        .fontSize(11)
-        .text(contract.renderedBody, 50, doc.y, {
-          width: doc.page.width - 100,
-          align: 'left',
-          lineGap: 4,
-        });
+      // See buildSignedContractPdf above — renderedBody is rich HTML.
+      doc.fillColor(INK).font('Helvetica').fontSize(11);
+      renderRichText(doc, contract.renderedBody);
 
       if (doc.y > doc.page.height - 180) {
         doc.addPage();

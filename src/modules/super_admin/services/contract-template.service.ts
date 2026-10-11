@@ -129,6 +129,8 @@ export class PlatformContractTemplateService {
       version: dto.version ?? '1.0',
       status: PlatformTemplateStatus.DRAFT,
       createdBy,
+      hrWorkerCategory: dto.hrWorkerCategory ?? null,
+      hrRequiresSignature: dto.hrRequiresSignature ?? true,
     });
     return created.toObject();
   }
@@ -158,6 +160,10 @@ export class PlatformContractTemplateService {
     }
     if (dto.moduleKey !== undefined) t.moduleKey = dto.moduleKey;
     if (dto.areaKey !== undefined) t.areaKey = dto.areaKey;
+    if (dto.hrWorkerCategory !== undefined)
+      t.hrWorkerCategory = dto.hrWorkerCategory;
+    if (dto.hrRequiresSignature !== undefined)
+      t.hrRequiresSignature = dto.hrRequiresSignature;
     await t.save();
     return t.toObject();
   }

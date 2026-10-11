@@ -1,114 +1,61 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model } from 'mongoose';
 import {
-  ContractTemplate,
-  ContractTemplateDocument,
-  AVAILABLE_MERGE_FIELDS,
-} from '../schemas/contract-template.schema';
-import { CreateContractTemplateDto, UpdateContractTemplateDto } from '../dtos';
+  PlatformContractTemplate,
+  PlatformContractTemplateDocument,
+  PlatformTemplateStatus,
+} from '../../super_admin/schemas/contract-template.schema';
 
-const PLACEHOLDER_PATTERN = /\{\{(\w+)\}\}/g;
-
+// HR no longer authors its own contract templates — a template is
+// now authored and published by the super admin (lexora-super-admin
+// → Contract Templates, module "hr"), the same place every other
+// module's templates come from. This service is a thin, read-only
+// proxy: tenants list and pick from PUBLISHED, moduleKey: 'hr'
+// platform templates — they can no longer create, edit, or delete
+// one from here. The historical, tenant-authored `hr_contract_templates`
+// collection (schemas/contract-template.schema.ts) is left untouched
+// and unused by new code — existing generated contracts keep their
+// own denormalized templateName/renderedBody, so nothing reads it.
 @Injectable()
 export class ContractTemplateService {
   constructor(
-    @InjectModel(ContractTemplate.name)
-    private readonly templateModel: Model<ContractTemplateDocument>,
+    @InjectModel(PlatformContractTemplate.name)
+    private readonly platformTemplateModel: Model<PlatformContractTemplateDocument>,
   ) {}
 
   async getAll(
-    tenantId: string,
     workerCategory?: string,
-  ): Promise<ContractTemplateDocument[]> {
-    const query: any = { tenantId: new Types.ObjectId(tenantId) };
-    if (workerCategory) query.workerCategory = workerCategory;
-    return this.templateModel.find(query).sort({ name: 1 }).lean() as any;
-  }
-
-  async getById(
-    tenantId: string,
-    templateId: string,
-  ): Promise<ContractTemplateDocument> {
-    const template = await this.templateModel.findOne({
-      _id: templateId,
-      tenantId: new Types.ObjectId(tenantId),
-    });
-    if (!template) throw new NotFoundException('Contract template not found');
-    return template;
-  }
-
-  async create(
-    tenantId: string,
-    dto: CreateContractTemplateDto,
-  ): Promise<ContractTemplateDocument> {
-    this.validatePlaceholders(dto.body);
-    return this.templateModel.create({
-      tenantId: new Types.ObjectId(tenantId),
-      name: dto.name,
-      workerCategory: dto.workerCategory,
-      body: dto.body,
-      description: dto.description ?? null,
-      category: dto.category ?? 'contract',
-      requiresSignature: dto.requiresSignature ?? true,
-    });
-  }
-
-  async update(
-    tenantId: string,
-    templateId: string,
-    dto: UpdateContractTemplateDto,
-  ): Promise<ContractTemplateDocument> {
-    const template = await this.getById(tenantId, templateId);
-
-    if (dto.body !== undefined) {
-      this.validatePlaceholders(dto.body);
-      template.body = dto.body;
+  ): Promise<PlatformContractTemplateDocument[]> {
+    const query: any = {
+      moduleKey: 'hr',
+      status: PlatformTemplateStatus.PUBLISHED,
+    };
+    // A template with no hrWorkerCategory set applies to either —
+    // only a template explicitly scoped to the OTHER category is
+    // excluded.
+    if (workerCategory) {
+      query.$or = [
+        { hrWorkerCategory: workerCategory },
+        { hrWorkerCategory: null },
+        { hrWorkerCategory: { $exists: false } },
+      ];
     }
-    if (dto.name !== undefined) template.name = dto.name;
-    if (dto.description !== undefined) template.description = dto.description;
-    if (dto.isActive !== undefined) template.isActive = dto.isActive;
-    if (dto.category !== undefined) template.category = dto.category as any;
-    if (dto.requiresSignature !== undefined)
-      template.requiresSignature = dto.requiresSignature;
-
-    await template.save();
-    return template;
+    return this.platformTemplateModel.find(query).sort({ title: 1 }).lean();
   }
 
-  async delete(tenantId: string, templateId: string): Promise<void> {
-    const deleted = await this.templateModel.findOneAndDelete({
-      _id: templateId,
-      tenantId: new Types.ObjectId(tenantId),
-    });
-    if (!deleted) throw new NotFoundException('Contract template not found');
-  }
-
-  // Catches a typo'd or invented placeholder at SAVE time —
-  // {{salry}} instead of {{salary}} — rather than letting it sit
-  // silently unreplaced in a real generated contract months later.
-  private validatePlaceholders(body: string): void {
-    const found = new Set<string>();
-    let match;
-    while ((match = PLACEHOLDER_PATTERN.exec(body)) !== null) {
-      found.add(match[1]);
-    }
-    const invalid = Array.from(found).filter(
-      (f) => !AVAILABLE_MERGE_FIELDS.includes(f as any),
-    );
-    if (invalid.length > 0) {
-      throw new BadRequestException(
-        `Unknown placeholder(s): ${invalid.map((f) => `{{${f}}}`).join(', ')}. ` +
-          `Available fields: ${AVAILABLE_MERGE_FIELDS.map((f) => `{{${f}}}`).join(', ')}.`,
+  async getById(templateId: string): Promise<PlatformContractTemplateDocument> {
+    const template = await this.platformTemplateModel
+      .findOne({
+        _id: templateId,
+        moduleKey: 'hr',
+        status: PlatformTemplateStatus.PUBLISHED,
+      })
+      .lean();
+    if (!template)
+      throw new NotFoundException(
+        'Contract template not found or not published',
       );
-    }
-  }
-
-  getAvailableMergeFields(): readonly string[] {
-    return AVAILABLE_MERGE_FIELDS;
+    return template as any;
   }
 }

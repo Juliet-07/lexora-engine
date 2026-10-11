@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
+  PlatformContractTemplate,
+  PlatformContractTemplateSchema,
+} from '../super_admin/schemas/contract-template.schema';
+import {
   Employee,
   EmployeeAttendance,
   EmployeeAttendanceSchema,
@@ -181,6 +185,10 @@ import {
       { name: RequisitionType.name, schema: RequisitionTypeSchema },
       { name: Requisition.name, schema: RequisitionSchema },
       { name: ContractTemplate.name, schema: ContractTemplateSchema },
+      {
+        name: PlatformContractTemplate.name,
+        schema: PlatformContractTemplateSchema,
+      },
       { name: Contract.name, schema: ContractSchema },
       { name: SigningToken.name, schema: SigningTokenSchema },
       { name: EmployeeDocumentFile.name, schema: EmployeeDocumentFileSchema },

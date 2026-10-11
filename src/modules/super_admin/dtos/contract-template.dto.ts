@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsEnum, IsMongoId } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsEnum,
+  IsMongoId,
+  IsIn,
+  IsBoolean,
+} from 'class-validator';
 import { PlatformTemplateCategory, PlatformTemplateStatus } from '../schemas';
 
 export class CreatePlatformContractTemplateDto {
@@ -16,6 +23,20 @@ export class CreatePlatformContractTemplateDto {
   // TEMPLATE_MODULES), the backend just stores and returns it.
   @ApiPropertyOptional() @IsOptional() @IsString() moduleKey?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() areaKey?: string;
+
+  // Meaningful only when moduleKey is 'hr' — see the schema's comment.
+  @ApiPropertyOptional({ enum: ['employee', 'consultant'] })
+  @IsOptional()
+  @IsIn(['employee', 'consultant'])
+  hrWorkerCategory?: 'employee' | 'consultant' | null;
+
+  @ApiPropertyOptional({
+    description:
+      'False for a one-way letter (only the tenant signs) — meaningful only for moduleKey "hr"',
+  })
+  @IsOptional()
+  @IsBoolean()
+  hrRequiresSignature?: boolean;
 }
 
 export class UpdatePlatformContractTemplateDto extends CreatePlatformContractTemplateDto {}
