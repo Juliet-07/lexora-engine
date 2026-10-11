@@ -1,6 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
-import { LeaveType } from './leave-policy.schema';
 
 export type LeaveRequestDocument = LeaveRequest & Document;
 
@@ -20,9 +19,10 @@ export class LeaveRequest {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   tenantId: Types.ObjectId;
 
-  // Leave details
-  @Prop({ required: true, enum: LeaveType })
-  type: LeaveType;
+  // Leave details — not constrained to the LeaveType enum; see the
+  // matching note on LeavePolicyEntry.type in leave-policy.schema.ts.
+  @Prop({ required: true })
+  type: string;
 
   @Prop({ required: true })
   startDate: Date;

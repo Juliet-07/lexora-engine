@@ -146,6 +146,8 @@ import {
   CourseEnrollmentSchema,
   Course,
   CourseSchema,
+  CustomLeaveType,
+  CustomLeaveTypeSchema,
 } from './schemas';
 
 @Module({
@@ -163,6 +165,7 @@ import {
       },
       { name: LeaveRequest.name, schema: LeaveRequestSchema },
       { name: LeavePolicy.name, schema: LeavePolicySchema },
+      { name: CustomLeaveType.name, schema: CustomLeaveTypeSchema },
       { name: EmployeeAttendance.name, schema: EmployeeAttendanceSchema },
       { name: HrTeam.name, schema: HrTeamSchema },
       { name: HrLocation.name, schema: HrLocationSchema },

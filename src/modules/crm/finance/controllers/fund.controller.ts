@@ -61,7 +61,7 @@ import { RequiresModule } from 'src/common/decorators/requires-module.decorator'
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds')
 export class FundController {
   constructor(private readonly service: FundService) {}
@@ -126,7 +126,7 @@ export class FundController {
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/commitments')
 export class CapitalCommitmentController {
   constructor(private readonly service: CapitalCommitmentService) {}
@@ -184,7 +184,7 @@ export class CapitalCommitmentController {
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/capital-calls')
 export class CapitalCallController {
   constructor(private readonly service: CapitalCallService) {}
@@ -272,7 +272,7 @@ export class CapitalCallController {
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/capital-accounts')
 export class CapitalAccountController {
   constructor(private readonly service: CapitalAccountService) {}
@@ -304,7 +304,7 @@ export class CapitalAccountController {
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/distributions')
 export class DistributionController {
   constructor(private readonly service: DistributionService) {}
@@ -379,7 +379,7 @@ export class DistributionController {
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/holdings')
 export class PortfolioHoldingController {
   constructor(private readonly service: PortfolioHoldingService) {}
@@ -427,7 +427,7 @@ export class PortfolioHoldingController {
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/valuations')
 export class HoldingValuationController {
   constructor(private readonly service: HoldingValuationService) {}
@@ -499,7 +499,7 @@ export class HoldingValuationController {
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/nav')
 export class NavController {
   constructor(private readonly service: NavService) {}
@@ -534,7 +534,7 @@ export class NavController {
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/expenses')
 export class FundExpenseController {
   constructor(private readonly service: FundExpenseService) {}
@@ -567,7 +567,7 @@ export class FundExpenseController {
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/management-fee')
 export class ManagementFeeController {
   constructor(private readonly service: ManagementFeeService) {}
@@ -627,7 +627,7 @@ export class ManagementFeeController {
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/compliance')
 export class ComplianceController {
   constructor(private readonly service: ComplianceService) {}
@@ -731,7 +731,7 @@ export class ComplianceController {
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/fx-rates')
 export class FxRateController {
   constructor(private readonly service: FxRateService) {}
@@ -774,7 +774,7 @@ export class FxRateController {
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/scenarios')
 export class ScenarioController {
   constructor(private readonly service: ScenarioService) {}
@@ -797,7 +797,7 @@ export class ScenarioController {
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/lp-reporting')
 export class LpReportingController {
   constructor(private readonly service: LpReportingService) {}

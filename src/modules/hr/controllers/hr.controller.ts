@@ -40,6 +40,7 @@ import {
   UpsertLeavePolicyDto,
   LeaveFilterDto,
   ReviewLeaveRequestDto,
+  CreateCustomLeaveTypeDto,
   UploadEmployeeDocumentDto,
   PromoteToHeadOfDepartmentDto,
   AddEmployeeRecordDto,
@@ -619,6 +620,25 @@ export class HrTenantController {
       t || u,
       locationId === 'default' ? null : locationId,
     );
+  }
+
+  @Post('leave/custom-types')
+  @ApiOperation({ summary: 'Create a tenant-defined custom leave type' })
+  createCustomLeaveType(
+    @Body() dto: CreateCustomLeaveTypeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.leaveService.createCustomLeaveType(t || u, dto.label);
+  }
+
+  @Get('leave/custom-types')
+  @ApiOperation({ summary: 'List tenant-defined custom leave types' })
+  getCustomLeaveTypes(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.leaveService.getCustomLeaveTypes(t || u);
   }
 
   @Get('leave/requests')

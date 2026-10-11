@@ -143,7 +143,10 @@ export class CandidateController {
 @UserTypes(UserType.TENANT)
 @Controller('hr/recruitment/offboarding')
 export class OffboardingController {
-  constructor(private readonly offboardingService: OffboardingService) {}
+  constructor(
+    private readonly offboardingService: OffboardingService,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+  ) {}
 
   @Get()
   @ApiQuery({ name: 'status', required: false })
@@ -176,6 +179,25 @@ export class OffboardingController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.offboardingService.update(t || u, recordId, dto);
+  }
+
+  @Post(':recordId/certificate')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Generate and email a Certificate of Service to the departing employee',
+  })
+  async sendCertificate(
+    @Param('recordId') recordId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const businessName = await resolveBusinessName(this.userModel, t || u);
+    return this.offboardingService.sendCertificateOfService(
+      t || u,
+      recordId,
+      businessName,
+    );
   }
 }
 

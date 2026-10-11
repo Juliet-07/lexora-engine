@@ -21,7 +21,7 @@ import { RequiresModule } from 'src/common/decorators/requires-module.decorator'
 @ApiTags('CRM — Finance — Write-offs')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/write-offs')
 export class WriteOffController {
   constructor(private readonly service: WriteOffService) {}

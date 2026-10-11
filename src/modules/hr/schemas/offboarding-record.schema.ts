@@ -64,6 +64,9 @@ export class OffboardingRecord {
 
   @Prop({ default: null })
   completedAt: Date | null;
+
+  @Prop({ default: null })
+  certificateOfServiceSentAt: Date | null;
 }
 
 export const OffboardingRecordSchema =

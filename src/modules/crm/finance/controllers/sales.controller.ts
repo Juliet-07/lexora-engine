@@ -43,7 +43,7 @@ import { RequiresModule } from 'src/common/decorators/requires-module.decorator'
 @ApiTags('CRM — Finance — Sales')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/wip')
 export class WipController {
   constructor(private readonly service: WipService) {}
@@ -117,7 +117,7 @@ export class WipController {
 @ApiTags('CRM — Finance — Sales')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/credit-notes')
 export class CreditNoteController {
   constructor(private readonly service: CreditNoteService) {}
@@ -142,7 +142,7 @@ export class CreditNoteController {
 @ApiTags('CRM — Finance — Sales')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/quotes')
 export class QuoteController {
   constructor(private readonly service: QuoteService) {}
@@ -221,7 +221,7 @@ export class QuoteController {
 @ApiTags('CRM — Finance — Sales')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/recurring-invoices')
 export class RecurringInvoiceController {
   constructor(private readonly service: RecurringInvoiceService) {}

@@ -11,14 +11,20 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { LeaveType } from '../schemas/leave-policy.schema';
 
 // ── Leave Request DTOs ────────────────────────────────────────
 
 export class CreateLeaveRequestDto {
-  @ApiProperty({ enum: LeaveType })
-  @IsEnum(LeaveType)
-  type: LeaveType;
+  // Accepts either a built-in LeaveType value or a tenant-defined
+  // custom leave type's key — LeaveService.createLeaveRequest checks
+  // it against both, since a DTO decorator alone can't see a
+  // tenant's own custom types.
+  @ApiProperty({
+    description:
+      'A built-in leave type, or the key of a tenant-defined custom leave type',
+  })
+  @IsString()
+  type: string;
 
   @ApiProperty({ example: '2026-06-15' })
   @IsDateString()
@@ -57,18 +63,22 @@ export class LeaveFilterDto {
   @IsString()
   status?: string;
 
-  @ApiPropertyOptional({ enum: LeaveType })
+  @ApiPropertyOptional()
   @IsOptional()
-  @IsEnum(LeaveType)
-  type?: LeaveType;
+  @IsString()
+  type?: string;
 }
 
 // ── Leave Policy DTOs ─────────────────────────────────────────
 
 export class LeavePolicyEntryDto {
-  @ApiProperty({ enum: LeaveType })
-  @IsEnum(LeaveType)
-  type: LeaveType;
+  // See the note on CreateLeaveRequestDto.type above — same reasoning.
+  @ApiProperty({
+    description:
+      'A built-in leave type, or the key of a tenant-defined custom leave type',
+  })
+  @IsString()
+  type: string;
 
   @ApiProperty({ example: 21 })
   @IsNumber()
@@ -85,6 +95,12 @@ export class LeavePolicyEntryDto {
   @IsNumber()
   @Min(0)
   maxCarryOverDays?: number;
+}
+
+export class CreateCustomLeaveTypeDto {
+  @ApiProperty({ example: 'Bereavement (Extended)' })
+  @IsString()
+  label: string;
 }
 
 export class UpsertLeavePolicyDto {

@@ -104,7 +104,7 @@ const expenseReceiptFileFilter = (
 @ApiTags('CRM — Finance — Purchases')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/vendors')
 export class VendorController {
   constructor(private readonly service: VendorService) {}
@@ -122,7 +122,7 @@ export class VendorController {
 @ApiTags('CRM — Finance — Purchases')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/purchase-orders')
 export class PurchaseOrderController {
   constructor(
@@ -217,7 +217,7 @@ export class PurchaseOrderController {
 @ApiTags('CRM — Finance — Purchases')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/bills')
 export class BillController {
   constructor(
@@ -349,7 +349,7 @@ export class BillController {
 @ApiTags('CRM — Finance — Purchases')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/expense-claims')
 export class ExpenseClaimController {
   constructor(private readonly service: ExpenseClaimService) {}
@@ -458,7 +458,7 @@ export class ExpenseClaimController {
 @ApiTags('CRM — Finance — Purchases')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/expense-policies')
 export class ExpensePolicyController {
   constructor(private readonly service: ExpensePolicyService) {}
@@ -486,7 +486,7 @@ export class ExpensePolicyController {
 @ApiTags('CRM — Finance — Purchases')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/purchases-overview')
 export class PurchasesOverviewController {
   constructor(private readonly service: PurchasesOverviewService) {}

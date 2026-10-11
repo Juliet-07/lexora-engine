@@ -7,7 +7,10 @@ import {
   OffboardingStatus,
   OffboardingType,
 } from '../schemas';
+import { Employee, EmployeeDocument } from '../schemas/employee.schema';
 import { UpdateOffboardingDto } from '../dtos';
+import { CertificatePdfService } from './certificate-pdf.service';
+import { EmailService } from '../../../common/utils/mailing/email.service';
 
 const DEFAULT_CLEARANCE_CHECKLIST: { key: string; label: string }[] = [
   { key: 'it_assets', label: 'IT equipment & access revoked' },
@@ -27,6 +30,10 @@ export class OffboardingService {
   constructor(
     @InjectModel(OffboardingRecord.name)
     private readonly offboardingModel: Model<OffboardingRecordDocument>,
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
+    private readonly certificatePdfService: CertificatePdfService,
+    private readonly emailService: EmailService,
   ) {}
 
   // Called from EmployeeService.terminateEmployee() — NOT exposed as
@@ -130,6 +137,55 @@ export class OffboardingService {
       record.status = OffboardingStatus.IN_PROGRESS;
     }
 
+    await record.save();
+    return record;
+  }
+
+  // Generates a Certificate of Service PDF (role + employment dates)
+  // and emails it to the departing employee. Available for any
+  // offboarding record — resignation or termination — since a
+  // certificate of service is a standard HR courtesy either way,
+  // not an admission of fault. Re-sendable; each send refreshes
+  // certificateOfServiceSentAt rather than being locked to one-time.
+  async sendCertificateOfService(
+    tenantId: string,
+    recordId: string,
+    businessName: string,
+  ): Promise<OffboardingRecordDocument> {
+    const record = await this.getById(tenantId, recordId);
+
+    const employee = await this.employeeModel.findOne({
+      _id: record.employeeId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!employee) {
+      throw new NotFoundException(
+        'The employee record behind this offboarding entry could not be found.',
+      );
+    }
+
+    const pdfBuffer =
+      await this.certificatePdfService.buildCertificateOfServicePdf({
+        employeeName: record.employeeName,
+        jobTitle: record.jobTitle,
+        employeeNumber: employee.employeeNumber ?? String(employee._id),
+        startDate: employee.startDate
+          ? new Date(employee.startDate)
+          : new Date(record.endDate),
+        endDate: new Date(record.endDate),
+        businessName,
+      });
+
+    await this.emailService.sendIssuedDocument(
+      {
+        to: employee.email,
+        recipientName: record.employeeName,
+        documentName: 'Certificate of Service',
+      },
+      pdfBuffer,
+    );
+
+    record.certificateOfServiceSentAt = new Date();
     await record.save();
     return record;
   }

@@ -23,7 +23,7 @@ import { RequiresModule } from 'src/common/decorators/requires-module.decorator'
 @ApiTags('CRM — Finance — Trust Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/trust-ledgers')
 export class TrustLedgerController {
   constructor(private readonly service: TrustLedgerService) {}
@@ -86,7 +86,7 @@ export class TrustLedgerController {
 @ApiTags('CRM — Finance — Trust Accounting')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM)
+@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/trust-movements')
 export class TrustMovementController {
   constructor(private readonly service: TrustMovementService) {}

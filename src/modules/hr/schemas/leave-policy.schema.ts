@@ -25,8 +25,14 @@ export const DEFAULT_POLICY: Record<LeaveType, number> = {
 
 @Schema({ _id: false })
 export class LeavePolicyEntry {
-  @Prop({ required: true, enum: LeaveType })
-  type: LeaveType;
+  // Not constrained to the LeaveType enum at the schema level — a
+  // tenant-defined custom leave type (see CustomLeaveType) stores
+  // its slug here too. Validity (built-in enum member OR a real
+  // CustomLeaveType.key for this tenant) is checked in
+  // LeaveService.upsertPolicy, which has tenant context to check
+  // custom types against.
+  @Prop({ required: true })
+  type: string;
 
   @Prop({ required: true, min: 0 })
   daysAllowed: number;

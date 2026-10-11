@@ -19,6 +19,10 @@ import {
   DEFAULT_POLICY,
 } from '../schemas/leave-policy.schema';
 import {
+  CustomLeaveType,
+  CustomLeaveTypeDocument,
+} from '../schemas/custom-leave-type.schema';
+import {
   Employee,
   EmployeeDocument,
   EmployeeHierarchyRole,
@@ -57,8 +61,92 @@ export class LeaveService {
     private readonly locationModel: Model<HrLocationDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    @InjectModel(CustomLeaveType.name)
+    private readonly customLeaveTypeModel: Model<CustomLeaveTypeDocument>,
     private readonly mailService: EmailService,
   ) {}
+
+  // ═══════════════════════════════════════════════════════════
+  // CUSTOM LEAVE TYPES — tenant-defined, beyond the 7 static ones
+  // ═══════════════════════════════════════════════════════════
+
+  async createCustomLeaveType(
+    tenantId: string,
+    label: string,
+  ): Promise<CustomLeaveTypeDocument> {
+    const tId = new Types.ObjectId(tenantId);
+    const trimmed = label.trim();
+    if (!trimmed) throw new BadRequestException('A name is required.');
+
+    let key = trimmed
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/(^_|_$)/g, '');
+    if (!key) key = 'custom_leave';
+
+    if ((Object.values(LeaveType) as string[]).includes(key)) {
+      throw new BadRequestException(
+        'This name is too close to an existing leave type — please choose a more specific name.',
+      );
+    }
+
+    // Avoid clobbering an existing custom type with the same slug
+    // by appending a numeric suffix on collision, rather than
+    // rejecting the create outright.
+    let candidate = key;
+    let suffix = 1;
+    while (
+      await this.customLeaveTypeModel.exists({
+        tenantId: tId,
+        key: candidate,
+      })
+    ) {
+      candidate = `${key}_${++suffix}`;
+    }
+
+    return this.customLeaveTypeModel.create({
+      tenantId: tId,
+      key: candidate,
+      label: trimmed,
+    });
+  }
+
+  async getCustomLeaveTypes(
+    tenantId: string,
+  ): Promise<CustomLeaveTypeDocument[]> {
+    return this.customLeaveTypeModel
+      .find({ tenantId: new Types.ObjectId(tenantId) })
+      .sort({ createdAt: 1 })
+      .lean() as any;
+  }
+
+  // Resolves whether `type` is usable for this tenant — a built-in
+  // LeaveType member, or the key of one of their own custom types.
+  private async isKnownLeaveType(
+    tenantId: Types.ObjectId,
+    type: string,
+  ): Promise<boolean> {
+    if ((Object.values(LeaveType) as string[]).includes(type)) return true;
+    return this.customLeaveTypeModel
+      .exists({ tenantId, key: type })
+      .then((doc) => !!doc);
+  }
+
+  private async getCustomLabelMap(
+    tenantId: Types.ObjectId,
+  ): Promise<Record<string, string>> {
+    const types = await this.customLeaveTypeModel
+      .find({ tenantId })
+      .select('key label')
+      .lean();
+    return types.reduce(
+      (m, t: any) => {
+        m[t.key] = t.label;
+        return m;
+      },
+      {} as Record<string, string>,
+    );
+  }
 
   // ═══════════════════════════════════════════════════════════
   // LEAVE POLICY — per location
@@ -78,6 +166,14 @@ export class LeaveService {
         tenantId: tId,
       });
       if (!loc) throw new NotFoundException('Location not found');
+    }
+
+    for (const entry of dto.policies) {
+      if (!(await this.isKnownLeaveType(tId, entry.type))) {
+        throw new BadRequestException(
+          `Unknown leave type: "${entry.type}". Create it as a custom leave type first.`,
+        );
+      }
     }
 
     return this.policyModel.findOneAndUpdate(
@@ -198,6 +294,10 @@ export class LeaveService {
       throw new BadRequestException('Leave must be at least 1 working day');
     }
 
+    if (!(await this.isKnownLeaveType(employee.tenantId, dto.type))) {
+      throw new BadRequestException(`Unknown leave type: "${dto.type}".`);
+    }
+
     if (employee.hierarchyRole === EmployeeHierarchyRole.OWNER) {
       return this.logOwnerLeave(employee, dto, days);
     }
@@ -294,7 +394,8 @@ export class LeaveService {
     if (!employee) throw new NotFoundException('Employee profile not found');
 
     const policy = await this.getPolicyForEmployee(employee);
-    const balances = this.buildBalanceSummary(employee, policy);
+    const customLabels = await this.getCustomLabelMap(employee.tenantId);
+    const balances = this.buildBalanceSummary(employee, policy, customLabels);
 
     return {
       balances,
@@ -473,7 +574,8 @@ export class LeaveService {
     if (!employee) throw new NotFoundException('Employee not found');
 
     const policy = await this.getPolicyForEmployee(employee);
-    const balances = this.buildBalanceSummary(employee, policy);
+    const customLabels = await this.getCustomLabelMap(employee.tenantId);
+    const balances = this.buildBalanceSummary(employee, policy, customLabels);
 
     return {
       balances,
@@ -538,7 +640,11 @@ export class LeaveService {
     return entitled;
   }
 
-  private buildBalanceSummary(employee: any, policy: any) {
+  private buildBalanceSummary(
+    employee: any,
+    policy: any,
+    customLabels: Record<string, string> = {},
+  ) {
     const policyMap: Record<
       string,
       { daysAllowed: number; carryOver: boolean }
@@ -615,6 +721,21 @@ export class LeaveService {
         daysLeft: get(LeaveType.UNPAID),
         carryOver: false,
       },
+      // Tenant-defined custom leave types — entitlement-only, no
+      // deduction tracked yet (matching the existing behaviour of
+      // every built-in type other than annual/sick).
+      ...Object.keys(policyMap)
+        .filter(
+          (type) => !(Object.values(LeaveType) as string[]).includes(type),
+        )
+        .map((type) => ({
+          type,
+          label: customLabels[type] ?? type,
+          daysAllowed: policyMap[type].daysAllowed,
+          daysUsed: 0,
+          daysLeft: policyMap[type].daysAllowed,
+          carryOver: policyMap[type].carryOver ?? false,
+        })),
     ];
   }
 
