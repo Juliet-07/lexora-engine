@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -175,7 +176,8 @@ export class ContractController {
   @Patch(':contractId/body')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Edit the body of a sent contract (only while status is "sent")',
+    summary:
+      'Edit the body of a contract (only while status is "draft" or "sent")',
   })
   editBody(
     @Param('contractId') contractId: string,
@@ -184,6 +186,20 @@ export class ContractController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.contractService.editBody(t || u, contractId, dto);
+  }
+
+  @Delete(':contractId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Delete a contract that is still a draft',
+  })
+  async deleteContract(
+    @Param('contractId') contractId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    await this.contractService.deleteContract(t || u, contractId);
+    return { deleted: true };
   }
 
   @Post(':contractId/countersign')

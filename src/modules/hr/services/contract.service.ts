@@ -315,6 +315,21 @@ export class ContractService {
     return contract;
   }
 
+  // Deleting is deliberately narrower than editing: once a contract
+  // has been sent, the signer may already have seen or acted on it,
+  // so Draft is the only status it can be removed from outright.
+  async deleteContract(tenantId: string, contractId: string): Promise<void> {
+    const contract = await this.getById(tenantId, contractId);
+
+    if (contract.status !== ContractStatus.DRAFT) {
+      throw new ConflictException(
+        'Only a draft contract can be deleted — this one has already been sent or issued.',
+      );
+    }
+
+    await contract.deleteOne();
+  }
+
   // ── SIGNER-FACING (public, token-gated) ──
 
   // Resolves a token to its contract WITHOUT consuming it — used
