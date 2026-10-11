@@ -687,6 +687,39 @@ export class ProbationService {
       payload.probationEndDate,
     );
   }
+
+  // Ends an in-progress probation the moment the employee's
+  // employment itself ends (terminated OR resigned) via the normal
+  // employee-termination flow — not just the probation module's own
+  // Month-3 final-decision path. Without this, a probation record
+  // for someone who no longer works here stays IN_PROGRESS/EXTENDED
+  // forever, and its due-window stages keep computing as "overdue"
+  // indefinitely since that's calculated live from real dates.
+  //
+  // No-ops if the record is already TERMINATED — e.g. when
+  // recordFinalDecision's own TERMINATE outcome already ended it
+  // before calling EmployeeService.terminateEmployee(), which is
+  // what emits this event.
+  @OnEvent('employee.terminated')
+  async handleEmployeeTerminated(payload: {
+    tenantId: string;
+    employeeId: string;
+  }) {
+    const record = await this.probationModel.findOne({
+      employeeId: new Types.ObjectId(payload.employeeId),
+      tenantId: new Types.ObjectId(payload.tenantId),
+      status: {
+        $in: [
+          ProbationRecordStatus.IN_PROGRESS,
+          ProbationRecordStatus.EXTENDED,
+        ],
+      },
+    });
+    if (!record) return;
+
+    record.status = ProbationRecordStatus.TERMINATED;
+    await record.save();
+  }
 }
 
 function addDays(date: Date, days: number): Date {

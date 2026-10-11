@@ -1145,6 +1145,16 @@ export class EmployeeService {
       );
     }
 
+    // Lets ProbationService end an in-progress probation the moment
+    // employment itself ends, rather than leaving the record open to
+    // be endlessly (and wrongly) flagged "overdue" on the Probation
+    // dashboard for someone who no longer works here. Same decoupled
+    // event pattern as 'employee.probation.started' above.
+    this.eventEmitter.emit('employee.terminated', {
+      tenantId,
+      employeeId: (employee._id as Types.ObjectId).toString(),
+    });
+
     await this.offboardingService.createFromTermination({
       tenantId,
       employeeId: (employee._id as any).toString(),
