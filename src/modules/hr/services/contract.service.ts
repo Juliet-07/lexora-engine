@@ -273,6 +273,15 @@ export class ContractService {
     return contract;
   }
 
+  // Editable while Draft or Sent — mirrors the CRM/vendor/KYC
+  // pipeline's own editRenderedBody guard exactly (Not Sent or
+  // Sent only). Draft is included deliberately: it's the window
+  // between generating a document and sending/issuing it, so the
+  // tenant can review and correct it (including a one-way letter,
+  // which never reaches Sent at all — it goes straight from Draft
+  // to Issued) before anyone outside the tenant sees it. Locked
+  // again once Signed, Countersigned, Issued, or Declined — a real
+  // recipient may already hold a copy by then.
   async editBody(
     tenantId: string,
     contractId: string,
@@ -280,13 +289,16 @@ export class ContractService {
   ): Promise<ContractDocument> {
     const contract = await this.getById(tenantId, contractId);
 
-    if (contract.status !== ContractStatus.SENT) {
+    if (
+      contract.status !== ContractStatus.DRAFT &&
+      contract.status !== ContractStatus.SENT
+    ) {
       throw new ConflictException(
-        contract.status === ContractStatus.SIGNED
-          ? 'This contract has already been signed and can no longer be edited.'
-          : contract.status === ContractStatus.DECLINED
-            ? 'This contract was declined and can no longer be edited.'
-            : 'Only a contract that has been sent can be edited. Generate or send it first.',
+        contract.status === ContractStatus.DECLINED
+          ? 'This contract was declined and can no longer be edited.'
+          : contract.status === ContractStatus.ISSUED
+            ? 'This letter has already been issued and can no longer be edited.'
+            : 'This contract has already been signed and can no longer be edited.',
       );
     }
 
