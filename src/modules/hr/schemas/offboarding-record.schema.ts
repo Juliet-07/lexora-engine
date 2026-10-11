@@ -67,6 +67,27 @@ export class OffboardingRecord {
 
   @Prop({ default: null })
   certificateOfServiceSentAt: Date | null;
+
+  // The tenant uploads their own Certificate of Service document
+  // (rather than one being auto-generated) — this is what gets
+  // attached when "Send" is clicked.
+  @Prop({
+    type: {
+      name: String,
+      url: String,
+      mimeType: String,
+      size: Number,
+      uploadedAt: Date,
+    },
+    default: null,
+  })
+  certificateOfServiceFile: {
+    name: string;
+    url: string;
+    mimeType: string;
+    size: number;
+    uploadedAt: Date;
+  } | null;
 }
 
 export const OffboardingRecordSchema =

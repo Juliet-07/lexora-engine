@@ -1,6 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { join } from 'path';
+import { readFile } from 'fs/promises';
 import {
   OffboardingRecord,
   OffboardingRecordDocument,
@@ -9,7 +15,6 @@ import {
 } from '../schemas';
 import { Employee, EmployeeDocument } from '../schemas/employee.schema';
 import { UpdateOffboardingDto } from '../dtos';
-import { CertificatePdfService } from './certificate-pdf.service';
 import { EmailService } from '../../../common/utils/mailing/email.service';
 
 const DEFAULT_CLEARANCE_CHECKLIST: { key: string; label: string }[] = [
@@ -32,7 +37,6 @@ export class OffboardingService {
     private readonly offboardingModel: Model<OffboardingRecordDocument>,
     @InjectModel(Employee.name)
     private readonly employeeModel: Model<EmployeeDocument>,
-    private readonly certificatePdfService: CertificatePdfService,
     private readonly emailService: EmailService,
   ) {}
 
@@ -141,18 +145,44 @@ export class OffboardingService {
     return record;
   }
 
-  // Generates a Certificate of Service PDF (role + employment dates)
-  // and emails it to the departing employee. Available for any
-  // offboarding record — resignation or termination — since a
-  // certificate of service is a standard HR courtesy either way,
-  // not an admission of fault. Re-sendable; each send refreshes
-  // certificateOfServiceSentAt rather than being locked to one-time.
+  // The tenant uploads their own Certificate of Service document
+  // (a signed letter, a scan, whatever they already use) rather than
+  // one being generated here. Available for any offboarding record —
+  // resignation or termination — since issuing one is a standard HR
+  // courtesy either way, not an admission of fault.
+  async uploadCertificateOfService(
+    tenantId: string,
+    recordId: string,
+    file: Express.Multer.File,
+  ): Promise<OffboardingRecordDocument> {
+    const record = await this.getById(tenantId, recordId);
+
+    record.certificateOfServiceFile = {
+      name: file.originalname,
+      url: `/uploads/offboarding/certificates/${file.filename}`,
+      mimeType: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date(),
+    };
+    await record.save();
+    return record;
+  }
+
+  // Emails whatever document was most recently uploaded via
+  // uploadCertificateOfService above. Re-sendable; each send
+  // refreshes certificateOfServiceSentAt rather than being locked to
+  // one-time, and re-sending after a re-upload sends the new file.
   async sendCertificateOfService(
     tenantId: string,
     recordId: string,
-    businessName: string,
   ): Promise<OffboardingRecordDocument> {
     const record = await this.getById(tenantId, recordId);
+
+    if (!record.certificateOfServiceFile) {
+      throw new BadRequestException(
+        'Upload the certificate of service document before sending it.',
+      );
+    }
 
     const employee = await this.employeeModel.findOne({
       _id: record.employeeId,
@@ -164,17 +194,15 @@ export class OffboardingService {
       );
     }
 
-    const pdfBuffer =
-      await this.certificatePdfService.buildCertificateOfServicePdf({
-        employeeName: record.employeeName,
-        jobTitle: record.jobTitle,
-        employeeNumber: employee.employeeNumber ?? String(employee._id),
-        startDate: employee.startDate
-          ? new Date(employee.startDate)
-          : new Date(record.endDate),
-        endDate: new Date(record.endDate),
-        businessName,
-      });
+    const filename = record.certificateOfServiceFile.url.split('/').pop();
+    const filePath = join(
+      process.cwd(),
+      'uploads',
+      'offboarding',
+      'certificates',
+      filename as string,
+    );
+    const fileBuffer = await readFile(filePath);
 
     await this.emailService.sendIssuedDocument(
       {
@@ -182,7 +210,8 @@ export class OffboardingService {
         recipientName: record.employeeName,
         documentName: 'Certificate of Service',
       },
-      pdfBuffer,
+      fileBuffer,
+      record.certificateOfServiceFile.name,
     );
 
     record.certificateOfServiceSentAt = new Date();

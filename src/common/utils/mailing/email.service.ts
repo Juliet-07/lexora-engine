@@ -785,7 +785,12 @@ export class EmailService {
 
   async sendIssuedDocument(
     data: IssuedDocumentEmailData,
-    pdfBuffer: Buffer,
+    fileBuffer: Buffer,
+    // Optional — preserves the real filename/extension for an
+    // attachment that isn't necessarily a PDF (e.g. a tenant-uploaded
+    // Certificate of Service). Defaults to the original PDF-only
+    // naming so every existing caller keeps its current behavior.
+    attachmentFilename?: string,
   ): Promise<void> {
     const { subject, html } = issuedDocumentTemplate(data);
     await this.transporter.sendMail({
@@ -795,8 +800,10 @@ export class EmailService {
       html,
       attachments: [
         {
-          filename: `${data.documentName.replace(/\s+/g, '_')}.pdf`,
-          content: pdfBuffer,
+          filename:
+            attachmentFilename ||
+            `${data.documentName.replace(/\s+/g, '_')}.pdf`,
+          content: fileBuffer,
         },
       ],
     });
