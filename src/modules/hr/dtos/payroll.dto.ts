@@ -246,3 +246,34 @@ export class UpdatePayslipTemplateDto {
   @IsBoolean()
   showYearToDateSummary?: boolean;
 }
+
+// ═══════════════════════════════════════════════════════════════
+// PAYSLIP EMAIL — tenant-composed message instead of the fixed
+// template. PO, Oct 2026: "instead of the hardcoded email to be sent,
+// I want to add a twist to it, give the tenant the ability to type the
+// body of the email themselves. There should be space to carry the
+// employee name after the greeting to make it feel more personalised."
+// `body` is plain text the tenant types in the compose dialog; it may
+// contain the literal token `{{employeeName}}`, which the backend
+// substitutes with each recipient's own name before sending (so one
+// composed message personalizes every payslip in an "Email All" batch).
+// Both fields are optional — omitting them keeps sending the original
+// fixed template, so nothing else calling this path breaks.
+// ═══════════════════════════════════════════════════════════════
+
+export class SendPayslipEmailDto {
+  @ApiPropertyOptional({
+    description: 'Custom email subject. Falls back to the default if omitted.',
+  })
+  @IsOptional()
+  @IsString()
+  subject?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Custom email body (plain text). May contain {{employeeName}} as a placeholder for the recipient's own name. Falls back to the default template if omitted.",
+  })
+  @IsOptional()
+  @IsString()
+  body?: string;
+}

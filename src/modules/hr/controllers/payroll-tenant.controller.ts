@@ -38,6 +38,7 @@ import {
   UpdatePayslipTemplateDto,
   GrossUpFromNetDto,
   DecideLoanRequestDto,
+  SendPayslipEmailDto,
 } from '../dtos/';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -329,12 +330,14 @@ export class PayrollRunController {
   @ApiOperation({
     summary: 'Email every payslip in this run to its respective employee',
   })
+  @ApiBody({ type: SendPayslipEmailDto, required: false })
   emailAllPayslips(
     @Param('runId') runId: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @Body() message: SendPayslipEmailDto,
   ) {
-    return this.runService.emailAllPayslipsInRun(t || u, runId);
+    return this.runService.emailAllPayslipsInRun(t || u, runId, message);
   }
 
   @Get(':runId/export-excel')
@@ -407,12 +410,14 @@ export class PayrollRunController {
   @ApiOperation({
     summary: "Email a payslip to the employee's own address on file",
   })
+  @ApiBody({ type: SendPayslipEmailDto, required: false })
   async emailPayslip(
     @Param('payslipId') payslipId: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @Body() message: SendPayslipEmailDto,
   ) {
-    return this.runService.emailPayslipToEmployee(t || u, payslipId);
+    return this.runService.emailPayslipToEmployee(t || u, payslipId, message);
   }
 
   @Get('employee/:employeeId/payslips')

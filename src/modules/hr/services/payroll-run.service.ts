@@ -23,7 +23,7 @@ import {
 } from './payroll-calculation.service';
 import { EmployeeLoanService } from './employee-loan.service';
 import { ExchangeRateService } from './exchange-rate.service';
-import { CreatePayrollRunDto } from '../dtos/payroll.dto';
+import { CreatePayrollRunDto, SendPayslipEmailDto } from '../dtos/payroll.dto';
 import { PayslipTemplateService } from './payslip-template.service';
 import { buildPayslipHtml } from 'src/common/utils/payslip-html.util';
 import { EmployeeService } from './employee.service';
@@ -383,6 +383,9 @@ export class PayrollRunService {
   async emailPayslipToEmployee(
     tenantId: string,
     payslipId: string,
+    // Tenant-composed subject/body (PO, Oct 2026) — optional so this
+    // still works unchanged for any caller that doesn't pass one.
+    message?: SendPayslipEmailDto,
   ): Promise<{ sentTo: string; sentAt: string }> {
     const slip = await this.payslipModel.findOne({
       _id: payslipId,
@@ -410,6 +413,8 @@ export class PayrollRunService {
         employeeName: slip.employeeName,
         periodLabel: slip.periodLabel,
         payslipHtml,
+        customSubject: message?.subject,
+        customBody: message?.body,
       },
       pdfBuffer,
     );
@@ -442,6 +447,10 @@ export class PayrollRunService {
   async emailAllPayslipsInRun(
     tenantId: string,
     runId: string,
+    // One tenant-composed message, personalized per recipient via the
+    // {{employeeName}} token each send substitutes with that slip's own
+    // employeeName (PO, Oct 2026).
+    message?: SendPayslipEmailDto,
   ): Promise<{
     sent: number;
     failed: { employeeName: string; reason: string }[];
@@ -457,6 +466,7 @@ export class PayrollRunService {
         await this.emailPayslipToEmployee(
           tenantId,
           (slip._id as any).toString(),
+          message,
         );
         sent++;
       } catch (err: any) {
