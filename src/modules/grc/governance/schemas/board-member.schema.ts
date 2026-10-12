@@ -464,6 +464,13 @@ export class Remuneration {
   @Prop({ default: 0 }) annualRetainer: number;
   @Prop({ default: 0 }) committeeChairFee: number;
   @Prop({ default: 0 }) meetingAttendanceFee: number;
+  // Chosen by the tenant alongside the amounts (PO, Oct 2026: "the
+  // tenant creates a fee structure for the board member, they should
+  // be able to select currency and the amount and currency created is
+  // what shows on the board portal") — one currency for the whole
+  // fee structure, not per-field, since all three figures are set
+  // together in the same editor.
+  @Prop({ default: 'RWF' }) currency: string;
   @Prop({ default: null }) lastReviewedAt: Date | null;
 }
 export const RemunerationSchema = SchemaFactory.createForClass(Remuneration);

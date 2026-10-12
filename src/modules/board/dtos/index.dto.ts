@@ -17,4 +17,9 @@ export class SendBoardMessageDto {
 export class UpdateMyBoardProfileDto {
   @ApiPropertyOptional() @IsOptional() @IsString() phone?: string;
   @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
+  // Lives on BoardMember, not User (PO, Oct 2026: "let bio be part of
+  // the details the board member can update and this will also
+  // update the bio in the tenant's end as well") — the same field the
+  // tenant's own Board Management > Personal details already reads.
+  @ApiPropertyOptional() @IsOptional() @IsString() bio?: string;
 }

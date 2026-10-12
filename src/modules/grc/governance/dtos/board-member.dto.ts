@@ -205,6 +205,7 @@ export class UpdateRemunerationDto {
   @IsOptional()
   @IsNumber()
   meetingAttendanceFee?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiPropertyOptional()
   @IsOptional()
   @IsDateString()

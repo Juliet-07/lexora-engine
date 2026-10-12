@@ -666,6 +666,7 @@ export class BoardMemberService {
         annualRetainer: m.remuneration?.annualRetainer ?? 0,
         committeeChairFee: m.remuneration?.committeeChairFee ?? 0,
         meetingAttendanceFee: m.remuneration?.meetingAttendanceFee ?? 0,
+        currency: m.remuneration?.currency ?? 'RWF',
         lastReviewedAt: m.remuneration?.lastReviewedAt ?? null,
       },
       conflicts: (m.conflicts ?? []).map((c: any) => ({
@@ -1045,6 +1046,10 @@ export class BoardMemberService {
       member.remuneration.committeeChairFee = dto.committeeChairFee;
     if (dto.meetingAttendanceFee !== undefined)
       member.remuneration.meetingAttendanceFee = dto.meetingAttendanceFee;
+    // "The tenant should ... select currency and the amount and
+    // currency created is what shows on the board portal" (PO, Oct
+    // 2026) — getMyFeeStructure below reads this same field.
+    if (dto.currency !== undefined) member.remuneration.currency = dto.currency;
     if (dto.lastReviewedAt !== undefined)
       member.remuneration.lastReviewedAt = new Date(dto.lastReviewedAt);
     member.markModified('remuneration');
@@ -1393,6 +1398,7 @@ export class BoardMemberService {
       role: member.role,
       email: member.email,
       phone: user?.phone ?? '',
+      bio: member.bio ?? '',
       appointedAt: member.appointedAt,
       termEnds: member.termEnds,
       lifecycleStatus: member.lifecycleStatus,
@@ -1465,6 +1471,7 @@ export class BoardMemberService {
       annualRetainer: r?.annualRetainer ?? 0,
       committeeChairFee: r?.committeeChairFee ?? 0,
       meetingAttendanceFee: r?.meetingAttendanceFee ?? 0,
+      currency: r?.currency ?? 'RWF',
       lastReviewedAt: r?.lastReviewedAt ?? null,
     };
   }
@@ -1487,7 +1494,7 @@ export class BoardMemberService {
   // a director is first appointed.
   async updateMyProfile(
     userId: string,
-    dto: { phone?: string; email?: string },
+    dto: { phone?: string; email?: string; bio?: string },
   ) {
     const member = await this.getByUserId(userId);
     if (!member.userId) {
@@ -1515,6 +1522,14 @@ export class BoardMemberService {
         userUpdate.email = email;
         member.email = email;
       }
+    }
+
+    // Bio lives on BoardMember only (no User field for it), so a
+    // director editing it here is the same write the tenant's own
+    // Board Management > Personal details makes — the tenant side
+    // sees it update immediately, nothing to sync (PO, Oct 2026).
+    if (dto.bio !== undefined) {
+      member.bio = dto.bio;
     }
 
     if (Object.keys(userUpdate).length > 0) {
