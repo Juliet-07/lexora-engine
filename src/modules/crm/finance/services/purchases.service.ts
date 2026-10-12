@@ -714,6 +714,7 @@ export class ExpenseClaimService {
     boardMemberUserId: string | null,
     name: string,
     dto: SubmitMyExpenseClaimDto,
+    receiptFile?: Express.Multer.File,
   ) {
     if (
       dto.category === ExpenseCategory.OTHER &&
@@ -721,6 +722,17 @@ export class ExpenseClaimService {
     ) {
       throw new BadRequestException(
         'Please specify what this expense claim is for.',
+      );
+    }
+    // PO (Oct 2026): "For board member to submit expense claim, a
+    // document must be attached" — unlike the tenant-recorded
+    // employee flow (create() above), where proof is optional and
+    // can be attached later, a director's own submission requires it
+    // up front. Same storage/URL scheme as that flow (and as a bill's
+    // receipt), just enforced at the point of creation here.
+    if (!receiptFile) {
+      throw new BadRequestException(
+        'Please attach a receipt or supporting document for this claim.',
       );
     }
     const tId = new Types.ObjectId(tenantId);
@@ -750,6 +762,8 @@ export class ExpenseClaimService {
       amount: dto.amount,
       currency: dto.currency ?? 'RWF',
       rechargeable: false,
+      receiptUrl: `/uploads/finance/expense-claims/${receiptFile.filename}`,
+      receiptName: receiptFile.originalname,
     });
     return created.toObject();
   }

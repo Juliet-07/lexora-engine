@@ -85,6 +85,45 @@ const trainingProofStorage = diskStorage({
     cb(null, `${uuidv4()}${extname(file.originalname)}`),
 });
 
+// Same destination/URL scheme as the tenant-side employee expense
+// flow (ExpenseClaimController, finance module) — both read and
+// serve from the same uploads/finance/expense-claims directory, so a
+// director's receipt is indistinguishable in storage from an
+// employee's. Required here (PO, Oct 2026: "For board member to
+// submit expense claim, a document must be attached") where the
+// tenant-side flow leaves it optional.
+const boardExpenseReceiptStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(
+      process.cwd(),
+      'uploads',
+      'finance',
+      'expense-claims',
+    );
+    if (!existsSync(uploadPath)) mkdirSync(uploadPath, { recursive: true });
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) =>
+    cb(null, `${uuidv4()}${extname(file.originalname)}`),
+});
+
+const boardExpenseReceiptFileFilter = (
+  _req: any,
+  file: Express.Multer.File,
+  cb: any,
+) => {
+  const allowed = [
+    'application/pdf',
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'image/heic',
+    'image/webp',
+  ];
+  if (allowed.includes(file.mimetype)) cb(null, true);
+  else cb(new Error('Only PDF or image receipts are allowed'), false);
+};
+
 // ── Board portal, self-service ──────────────────────────────────
 // Reached from lexora-board (BOARD_APP_URL), not the tenant app.
 // Deliberately carries NO @RequiresModule — ModuleAccessGuard denies
@@ -318,13 +357,23 @@ export class BoardPortalController {
   }
 
   @Post('expense-claims')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: boardExpenseReceiptStorage,
+      fileFilter: boardExpenseReceiptFileFilter,
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary:
       'Submit an expense claim — multi-currency; category Other requires ' +
-      'saying what the claim is for',
+      'saying what the claim is for; a receipt/supporting document ' +
+      '(image or PDF) is required',
   })
   async submitMyExpenseClaim(
     @Body() dto: SubmitMyExpenseClaimDto,
+    @UploadedFile() file: Express.Multer.File | undefined,
     @CurrentUser('sub') userId: string,
   ) {
     const { boardMemberId, tenantId, name } =
@@ -335,6 +384,7 @@ export class BoardPortalController {
       userId,
       name,
       dto,
+      file,
     );
   }
 
