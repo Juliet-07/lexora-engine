@@ -383,14 +383,21 @@ export class SuperAdminService {
       // not User accounts. The owner gets a real Employee record at
       // tenant creation too (see createOwnerEmployeeRecord), so this
       // is the only count that actually includes them alongside
-      // every staff member added afterward. Only active records
-      // count toward the live seat total; an offboarded employee
-      // frees up their seat.
+      // every staff member added afterward. Anyone not terminated or
+      // resigned still occupies a seat — active, probation, on_leave
+      // and suspended all count, matching the actual seat-limit
+      // enforcement in EmployeeService#enforceUserLimit. (Previously
+      // this only matched literal "active" status, which undercounted
+      // probationary hires and let this column silently drift behind
+      // the real number of seats a tenant had actually filled — see
+      // Lexora HR fixes doc, Oct 2026.)
       this.employeeModel.aggregate([
         {
           $match: {
             tenantId: { $in: tenantIds },
-            employmentStatus: EmploymentStatus.ACTIVE,
+            employmentStatus: {
+              $nin: [EmploymentStatus.TERMINATED, EmploymentStatus.RESIGNED],
+            },
           },
         },
         { $group: { _id: '$tenantId', count: { $sum: 1 } } },

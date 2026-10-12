@@ -153,6 +153,7 @@ export class TenantService {
       // ── HR stats ──────────────────────────────────────────
       totalEmployees,
       activeEmployees,
+      seatsUsed,
       employeesByClient,
       hrRecentJoins,
       // ── KYC / AML ───────────────────────────────────────────
@@ -190,7 +191,9 @@ export class TenantService {
       ]),
       this.subscriptionModel
         .findOne({ tenantId: tId })
-        .select('plan status activeModules trialEndsAt currentPeriodEnd')
+        .select(
+          'plan status activeModules trialEndsAt currentPeriodEnd maxUsersOverride',
+        )
         .lean(),
       this.userModel
         .find({ userType: UserType.TENANT, tenantId: tId })
@@ -213,6 +216,16 @@ export class TenantService {
       this.employeeModel.countDocuments({
         tenantId: tId,
         employmentStatus: 'active',
+      }),
+      // Live seat count for the plan's user limit — anyone not
+      // terminated/resigned still occupies a seat (active, probation,
+      // on_leave, suspended), matching EmployeeService#enforceUserLimit
+      // and the super-admin tenant list's own userCount. Deliberately
+      // not the same as `activeEmployees` above, which is the literal
+      // "active" status dashboard stat, not a billing seat count.
+      this.employeeModel.countDocuments({
+        tenantId: tId,
+        employmentStatus: { $nin: ['terminated', 'resigned'] },
       }),
       this.employeeModel.aggregate([
         { $match: { tenantId: tId, employmentStatus: 'active' } },
@@ -523,6 +536,21 @@ export class TenantService {
     const rank: Record<string, number> = { critical: 0, warning: 1, info: 2 };
     attention.sort((a, b) => rank[a.severity] - rank[b.severity]);
 
+    // Resolve the plan's real user limit — a per-tenant override
+    // the super admin set, falling back to the plan config's own
+    // maxUsers, same precedence EmployeeService#enforceUserLimit
+    // uses, so this number is never shown as a seat ceiling the
+    // backend wouldn't actually enforce.
+    let maxUsers: number | null = subscription?.maxUsersOverride ?? null;
+    if (maxUsers == null && subscription?.plan) {
+      const planConfig = await this.planModel
+        .findOne({ plan: subscription.plan })
+        .select('maxUsers')
+        .lean();
+      maxUsers = planConfig?.maxUsers ?? 5;
+    }
+    if (maxUsers == null) maxUsers = 5;
+
     return {
       team: {
         total: totalTeam,
@@ -536,6 +564,9 @@ export class TenantService {
         activeModules: subscription?.activeModules || [],
         trialEndsAt: subscription?.trialEndsAt || null,
         currentPeriodEnd: subscription?.currentPeriodEnd || null,
+        maxUsers,
+        seatsUsed,
+        seatsRemaining: Math.max(maxUsers - seatsUsed, 0),
       },
       hr: {
         totalEmployees,

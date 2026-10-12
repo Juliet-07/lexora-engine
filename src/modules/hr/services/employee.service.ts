@@ -380,6 +380,18 @@ export class EmployeeService {
   // super-admin side) even though their login account itself is
   // UserType.TENANT, not UserType.EMPLOYEE — counting User accounts
   // would silently miss the owner's own seat.
+  //
+  // Seat count uses `employmentStatus: $nin [terminated, resigned]`
+  // — the same "still with the company" definition createEmployee's
+  // own HoD-uniqueness check and getTeams' member counts already
+  // use — rather than literally `employmentStatus: 'active'`. A
+  // bug previously used the literal-active filter here, which meant
+  // anyone created with a probationEndDate (employmentStatus
+  // defaults to PROBATION, not ACTIVE — see createEmployee below)
+  // never counted against the limit at all, so a tenant could add
+  // unlimited "probationary" seats past their plan's cap simply by
+  // always setting a probation end date. ON_LEAVE/SUSPENDED
+  // employees are real occupied seats too, same reasoning.
   private async enforceUserLimit(tenantId: string): Promise<void> {
     const subscription = await this.subscriptionModel
       .findOne({ tenantId: new Types.ObjectId(tenantId) })
@@ -396,7 +408,9 @@ export class EmployeeService {
 
     const currentCount = await this.employeeModel.countDocuments({
       tenantId: new Types.ObjectId(tenantId),
-      employmentStatus: EmploymentStatus.ACTIVE,
+      employmentStatus: {
+        $nin: [EmploymentStatus.TERMINATED, EmploymentStatus.RESIGNED],
+      },
     });
     if (currentCount >= maxUsers) {
       throw new BadRequestException(
@@ -901,6 +915,34 @@ export class EmployeeService {
       update.probationEndDate = new Date(dto.probationEndDate);
     if (dto.teamId) update.teamId = new Types.ObjectId(dto.teamId);
     if (dto.locationId) update.locationId = new Types.ObjectId(dto.locationId);
+
+    // Reinstating someone from terminated/resigned back into a live
+    // status (active, probation, on_leave, suspended) occupies a
+    // seat again — enforce the same plan limit createEmployee does.
+    // Without this, a tenant at their seat cap could terminate one
+    // person, hire a replacement to refill the freed seat, then
+    // PATCH the terminated person's employmentStatus straight back
+    // to "active" here and end up over the limit again.
+    if (dto.employmentStatus) {
+      const freedStatuses: EmploymentStatus[] = [
+        EmploymentStatus.TERMINATED,
+        EmploymentStatus.RESIGNED,
+      ];
+      if (!freedStatuses.includes(dto.employmentStatus)) {
+        const existing = await this.employeeModel
+          .findOne({ _id: employeeId, tenantId: new Types.ObjectId(tenantId) })
+          .select('employmentStatus')
+          .lean();
+        if (
+          existing &&
+          freedStatuses.includes(
+            (existing as any).employmentStatus as EmploymentStatus,
+          )
+        ) {
+          await this.enforceUserLimit(tenantId);
+        }
+      }
+    }
 
     if (
       dto.hierarchyRole !== undefined ||
