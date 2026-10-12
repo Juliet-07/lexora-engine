@@ -18,6 +18,8 @@ import {
   BoardNotificationSchema,
 } from './schemas';
 import { EsgModule } from '../grc/esg/esg.module';
+import { ComplianceModule } from '../grc/compliance/compliance.module';
+import { FinanceModule } from '../crm/finance/finance.module';
 
 // Every endpoint a signed-in board member (UserType.BOARD_MEMBER) calls
 // from their own portal (lexora-board) lives here, in one place —
@@ -56,6 +58,8 @@ import { EsgModule } from '../grc/esg/esg.module';
   imports: [
     GovernanceModule,
     EsgModule,
+    ComplianceModule,
+    FinanceModule,
     MongooseModule.forFeature([
       { name: BoardMember.name, schema: BoardMemberSchema },
       { name: BoardMessage.name, schema: BoardMessageSchema },

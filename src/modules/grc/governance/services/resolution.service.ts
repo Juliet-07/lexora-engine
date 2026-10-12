@@ -22,11 +22,13 @@ import {
   CloseWrittenDto,
   AddProxyDto,
   SaveShareholderPollDto,
+  CastMyBoardVoteDto,
+  RespondMyWrittenDto,
 } from '../dtos/index.dto';
 import { BoardMemberService } from './board-member.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 
-interface Tally {
+export interface Tally {
   approve: number;
   oppose: number;
   abstain: number;
@@ -352,6 +354,160 @@ export class ResolutionService {
     r.quorumPresent = dto.quorumPresent;
     if (r.status === ResolutionStatus.DRAFT)
       r.status = ResolutionStatus.VOTING_OPEN;
+    await r.save();
+    return r;
+  }
+
+  // ── Board portal, self-service ────────────────────────────────
+  // Everything below is scoped to the calling director's own row —
+  // found by directorId, never by an arbitrary rowIndex the way the
+  // tenant-side endpoints above still take (those are kept for the
+  // tenant's own circulation/closing actions; a director can no
+  // longer cast a vote on another director's behalf through them —
+  // that moved here, to the board portal, per the Oct 2026 ask).
+
+  // Shareholder resolutions use proxies/poll numbers, not individual
+  // director rows, so they're excluded — a director has nothing of
+  // their own to vote here; the tenant's existing shareholder flow
+  // is unaffected.
+  async getMyResolutions(tenantId: string, boardMemberId: string) {
+    const rows = await this.resolutionModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        type: { $in: [ResolutionType.BOARD, ResolutionType.WRITTEN] },
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return rows.map((r: any) => {
+      const isBoard = r.type === ResolutionType.BOARD;
+      const memberRows: any[] = isBoard
+        ? (r.boardVotes ?? [])
+        : (r.writtenRows ?? []);
+      const rowIndex = memberRows.findIndex(
+        (row) => row.directorId?.toString() === boardMemberId,
+      );
+      const myRow = rowIndex >= 0 ? memberRows[rowIndex] : null;
+      const tally = this.tally(
+        isBoard
+          ? memberRows
+          : memberRows.map((row) => ({
+              recused: row.recused,
+              response: row.response,
+            })),
+      );
+      // A director can act when it's their turn: a Board vote the
+      // moment it's open, a Written row once it's actually been
+      // circulated to them (Sent/Reminded) — never before, and never
+      // once they've already responded or the resolution is closed.
+      const canAct =
+        r.status !== ResolutionStatus.CLOSED &&
+        !!myRow &&
+        !myRow.recused &&
+        (isBoard
+          ? myRow.vote === null
+          : myRow.status !== WrittenStatus.NOT_SENT &&
+            myRow.status !== WrittenStatus.RESPONDED);
+      return {
+        _id: r._id,
+        reference: r.reference,
+        type: r.type,
+        subject: r.subject,
+        fullText: r.fullText,
+        status: r.status,
+        outcome: r.outcome,
+        effectiveDate: r.effectiveDate,
+        deadline: r.deadline ?? null,
+        proposer: r.proposer ?? null,
+        seconder: r.seconder ?? null,
+        tally,
+        myRow: myRow
+          ? {
+              recused: myRow.recused,
+              vote: myRow.vote ?? myRow.response ?? null,
+              status: myRow.status ?? null,
+              comment: myRow.comment ?? '',
+              respondedAt: myRow.respondedAt ?? null,
+            }
+          : null,
+        canAct,
+      };
+    });
+  }
+
+  async castMyBoardVote(
+    tenantId: string,
+    resolutionId: string,
+    boardMemberId: string,
+    dto: CastMyBoardVoteDto,
+  ) {
+    const r = await this.getById(tenantId, resolutionId);
+    this.assertNotClosed(r);
+    if (r.type !== ResolutionType.BOARD) {
+      throw new BadRequestException('This is not a Board resolution.');
+    }
+    const rowIndex = r.boardVotes.findIndex(
+      (row) => row.directorId?.toString() === boardMemberId,
+    );
+    if (rowIndex === -1) {
+      throw new NotFoundException(
+        'You are not listed as a voter on this resolution.',
+      );
+    }
+    const row = r.boardVotes[rowIndex];
+    if (row.recused) {
+      throw new BadRequestException('You are recused from this vote.');
+    }
+    row.vote = dto.vote;
+    row.comment = dto.comment?.trim() ?? '';
+    if (r.status === ResolutionStatus.DRAFT) {
+      r.status = ResolutionStatus.VOTING_OPEN;
+    }
+    r.markModified('boardVotes');
+    await r.save();
+    return r;
+  }
+
+  async respondMyWritten(
+    tenantId: string,
+    resolutionId: string,
+    boardMemberId: string,
+    dto: RespondMyWrittenDto,
+  ) {
+    const r = await this.getById(tenantId, resolutionId);
+    this.assertNotClosed(r);
+    if (r.type !== ResolutionType.WRITTEN) {
+      throw new BadRequestException('This is not a Written resolution.');
+    }
+    const rowIndex = r.writtenRows.findIndex(
+      (row) => row.directorId?.toString() === boardMemberId,
+    );
+    if (rowIndex === -1) {
+      throw new NotFoundException(
+        'You are not listed as a recipient of this resolution.',
+      );
+    }
+    const row = r.writtenRows[rowIndex];
+    if (row.recused) {
+      throw new BadRequestException('You are recused from this resolution.');
+    }
+    if (row.status === WrittenStatus.NOT_SENT) {
+      throw new BadRequestException(
+        'This resolution has not been circulated to you yet.',
+      );
+    }
+    row.response = dto.response;
+    row.status = WrittenStatus.RESPONDED;
+    row.respondedAt = new Date();
+    row.manualEntry = false;
+    row.comment = dto.comment?.trim() ?? '';
+    r.notifications.push({
+      at: new Date(),
+      kind: 'Response',
+      message: `${row.directorName} responded: ${dto.response}`,
+    } as any);
+    r.markModified('writtenRows');
+    r.markModified('notifications');
     await r.save();
     return r;
   }

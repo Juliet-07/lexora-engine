@@ -44,7 +44,12 @@ export class PolicyAcknowledgment {
   @Prop({ required: true, lowercase: true }) email: string;
   @Prop({ required: true }) signature: string;
   @Prop({ required: true, default: () => new Date() }) ackedAt: Date;
-  @Prop({ enum: ['external', 'employee'], required: true }) source: string;
+  // 'board' — a director acknowledging in-app from their own board
+  // portal (Oct 2026), parallel to 'employee' but kept distinct since
+  // it's a different roster/acknowledgement mechanism, not because
+  // anything currently branches on the two separately.
+  @Prop({ enum: ['external', 'employee', 'board'], required: true })
+  source: string;
   // Which version of the policy this acknowledgment covers — a newer
   // published version makes prior acknowledgments stale, which is
   // how "re-acknowledgement is triggered automatically when a new
@@ -61,6 +66,13 @@ export class PolicyAckToken {
   @Prop({ required: true, lowercase: true }) recipientEmail: string;
   @Prop({ required: true }) recipientName: string;
   @Prop({ required: true, default: () => new Date() }) createdAt: Date;
+  // Set for a board-channel recipient (null for an employee) so the
+  // board portal's in-app acknowledgement can match the signed-in
+  // director directly, the same way BoardApproval.boardMemberId
+  // already does for the approval step — email match alone is a
+  // legacy fallback (pre-existing rows created before this field).
+  @Prop({ type: Types.ObjectId, ref: 'BoardMember', default: null })
+  boardMemberId: Types.ObjectId | null;
 }
 export const PolicyAckTokenSchema =
   SchemaFactory.createForClass(PolicyAckToken);

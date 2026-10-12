@@ -79,6 +79,16 @@ export enum BillStatus {
   REJECTED = 'Rejected',
 }
 
+// Who's being paid — a real vendor/general expense (unchanged), or
+// a director (Oct 2026, "there should be a flow for board member,
+// this is how the tenant will add to the record... that they have
+// paid the board member"). Defaults to VENDOR so every pre-existing
+// bill reads correctly with no backfill needed.
+export enum BillPayeeType {
+  VENDOR = 'Vendor',
+  BOARD_MEMBER = 'BoardMember',
+}
+
 @Schema({ timestamps: true, collection: 'crm_bills' })
 export class Bill {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -86,11 +96,27 @@ export class Bill {
 
   @Prop({ required: true }) ref: string;
 
+  @Prop({ enum: BillPayeeType, default: BillPayeeType.VENDOR, index: true })
+  payeeType: BillPayeeType;
+
+  // Set only when payeeType is BOARD_MEMBER — the director being
+  // paid, so the board portal can list back exactly the bills
+  // recorded against this director (see BillService#getMyBills, the
+  // Payments & Fees page's "Fee statements" tab).
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'BoardMember',
+    default: null,
+    index: true,
+  })
+  boardMemberId: Types.ObjectId | null;
+
   // Optional — not every bill is a vendor invoice. A tenant can use
   // this to record a general expense (bank charges, a one-off
   // purchase, anything without a formal vendor relationship)
-  // without inventing a throwaway vendor record for it. vendorName
-  // carries the display label either way.
+  // without inventing a throwaway vendor record for it, or — same
+  // mechanism — a director payment (payeeType BOARD_MEMBER, vendorId
+  // stays null). vendorName carries the display label either way.
   @Prop({ type: Types.ObjectId, ref: 'Vendor', default: null, index: true })
   vendorId: Types.ObjectId | null;
   @Prop({ required: true }) vendorName: string;
@@ -152,6 +178,27 @@ export enum ClaimStatus {
   PAID = 'Paid',
 }
 
+// Who filed the claim — an employee via the tenant's own "Record
+// claim" form (unchanged), or a director submitting their own claim
+// from the board portal (Oct 2026, "the tenant should be able to
+// receive an expense claim made by the board member"). Defaults to
+// EMPLOYEE so every pre-existing claim reads correctly with no
+// backfill needed.
+export enum ExpenseClaimSubmitterType {
+  EMPLOYEE = 'Employee',
+  BOARD_MEMBER = 'BoardMember',
+}
+
+// Board-portal submissions categorize the expense; tenant-recorded
+// employee claims don't collect this today, so it's optional/null
+// for those rather than forced onto a flow that never asked for it.
+export enum ExpenseCategory {
+  TRAVEL = 'Travel',
+  ACCOMMODATION = 'Accommodation',
+  MEALS = 'Meals',
+  OTHER = 'Other',
+}
+
 @Schema({ timestamps: true, collection: 'crm_expense_claims' })
 export class ExpenseClaim {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -163,10 +210,43 @@ export class ExpenseClaim {
   employeeUserId: Types.ObjectId;
   @Prop({ required: true }) employee: string;
 
+  @Prop({
+    enum: ExpenseClaimSubmitterType,
+    default: ExpenseClaimSubmitterType.EMPLOYEE,
+    index: true,
+  })
+  submitterType: ExpenseClaimSubmitterType;
+
+  // Set only when submitterType is BOARD_MEMBER — the director's own
+  // BoardMember record, so the board portal can list back exactly
+  // the claims this director filed (see ExpenseClaimService#getMyClaims).
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'BoardMember',
+    default: null,
+    index: true,
+  })
+  boardMemberId: Types.ObjectId | null;
+
   @Prop({ required: true }) description: string;
 
+  // Board-portal submissions only — see ExpenseCategory above.
+  @Prop({ enum: ExpenseCategory, default: null })
+  category: ExpenseCategory | null;
+  // Required (enforced in the service) when category is Other — "the
+  // user must specify what the expense claim is for".
+  @Prop({ default: '' }) otherCategoryDetail: string;
+
+  // Board-portal submissions only — a free-text snapshot of the
+  // meeting the director picked from their own real meeting list, if
+  // any (not a hard FK: there's no billing/chargeback relationship
+  // to a meeting the way mandateId below has to a Mandate, this is
+  // just context for whoever reviews the claim).
+  @Prop({ default: '' }) relatedMeetingLabel: string;
+
   // Rechargeable claims are real WIP disbursements once approved —
-  // this is the mandate they bill against.
+  // this is the mandate they bill against. Employee claims only —
+  // a director's own claim is never rechargeable/mandate-billed.
   @Prop({ type: Types.ObjectId, ref: 'Mandate', default: null })
   mandateId: Types.ObjectId | null;
   @Prop({ default: null }) mandateName: string | null;

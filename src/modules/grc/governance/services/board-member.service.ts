@@ -1366,6 +1366,15 @@ export class BoardMemberService {
     );
   }
 
+  // Board Evaluations — "when the board member is a chair, the tab
+  // for chair evaluation should be hidden... the chair can only do
+  // self assessment, peer review and committee eval" (PO, Oct 2026).
+  // Same 'Chair' literal getCurrentChair() already compares against.
+  async isChairForPortal(userId: string): Promise<boolean> {
+    const member = await this.getByUserId(userId);
+    return member.role === 'Chair';
+  }
+
   async getMyProfile(userId: string) {
     const member = await this.getByUserId(userId);
     const tenantCompanyName = await resolveBusinessName(
@@ -1406,6 +1415,57 @@ export class BoardMemberService {
       // own dashboard can show real CPD hours instead of a fabricated
       // figure. Not paginated: a director's own log is never large.
       training: member.training ?? [],
+    };
+  }
+
+  // Board portal, self-service — "Document vault will show the
+  // documents the tenant uploaded under the board member details
+  // the document tab" (PO, Oct 2026): the director's own real
+  // documents/folders, never the whole board's — this reuses
+  // BoardMember.documents/documentFolders directly rather than a
+  // second, company-wide library, since that's exactly what the
+  // tenant already uploads per-director via Board Mgt's Documents
+  // tab. Same `.lean()`-default-normalization as getAll() above.
+  async getMyDocuments(userId: string) {
+    const member = await this.getByUserId(userId);
+    const m = member.toObject ? member.toObject() : member;
+    return {
+      documents: (m.documents ?? []).map((d: any) => ({
+        _id: d._id,
+        name: d.name,
+        category: d.category ?? 'Governance Document',
+        fileUrl: d.fileUrl ?? null,
+        mimeType: d.mimeType ?? null,
+        size: d.size ?? 0,
+        uploadedAt: d.uploadedAt,
+        uploadedBy: d.uploadedBy ?? '',
+        signedAt: d.signedAt ?? null,
+        folder: d.folder ?? '',
+      })),
+      documentFolders: (m.documentFolders ?? []).map((f: any) => ({
+        _id: f._id,
+        name: f.name,
+      })),
+    };
+  }
+
+  // Board portal, self-service — "The tenant should have a way of
+  // creating fee structure for each board member, so this reflects
+  // in the payment and fees page in the board portal" (PO, Oct 2026).
+  // The fee structure itself already exists and is already tenant-
+  // editable (BoardMember.remuneration, set via the Board Mgt
+  // "Remuneration" card / updateRemuneration()) — this was pure
+  // exposure, no schema change: the board portal's Payments & Fees
+  // page simply had nowhere to read it from yet. Same `?? `
+  // normalization as every other self-service read on this page.
+  async getMyFeeStructure(userId: string) {
+    const member = await this.getByUserId(userId);
+    const r = member.remuneration;
+    return {
+      annualRetainer: r?.annualRetainer ?? 0,
+      committeeChairFee: r?.committeeChairFee ?? 0,
+      meetingAttendanceFee: r?.meetingAttendanceFee ?? 0,
+      lastReviewedAt: r?.lastReviewedAt ?? null,
     };
   }
 

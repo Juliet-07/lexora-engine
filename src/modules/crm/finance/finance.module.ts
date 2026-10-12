@@ -4,6 +4,15 @@ import { ProjectsModule } from 'src/modules/crm/projects/project.module';
 import { HrModule } from 'src/modules/hr/hr.module';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
+// Direct model registration only (no GovernanceModule import, no
+// cycle) — BillService reads BoardMember directly to resolve a
+// director-payee's name, the same cross-module-read convention used
+// elsewhere in this codebase (e.g. BoardMessagingService reading
+// BoardMember directly rather than importing BoardMemberService).
+import {
+  BoardMember,
+  BoardMemberSchema,
+} from 'src/modules/grc/governance/schemas';
 import {
   Vendor,
   VendorSchema,
@@ -271,6 +280,7 @@ import {
       { name: FxRate.name, schema: FxRateSchema },
       { name: Budget.name, schema: BudgetSchema },
       { name: User.name, schema: UserSchema },
+      { name: BoardMember.name, schema: BoardMemberSchema },
     ]),
   ],
   providers: [
@@ -394,6 +404,6 @@ import {
     BudgetController,
     ManagementReportingController,
   ],
-  exports: [InvoiceService, WriteOffService],
+  exports: [InvoiceService, WriteOffService, ExpenseClaimService, BillService],
 })
 export class FinanceModule {}

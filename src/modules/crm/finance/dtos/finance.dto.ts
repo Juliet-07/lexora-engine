@@ -27,6 +27,7 @@ import { ComplianceFrequency } from '../schemas';
 import { ValuationMethod, IfrsLevel } from '../schemas';
 import { InterestTreatment } from '../schemas';
 import { ClientInvoiceAction } from '../schemas';
+import { ExpenseCategory, BillPayeeType } from '../schemas';
 
 // ── Invoices ──────────────────────────────────────────────────
 
@@ -215,10 +216,18 @@ export class CreatePurchaseOrderDto {
 export class CreateBillDto {
   // Optional — a bill can record a general expense with no formal
   // vendor relationship. When vendorId is omitted, vendorName is
-  // required as the free-text payee label instead.
+  // required as the free-text payee label instead. Not used at all
+  // when payeeType is BoardMember (boardMemberId takes over).
   @ApiPropertyOptional() @IsOptional() @IsMongoId() vendorId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() vendorName?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() poId?: string;
+  // "There should be a flow for board member [in Capture Bill]"
+  // (PO, Oct 2026) — paying a director instead of a vendor.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEnum(BillPayeeType)
+  payeeType?: BillPayeeType;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() boardMemberId?: string;
   @ApiProperty() @IsString() description: string;
   @ApiPropertyOptional() @IsOptional() @IsString() category?: string;
   @ApiProperty() @IsDateString() dueOn: string;
@@ -240,6 +249,26 @@ export class CreateExpenseClaimDto {
   @ApiProperty() @IsNumber() @Min(0.01) amount: number;
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() rechargeable?: boolean;
+}
+
+// Board portal, self-service — "Expense claim submission in board
+// portal should be multi-currency. When the user clicks other in
+// the form for submission, it should bring a field where the user
+// must specify what the expense claim is for" (PO, Oct 2026).
+// otherCategoryDetail's required-when-Other rule is enforced in the
+// service (ExpenseClaimService#createAsBoardMember), not here, since
+// class-validator's conditional decorators read worse than a plain
+// if-check against a sibling field.
+export class SubmitMyExpenseClaimDto {
+  @ApiProperty() @IsString() description: string;
+  @ApiProperty() @IsNumber() @Min(0.01) amount: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEnum(ExpenseCategory)
+  category?: ExpenseCategory;
+  @ApiPropertyOptional() @IsOptional() @IsString() otherCategoryDetail?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() relatedMeetingLabel?: string;
 }
 
 // ── Purchases: expense policies ──────────────────────────────

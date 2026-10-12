@@ -12,9 +12,12 @@ import {
   Bill,
   BillDocument,
   BillStatus,
+  BillPayeeType,
   ExpenseClaim,
   ExpenseClaimDocument,
   ClaimStatus,
+  ExpenseClaimSubmitterType,
+  ExpenseCategory,
   ExpensePolicy,
   ExpensePolicyDocument,
 } from '../schemas';
@@ -22,10 +25,18 @@ import {
   Vendor as CrmVendor,
   VendorDocument as CrmVendorDocument,
 } from 'src/modules/crm/crm/schemas/vendor.schema';
+// Direct model injection across the module boundary (no service
+// import, no cycle) — same established convention BoardMessagingService
+// already uses to read BoardMember directly from the board module.
+import {
+  BoardMember,
+  BoardMemberDocument,
+} from 'src/modules/grc/governance/schemas';
 import {
   CreatePurchaseOrderDto,
   CreateBillDto,
   CreateExpenseClaimDto,
+  SubmitMyExpenseClaimDto,
   UpsertExpensePolicyDto,
 } from '../dtos';
 import { buildPurchaseOrderPdf } from 'src/common/utils/pdf/purchase-order.util';
@@ -306,6 +317,8 @@ export class BillService {
     private readonly vendorModel: Model<CrmVendorDocument>,
     @InjectModel(CalendarEvent.name)
     private readonly calendarEventModel: Model<CalendarEventDocument>,
+    @InjectModel(BoardMember.name)
+    private readonly boardMemberModel: Model<BoardMemberDocument>,
     private readonly whtService: WhtService,
     private readonly glPostingService: GlPostingService,
   ) {}
@@ -330,6 +343,9 @@ export class BillService {
   // vendorId is set; when it's omitted, the caller-supplied
   // dto.vendorName carries the free-text payee label instead — a
   // bill genuinely doesn't require a formal vendor relationship.
+  // When payeeType is BoardMember, the director's own name is
+  // resolved here (server-side, same trust level as vendor
+  // resolution) rather than trusting a client-supplied name.
   async create(
     tenantId: string,
     dto: CreateBillDto,
@@ -343,12 +359,47 @@ export class BillService {
     }
     const tId = new Types.ObjectId(tenantId);
     const ref = await this.nextRef(tId);
+
+    const isBoardMemberPayee = dto.payeeType === BillPayeeType.BOARD_MEMBER;
+    let boardMemberName: string | null = null;
+    if (isBoardMemberPayee) {
+      if (!dto.boardMemberId) {
+        throw new BadRequestException(
+          'Select which board member this bill is for',
+        );
+      }
+      const boardMember = await this.boardMemberModel
+        .findOne({ _id: dto.boardMemberId, tenantId: tId })
+        .lean();
+      if (!boardMember) {
+        throw new BadRequestException('Board member not found');
+      }
+      boardMemberName = boardMember.name;
+    }
+
     const created = await this.model.create({
       tenantId: tId,
       ref,
-      vendorId: dto.vendorId ? new Types.ObjectId(dto.vendorId) : null,
-      vendorName: resolvedVendorName ?? dto.vendorName ?? 'Unspecified',
-      poId: dto.poId ? new Types.ObjectId(dto.poId) : null,
+      payeeType: isBoardMemberPayee
+        ? BillPayeeType.BOARD_MEMBER
+        : BillPayeeType.VENDOR,
+      boardMemberId: isBoardMemberPayee
+        ? new Types.ObjectId(dto.boardMemberId)
+        : null,
+      vendorId:
+        !isBoardMemberPayee && dto.vendorId
+          ? new Types.ObjectId(dto.vendorId)
+          : null,
+      vendorName:
+        boardMemberName ??
+        resolvedVendorName ??
+        dto.vendorName ??
+        'Unspecified',
+      poId: isBoardMemberPayee
+        ? null
+        : dto.poId
+          ? new Types.ObjectId(dto.poId)
+          : null,
       description: dto.description,
       category: dto.category ?? '',
       dueOn: new Date(dto.dueOn),
@@ -475,6 +526,20 @@ export class BillService {
 
   async getById(tenantId: string, id: string) {
     return this.getRawDoc(tenantId, id).then((b) => b.toObject());
+  }
+
+  // Board portal, self-service — "the board member sees it on their
+  // fees statement tab" (PO, Oct 2026): every bill the tenant has
+  // recorded against this director, newest first, however the
+  // tenant settles it (mark-paid or a real bank match).
+  async getMyBills(tenantId: string, boardMemberId: string) {
+    return this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        boardMemberId: new Types.ObjectId(boardMemberId),
+      })
+      .sort({ createdAt: -1 })
+      .lean();
   }
 
   // Real settlement path — called when a real bank transaction is
@@ -631,6 +696,74 @@ export class ExpenseClaimService {
       receiptName: receiptFile ? receiptFile.originalname : null,
     });
     return created.toObject();
+  }
+
+  // Board portal, self-service — "the tenant should be able to
+  // receive an expense claim made by the board member" / "Expense
+  // claim submission in board portal should be multi-currency. When
+  // the user clicks other... it should bring a field where the user
+  // must specify what the expense claim is for" (PO, Oct 2026).
+  // Lands in the exact same collection and tenant-side Purchases
+  // queue as an employee claim — the tenant "receives" it simply by
+  // it showing up there, tagged submitterType: BoardMember so the
+  // UI can tell the two apart. Never rechargeable/mandate-billed —
+  // those only make sense for an employee's client-billable spend.
+  async createAsBoardMember(
+    tenantId: string,
+    boardMemberId: string,
+    boardMemberUserId: string | null,
+    name: string,
+    dto: SubmitMyExpenseClaimDto,
+  ) {
+    if (
+      dto.category === ExpenseCategory.OTHER &&
+      !dto.otherCategoryDetail?.trim()
+    ) {
+      throw new BadRequestException(
+        'Please specify what this expense claim is for.',
+      );
+    }
+    const tId = new Types.ObjectId(tenantId);
+    const ref = await this.nextRef(tId);
+    const created = await this.model.create({
+      tenantId: tId,
+      ref,
+      // A director's own platform login (BoardMember.userId) if they
+      // have one — every director created through the normal
+      // appointment flow does. employeeUserId is required at the
+      // schema level and this is the closest real "who submitted
+      // this" User id available; boardMemberId below is the real,
+      // authoritative link used to list a director's own claims back.
+      employeeUserId: boardMemberUserId
+        ? new Types.ObjectId(boardMemberUserId)
+        : new Types.ObjectId(boardMemberId),
+      employee: name,
+      submitterType: ExpenseClaimSubmitterType.BOARD_MEMBER,
+      boardMemberId: new Types.ObjectId(boardMemberId),
+      description: dto.description,
+      category: dto.category ?? null,
+      otherCategoryDetail:
+        dto.category === ExpenseCategory.OTHER
+          ? (dto.otherCategoryDetail ?? '').trim()
+          : '',
+      relatedMeetingLabel: dto.relatedMeetingLabel ?? '',
+      amount: dto.amount,
+      currency: dto.currency ?? 'RWF',
+      rechargeable: false,
+    });
+    return created.toObject();
+  }
+
+  // Board portal, self-service — the signed-in director's own claims
+  // only, newest first (mirrors getAll()'s tenant-side query shape).
+  async getMyClaims(tenantId: string, boardMemberId: string) {
+    return this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        boardMemberId: new Types.ObjectId(boardMemberId),
+      })
+      .sort({ createdAt: -1 })
+      .lean();
   }
 
   private async getRawDoc(tenantId: string, id: string) {

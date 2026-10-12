@@ -24,6 +24,8 @@ import {
   BoardMemberService,
   GovernanceCodeService,
   MeetingService,
+  ResolutionService,
+  BoardEvaluationService,
 } from 'src/modules/grc/governance/services';
 import { BoardTrainingService } from 'src/modules/grc/governance/services/board-training.service';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
@@ -43,6 +45,9 @@ import {
   DecideMinutesChairReviewDto,
   SubmitBoardAdoptionDto,
   AddSkillDto,
+  CastMyBoardVoteDto,
+  RespondMyWrittenDto,
+  SubmitEvaluationDto,
 } from 'src/modules/grc/governance/dtos/index.dto';
 import { CompleteBoardTrainingDto } from 'src/modules/grc/governance/dtos/board-training.dto';
 import { EsgFrameworkService } from '../grc/esg/services';
@@ -50,6 +55,13 @@ import {
   DecideBoardChairApprovalDto,
   DecideEsgChairApprovalDto,
 } from '../grc/esg/dtos';
+import { PolicyService } from '../grc/compliance/services';
+import {
+  DecideBoardApprovalDto,
+  AcknowledgeEmployeePolicyDto,
+} from '../grc/compliance/dtos';
+import { ExpenseClaimService, BillService } from '../crm/finance/services';
+import { SubmitMyExpenseClaimDto } from '../crm/finance/dtos';
 import {
   BoardDashboardService,
   BoardMessagingService,
@@ -100,11 +112,16 @@ export class BoardPortalController {
     private readonly boardMemberService: BoardMemberService,
     private readonly governanceCodeService: GovernanceCodeService,
     private readonly meetingService: MeetingService,
+    private readonly resolutionService: ResolutionService,
     private readonly boardDashboardService: BoardDashboardService,
     private readonly boardTrainingService: BoardTrainingService,
     private readonly service: EsgFrameworkService,
     private readonly messagingService: BoardMessagingService,
     private readonly notificationService: BoardNotificationService,
+    private readonly policyService: PolicyService,
+    private readonly expenseClaimService: ExpenseClaimService,
+    private readonly billService: BillService,
+    private readonly boardEvaluationService: BoardEvaluationService,
   ) {}
 
   @Get('me')
@@ -264,6 +281,121 @@ export class BoardPortalController {
   })
   getMyCommittees(@CurrentUser('sub') userId: string) {
     return this.boardMemberService.getMyCommittees(userId);
+  }
+
+  @Get('documents')
+  @ApiOperation({
+    summary:
+      'Document Vault — the documents/folders the tenant has uploaded for this director specifically',
+  })
+  getMyDocuments(@CurrentUser('sub') userId: string) {
+    return this.boardMemberService.getMyDocuments(userId);
+  }
+
+  @Get('fee-structure')
+  @ApiOperation({
+    summary:
+      "The signed-in director's own fee structure — annual retainer, " +
+      'committee chair fee, meeting attendance fee — as set by the ' +
+      'tenant in Board Management, for the Payments & Fees page',
+  })
+  getMyFeeStructure(@CurrentUser('sub') userId: string) {
+    return this.boardMemberService.getMyFeeStructure(userId);
+  }
+
+  // ── Expense claims — "the tenant should be able to receive an
+  // expense claim made by the board member" (Payments & Fees page's
+  // "Expense claims" tab). Lands in the same crm_expense_claims
+  // collection and tenant Purchases queue as an employee claim,
+  // tagged submitterType: BoardMember. ────────────────────────────
+
+  @Get('expense-claims')
+  @ApiOperation({ summary: "The signed-in director's own expense claims" })
+  async getMyExpenseClaims(@CurrentUser('sub') userId: string) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.expenseClaimService.getMyClaims(tenantId, boardMemberId);
+  }
+
+  @Post('expense-claims')
+  @ApiOperation({
+    summary:
+      'Submit an expense claim — multi-currency; category Other requires ' +
+      'saying what the claim is for',
+  })
+  async submitMyExpenseClaim(
+    @Body() dto: SubmitMyExpenseClaimDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { boardMemberId, tenantId, name } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.expenseClaimService.createAsBoardMember(
+      tenantId,
+      boardMemberId,
+      userId,
+      name,
+      dto,
+    );
+  }
+
+  @Get('fee-statements')
+  @ApiOperation({
+    summary:
+      "The signed-in director's own fee statements — bills the tenant " +
+      'has recorded against them (Capture Bill), for the Payments & ' +
+      'Fees page\'s "Fee statements" tab',
+  })
+  async getMyFeeStatements(@CurrentUser('sub') userId: string) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.billService.getMyBills(tenantId, boardMemberId);
+  }
+
+  // ── Policies — Compliance page communication with the tenant's
+  // Policies & Procedures page: a policy that requires board sign-off
+  // flows here for approval, and once published, flows here again for
+  // acknowledgement. Both decided in-app, not via an emailed link —
+  // same transition as Governance Codes/Resolutions/ESG/minutes. ────
+
+  @Get('policies/approvals')
+  @ApiOperation({
+    summary: 'Policies this director has been asked to approve',
+  })
+  getMyPolicyApprovals(@CurrentUser('sub') userId: string) {
+    return this.policyService.getPendingBoardApprovalsForBoardMember(userId);
+  }
+
+  @Post('policies/approvals/:id/decide')
+  @ApiOperation({ summary: 'Approve or reject a policy' })
+  decideMyPolicyApproval(
+    @Param('id') id: string,
+    @Body() dto: DecideBoardApprovalDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.policyService.decideBoardApprovalAsBoardMember(userId, id, dto);
+  }
+
+  @Get('policies/acknowledgements')
+  @ApiOperation({
+    summary:
+      "Published policies in this director's acknowledgement audience, outstanding and already-acknowledged",
+  })
+  getMyPolicyAcknowledgements(@CurrentUser('sub') userId: string) {
+    return this.policyService.getMyPolicyAcknowledgements(userId);
+  }
+
+  @Post('policies/acknowledgements/:id/acknowledge')
+  @ApiOperation({ summary: 'Acknowledge a published policy' })
+  acknowledgeMyPolicy(
+    @Param('id') id: string,
+    @Body() dto: AcknowledgeEmployeePolicyDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.policyService.acknowledgeAsBoardMember(
+      userId,
+      id,
+      dto.signature,
+    );
   }
 
   @Get('board-overview')
@@ -549,6 +681,58 @@ export class BoardPortalController {
     return this.governanceCodeService.decideBoardApproval(userId, id, dto);
   }
 
+  // ── Resolutions — Board & Written resolutions this director has a
+  // vote/response on. Shareholder resolutions aren't individual-
+  // director votes, so they never appear here — the tenant's own
+  // register is unaffected. Casting here is the only way to vote; it
+  // no longer happens on the tenant side (Oct 2026). ────────────────
+
+  @Get('resolutions')
+  @ApiOperation({
+    summary: 'Board & Written resolutions this director has a vote/response on',
+  })
+  async getMyResolutions(@CurrentUser('sub') userId: string) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.resolutionService.getMyResolutions(tenantId, boardMemberId);
+  }
+
+  @Post('resolutions/:id/vote')
+  @ApiOperation({ summary: 'Cast your own vote on a Board resolution' })
+  async castMyResolutionVote(
+    @Param('id') id: string,
+    @Body() dto: CastMyBoardVoteDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.resolutionService.castMyBoardVote(
+      tenantId,
+      id,
+      boardMemberId,
+      dto,
+    );
+  }
+
+  @Post('resolutions/:id/respond')
+  @ApiOperation({
+    summary: 'Respond to a Written resolution circulated to you',
+  })
+  async respondMyResolution(
+    @Param('id') id: string,
+    @Body() dto: RespondMyWrittenDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    return this.resolutionService.respondMyWritten(
+      tenantId,
+      id,
+      boardMemberId,
+      dto,
+    );
+  }
+
   // ── Trainings — general, ongoing board training (distinct from the
   // onboarding-only modules under /onboarding/training above). A
   // director reviews the tenant's attached material and marks it
@@ -648,5 +832,87 @@ export class BoardPortalController {
     @CurrentUser('sub') u: string,
   ) {
     return this.service.decideCommitteeChairApproval(u, id, dto);
+  }
+
+  // ── Board Evaluations — "make board evaluations functional" (PO,
+  // Oct 2026). Self is one submission; Peer and Committee are one
+  // submission per target (every other director / every committee
+  // this director sits on) — see getMyContext for the per-tab
+  // tab-gating data (isChair, peers, chair, committees, existing
+  // submissions) the board portal's Evaluations page needs. ────────
+
+  @Get('evaluations/context')
+  @ApiOperation({
+    summary:
+      'Current evaluation cycle (if any), whether the caller is the ' +
+      "Chair, every peer/committee to evaluate, and the caller's own " +
+      'submissions so far',
+  })
+  getMyEvaluationContext(@CurrentUser('sub') userId: string) {
+    return this.boardEvaluationService.getMyContext(userId);
+  }
+
+  @Get('evaluations/history')
+  @ApiOperation({ summary: "The caller's own past, closed evaluation cycles" })
+  getMyEvaluationHistory(@CurrentUser('sub') userId: string) {
+    return this.boardEvaluationService.getMyHistory(userId);
+  }
+
+  @Post('evaluations/:cycleId/self')
+  @ApiOperation({ summary: 'Submit (or revise) your own self assessment' })
+  submitSelfEvaluation(
+    @Param('cycleId') cycleId: string,
+    @Body() dto: SubmitEvaluationDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.boardEvaluationService.submitSelf(userId, cycleId, dto);
+  }
+
+  @Post('evaluations/:cycleId/peer/:targetId')
+  @ApiOperation({ summary: 'Submit (or revise) a peer review of one director' })
+  submitPeerEvaluation(
+    @Param('cycleId') cycleId: string,
+    @Param('targetId') targetId: string,
+    @Body() dto: SubmitEvaluationDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.boardEvaluationService.submitPeer(
+      userId,
+      cycleId,
+      targetId,
+      dto,
+    );
+  }
+
+  @Post('evaluations/:cycleId/chair')
+  @ApiOperation({
+    summary:
+      'Submit (or revise) an evaluation of the current Board Chair — ' +
+      'not offered to the Chair themself',
+  })
+  submitChairEvaluation(
+    @Param('cycleId') cycleId: string,
+    @Body() dto: SubmitEvaluationDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.boardEvaluationService.submitChair(userId, cycleId, dto);
+  }
+
+  @Post('evaluations/:cycleId/committee/:committeeId')
+  @ApiOperation({
+    summary: 'Submit (or revise) an evaluation of one committee you sit on',
+  })
+  submitCommitteeEvaluation(
+    @Param('cycleId') cycleId: string,
+    @Param('committeeId') committeeId: string,
+    @Body() dto: SubmitEvaluationDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.boardEvaluationService.submitCommittee(
+      userId,
+      cycleId,
+      committeeId,
+      dto,
+    );
   }
 }

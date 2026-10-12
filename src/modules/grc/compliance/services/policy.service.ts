@@ -14,6 +14,7 @@ import {
   ReviewFrequency,
   AckRequirement,
   BoardApprovalDecision,
+  BoardApproval,
 } from '../schemas';
 import {
   Employee,
@@ -39,12 +40,19 @@ import { BoardMemberService } from 'src/modules/grc/governance/services';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  BOARD_NOTIFICATION_EVENT,
+  BoardNotificationEvent,
+  BoardNotificationType,
+} from 'src/modules/board/board-notification.event';
 
 interface RosterEntry {
   name: string;
   role: string;
   email: string;
   channel: 'employee' | 'board';
+  boardMemberId?: Types.ObjectId;
 }
 
 @Injectable()
@@ -58,6 +66,7 @@ export class PolicyService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly boardMemberService: BoardMemberService,
     private readonly emailService: EmailService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // ── helpers ──────────────────────────────────────────────────
@@ -102,6 +111,7 @@ export class PolicyService {
         role: b.role,
         email: String(b.email).toLowerCase(),
         channel: 'board',
+        boardMemberId: b._id,
       }));
 
     if (type === PolicyType.BOARD) return boardEntries;
@@ -150,7 +160,7 @@ export class PolicyService {
         versionAcknowledged: current ? ack.version : null,
         dateAcknowledged: current ? ack.ackedAt : null,
         method: current
-          ? ack.source === 'employee'
+          ? ack.source === 'employee' || ack.source === 'board'
             ? 'In-app'
             : 'Email link'
           : null,
@@ -493,6 +503,13 @@ export class PolicyService {
           boardMemberId: b._id,
           name: b.name,
           email: String(b.email).toLowerCase(),
+          // Still generated and stored (the schema requires it, and
+          // any already-sent link from before this round must keep
+          // working), but no longer the channel a NEW request is
+          // decided through — a director is already an authenticated
+          // board-portal user, so the email below links there
+          // instead, matching the same transition this session already
+          // made for Governance Codes and the ESG Committee Chair.
           token: randomBytes(24).toString('hex'),
           decision: BoardApprovalDecision.PENDING,
           notes: '',
@@ -510,12 +527,25 @@ export class PolicyService {
             to: row.email,
             recipientName: row.name,
             policyTitle: p.title,
-            ackLink: `${process.env.TENANT_APP_URL}/policy-approval/${row.token}`,
+            ackLink: `${process.env.BOARD_APP_URL || 'http://localhost:8083'}/compliance`,
             businessName,
           })
           .catch(() => {}),
       ),
     );
+
+    for (const row of active) {
+      const notification: BoardNotificationEvent = {
+        tenantId,
+        recipientBoardMemberId: row._id.toString(),
+        recipientUserId: row.userId ? row.userId.toString() : null,
+        type: BoardNotificationType.POLICY,
+        title: `Policy awaiting your approval: ${p.title}`,
+        description: 'Review and approve this policy in your board portal.',
+        link: '/compliance',
+      };
+      this.eventEmitter.emit(BOARD_NOTIFICATION_EVENT, notification);
+    }
   }
 
   private async finalizePublish(
@@ -568,7 +598,11 @@ export class PolicyService {
     const existingByEmail = new Map(
       p.ackTokens.map((t) => [t.recipientEmail, t]),
     );
-    const toNotify: { email: string; name: string; token: string }[] = [];
+    const toNotify: {
+      email: string;
+      name: string;
+      boardMemberId?: Types.ObjectId;
+    }[] = [];
     boardEntries.forEach((b) => {
       let row = existingByEmail.get(b.email);
       if (!row) {
@@ -577,42 +611,60 @@ export class PolicyService {
           recipientEmail: b.email,
           recipientName: b.name,
           createdAt: new Date(),
+          boardMemberId: b.boardMemberId ?? null,
         } as any;
         p.ackTokens.push(row as any);
         existingByEmail.set(b.email, row!);
+      } else if (!row.boardMemberId && b.boardMemberId) {
+        // Backfill a pre-existing token (created before boardMemberId
+        // existed on this schema) so in-app matching works for it too.
+        row.boardMemberId = b.boardMemberId;
       }
-      toNotify.push({ email: b.email, name: b.name, token: row!.token });
+      toNotify.push({
+        email: b.email,
+        name: b.name,
+        boardMemberId: b.boardMemberId,
+      });
     });
     p.markModified('ackTokens');
 
     await Promise.all(
-      toNotify.map(({ email, name, token }) =>
+      toNotify.map(({ email, name }) =>
         this.emailService
           .sendPolicyForAcknowledgment({
             to: email,
             recipientName: name,
             policyTitle: p.title,
-            ackLink: `${process.env.TENANT_APP_URL}/policy-ack/${token}`,
+            ackLink: `${process.env.BOARD_APP_URL || 'http://localhost:8083'}/compliance`,
             businessName,
           })
           .catch(() => {}),
       ),
     );
+
+    for (const { boardMemberId } of toNotify) {
+      if (!boardMemberId) continue;
+      const notification: BoardNotificationEvent = {
+        tenantId,
+        recipientBoardMemberId: boardMemberId.toString(),
+        type: BoardNotificationType.POLICY,
+        title: `Policy ready for your acknowledgement: ${p.title}`,
+        description: 'Acknowledge this policy in your board portal.',
+        link: '/compliance',
+      };
+      this.eventEmitter.emit(BOARD_NOTIFICATION_EVENT, notification);
+    }
   }
 
-  // Public — a board member approving or rejecting via their emailed
-  // link. Rejecting sends the policy back to Under review (with a
-  // system comment recording why); once every assigned board member
-  // has approved, this finishes the publish the tenant started.
-  async decideBoardApproval(token: string, dto: DecideBoardApprovalDto) {
-    const p = await this.model.findOne({ 'boardApprovals.token': token });
-    if (!p) throw new NotFoundException('This approval link is invalid.');
-    const row = p.boardApprovals.find((r) => r.token === token);
-    if (!row) throw new NotFoundException('This approval link is invalid.');
-    if (row.decision !== BoardApprovalDecision.PENDING) {
-      throw new BadRequestException('This approval has already been recorded.');
-    }
-
+  // Shared by both decide paths below (public token link, in-app
+  // board portal) once the right row has been found by whichever
+  // means fits the caller — identical decision/publish logic either
+  // way, same as GovernanceCodeService's own single decision path.
+  private async applyBoardApprovalDecision(
+    p: PolicyDocument,
+    row: BoardApproval,
+    dto: DecideBoardApprovalDto,
+  ) {
     row.decision = dto.decision;
     row.notes = dto.notes ?? '';
     row.decidedAt = new Date();
@@ -653,6 +705,155 @@ export class PolicyService {
 
     await p.save();
     return { success: true, outcome: 'pending' as const };
+  }
+
+  // Public — a board member approving or rejecting via their emailed
+  // link. Kept fully functional for any link sent before this round
+  // moved new requests to the board portal (see openBoardApprovalRound).
+  async decideBoardApproval(token: string, dto: DecideBoardApprovalDto) {
+    const p = await this.model.findOne({ 'boardApprovals.token': token });
+    if (!p) throw new NotFoundException('This approval link is invalid.');
+    const row = p.boardApprovals.find((r) => r.token === token);
+    if (!row) throw new NotFoundException('This approval link is invalid.');
+    if (row.decision !== BoardApprovalDecision.PENDING) {
+      throw new BadRequestException('This approval has already been recorded.');
+    }
+    return this.applyBoardApprovalDecision(p, row, dto);
+  }
+
+  // ── Board Portal — the signed-in board member's own view ────────
+  // Policies this director has been asked to approve, and separately,
+  // published policies they still need to acknowledge. Decided/
+  // acknowledged in-app rather than via an emailed link, same
+  // transition already made for Governance Codes, Resolutions, the
+  // ESG approval chain and minutes chair-review this session.
+
+  async getPendingBoardApprovalsForBoardMember(userId: string) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    const policies = await this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        'boardApprovals.boardMemberId': new Types.ObjectId(boardMemberId),
+      })
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    return policies.map((p: any) => {
+      const mine = (p.boardApprovals ?? []).find(
+        (r: any) => r.boardMemberId?.toString() === boardMemberId,
+      );
+      return {
+        id: p._id,
+        title: p.title,
+        category: p.category,
+        version: p.version,
+        status: p.status,
+        description: p.description,
+        sections: p.sections ?? [],
+        fileName: p.fileName,
+        fileUrl: p.fileUrl,
+        mimeType: p.mimeType,
+        myDecision: mine?.decision ?? null,
+        myNotes: mine?.notes ?? '',
+        myDecidedAt: mine?.decidedAt ?? null,
+      };
+    });
+  }
+
+  async decideBoardApprovalAsBoardMember(
+    userId: string,
+    id: string,
+    dto: DecideBoardApprovalDto,
+  ) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    const p = await this.getRawDoc(tenantId, id);
+    const row = p.boardApprovals.find(
+      (r) => r.boardMemberId?.toString() === boardMemberId,
+    );
+    if (!row) {
+      throw new BadRequestException(
+        'You have not been asked to approve this policy.',
+      );
+    }
+    if (row.decision !== BoardApprovalDecision.PENDING) {
+      throw new BadRequestException('This approval has already been recorded.');
+    }
+    return this.applyBoardApprovalDecision(p, row, dto);
+  }
+
+  // Published policies in this director's acknowledgement audience —
+  // both outstanding and already-acknowledged, so the board portal
+  // can show one list with each item's own state rather than two
+  // separate fetches.
+  async getMyPolicyAcknowledgements(userId: string) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    const policies = await this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        'ackTokens.boardMemberId': new Types.ObjectId(boardMemberId),
+      })
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    return policies.map((p: any) => {
+      const myToken = (p.ackTokens ?? []).find(
+        (t: any) => t.boardMemberId?.toString() === boardMemberId,
+      );
+      const myAck = (p.acknowledgments ?? []).find(
+        (a: any) => a.email === myToken?.recipientEmail,
+      );
+      const alreadyAcknowledged = !!myAck && myAck.version === p.version;
+      return {
+        id: p._id,
+        title: p.title,
+        category: p.category,
+        version: p.version,
+        description: p.description,
+        sections: p.sections ?? [],
+        fileName: p.fileName,
+        fileUrl: p.fileUrl,
+        mimeType: p.mimeType,
+        alreadyAcknowledged,
+        ackedAt: alreadyAcknowledged ? myAck.ackedAt : null,
+      };
+    });
+  }
+
+  async acknowledgeAsBoardMember(
+    userId: string,
+    policyId: string,
+    signature: string,
+  ) {
+    const { boardMemberId, tenantId, name, email } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    const p = await this.getRawDoc(tenantId, policyId);
+    const myToken = p.ackTokens.find(
+      (t) => t.boardMemberId?.toString() === boardMemberId,
+    );
+    const normalizedEmail = (myToken?.recipientEmail ?? email).toLowerCase();
+    if (
+      p.acknowledgments.some(
+        (a) => a.email === normalizedEmail && a.version === p.version,
+      )
+    ) {
+      throw new BadRequestException(
+        'You have already acknowledged this version of the policy.',
+      );
+    }
+    p.acknowledgments.push({
+      name: myToken?.recipientName ?? name,
+      email: normalizedEmail,
+      signature,
+      ackedAt: new Date(),
+      source: 'board',
+      version: p.version,
+    } as any);
+    p.markModified('acknowledgments');
+    await p.save();
+    return p;
   }
 
   async getBoardApprovalSnapshot(token: string) {

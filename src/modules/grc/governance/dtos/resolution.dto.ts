@@ -65,3 +65,14 @@ export class SaveShareholderPollDto {
   @ApiProperty() @IsNumber() pollAbstain: number;
   @ApiProperty() @IsNumber() quorumPresent: number;
 }
+
+// ── Board portal, self-service ───────────────────────────────────
+export class CastMyBoardVoteDto {
+  @ApiProperty({ enum: BoardVote }) @IsEnum(BoardVote) vote: BoardVote;
+  @ApiPropertyOptional() @IsOptional() @IsString() comment?: string;
+}
+
+export class RespondMyWrittenDto {
+  @ApiProperty({ enum: BoardVote }) @IsEnum(BoardVote) response: BoardVote;
+  @ApiPropertyOptional() @IsOptional() @IsString() comment?: string;
+}

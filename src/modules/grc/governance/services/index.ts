@@ -1,3 +1,4 @@
+export * from './board-evaluation.service';
 export * from './board-member.service';
 export * from './board-training.service';
 export * from './committee.service';

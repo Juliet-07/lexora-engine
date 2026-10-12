@@ -1,3 +1,4 @@
+export * from './board-evaluation.dto';
 export * from './board-member.dto';
 export * from './board-training.dto';
 export * from './committee.dto';

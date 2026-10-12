@@ -47,6 +47,9 @@ export class BoardVoteRow {
   @Prop({ default: '' }) directorEmail: string;
   @Prop({ default: false }) recused: boolean;
   @Prop({ enum: BoardVote, default: null }) vote: BoardVote | null;
+  // Director's own optional note, left when casting from the board
+  // portal ("Comments (optional)" in the mock). Never required.
+  @Prop({ default: '' }) comment: string;
 }
 export const BoardVoteRowSchema = SchemaFactory.createForClass(BoardVoteRow);
 
@@ -62,6 +65,9 @@ export class WrittenRow {
   @Prop({ enum: BoardVote, default: null }) response: BoardVote | null;
   @Prop({ default: null }) respondedAt: Date | null;
   @Prop({ default: false }) manualEntry: boolean;
+  // Director's own optional note, left when responding from the board
+  // portal. Blank for responses logged manually by the tenant.
+  @Prop({ default: '' }) comment: string;
 }
 export const WrittenRowSchema = SchemaFactory.createForClass(WrittenRow);
 

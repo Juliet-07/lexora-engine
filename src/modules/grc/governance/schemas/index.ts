@@ -1,3 +1,4 @@
+export * from './board-evaluation.schema';
 export * from './board-member.schema';
 export * from './board-training.schema';
 export * from './committee.schema';

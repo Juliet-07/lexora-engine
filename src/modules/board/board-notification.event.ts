@@ -24,6 +24,7 @@ export enum BoardNotificationType {
   MEETING = 'Meeting',
   MINUTES = 'Minutes',
   GOVERNANCE_CODE = 'Governance Code',
+  POLICY = 'Policy',
   ESG = 'ESG',
   MESSAGE = 'Message',
   TRAINING = 'Training',

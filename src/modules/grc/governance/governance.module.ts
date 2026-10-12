@@ -15,6 +15,10 @@ import {
   BoardTrainingSchema,
   Resolution,
   ResolutionSchema,
+  BoardEvaluationCycle,
+  BoardEvaluationCycleSchema,
+  BoardEvaluationSubmission,
+  BoardEvaluationSubmissionSchema,
 } from './schemas';
 import {
   MeetingService,
@@ -27,6 +31,7 @@ import {
   MeetingNoticeReminderService,
   ResolutionService,
   OrgStructureService,
+  BoardEvaluationService,
 } from './services';
 import {
   MeetingController,
@@ -36,6 +41,7 @@ import {
   GovernanceCodeController,
   BoardTrainingController,
   OrgStructureController,
+  BoardEvaluationController,
 } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas';
 import { EmailService } from 'src/common/utils/mailing/email.service';
@@ -71,6 +77,11 @@ import { HrTeam, HrTeamSchema } from 'src/modules/hr/schemas/hr.schema';
       { name: BoardTraining.name, schema: BoardTrainingSchema },
       { name: User.name, schema: UserSchema },
       { name: Resolution.name, schema: ResolutionSchema },
+      { name: BoardEvaluationCycle.name, schema: BoardEvaluationCycleSchema },
+      {
+        name: BoardEvaluationSubmission.name,
+        schema: BoardEvaluationSubmissionSchema,
+      },
       // Registered directly here (not imported via ToolsModule) to
       // avoid a circular module dependency — see the constructor
       // comment on BoardMemberService for the full explanation.
@@ -110,6 +121,7 @@ import { HrTeam, HrTeamSchema } from 'src/modules/hr/schemas/hr.schema';
     MeetingNoticeReminderService,
     ResolutionService,
     OrgStructureService,
+    BoardEvaluationService,
   ],
   controllers: [
     MeetingController,
@@ -120,6 +132,7 @@ import { HrTeam, HrTeamSchema } from 'src/modules/hr/schemas/hr.schema';
     BoardTrainingController,
     ResolutionController,
     OrgStructureController,
+    BoardEvaluationController,
   ],
   exports: [
     MeetingService,
@@ -129,6 +142,7 @@ import { HrTeam, HrTeamSchema } from 'src/modules/hr/schemas/hr.schema';
     GovernanceCodeService,
     BoardTrainingService,
     ResolutionService,
+    BoardEvaluationService,
   ],
 })
 export class GovernanceModule {}
