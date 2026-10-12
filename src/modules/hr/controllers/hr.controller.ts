@@ -345,6 +345,21 @@ export class HrTenantController {
     return this.employeeService.updateEmployee(id, t || u, dto);
   }
 
+  @Delete('employees/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Permanently delete an employee record. Blocked if they have direct reports, payroll history, or an outstanding loan balance — use "Terminate" for anyone who has actually worked here.',
+  })
+  async deleteEmployee(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    await this.employeeService.deleteEmployee(t || u, id);
+    return { message: 'Employee record deleted.' };
+  }
+
   @Patch('employees/:id/staff-roles')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

@@ -14,6 +14,9 @@ import {
   EmployeeHierarchyRole,
   EmploymentStatus,
   EmploymentType,
+  EmployeeLoan,
+  EmployeeLoanDocument,
+  LoanStatus,
 } from '../schemas/employee.schema';
 import {
   CreateEmployeeDto,
@@ -28,6 +31,16 @@ import {
   HrTeamDocument,
   HrLocation,
   HrLocationDocument,
+  EmployeeDocumentFile,
+  EmployeeDocumentFileDocument,
+  Payslip,
+  PayslipDocument,
+  EmployeeOnboarding,
+  EmployeeOnboardingDocument,
+  ProbationRecord,
+  ProbationRecordDocument,
+  LeaveRequest,
+  LeaveRequestDocument,
 } from '../schemas';
 import {
   UserType,
@@ -69,6 +82,18 @@ export class EmployeeService {
     private readonly subscriptionModel: Model<TenantSubscriptionDocument>,
     @InjectModel(SubscriptionPlanConfig.name)
     private readonly planModel: Model<SubscriptionPlanDocument>,
+    @InjectModel(Payslip.name)
+    private readonly payslipModel: Model<PayslipDocument>,
+    @InjectModel(EmployeeLoan.name)
+    private readonly loanModel: Model<EmployeeLoanDocument>,
+    @InjectModel(EmployeeDocumentFile.name)
+    private readonly documentFileModel: Model<EmployeeDocumentFileDocument>,
+    @InjectModel(EmployeeOnboarding.name)
+    private readonly onboardingModel: Model<EmployeeOnboardingDocument>,
+    @InjectModel(ProbationRecord.name)
+    private readonly probationRecordModel: Model<ProbationRecordDocument>,
+    @InjectModel(LeaveRequest.name)
+    private readonly leaveRequestModel: Model<LeaveRequestDocument>,
     private readonly offboardingService: OffboardingService,
     private readonly mailService: EmailService,
     private readonly eventEmitter: EventEmitter2,
@@ -1039,6 +1064,101 @@ export class EmployeeService {
     }
 
     return employee as EmployeeDocument;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // DELETE EMPLOYEE
+  // ═══════════════════════════════════════════════════════════
+  //
+  // Distinct from terminateEmployee: termination is a status change
+  // that preserves the record (and creates an offboarding record) for
+  // someone who genuinely worked here. Delete is for permanently
+  // removing a record outright — e.g. a duplicate entry or someone
+  // added by mistake — and is guarded much more conservatively since
+  // it can't be undone.
+  //
+  // Blocked outright for:
+  //   - the Owner record (the tenant's own seat; can't be removed
+  //     this way — there's no one to transfer tenancy to)
+  //   - anyone with active direct reports (same reasoning as
+  //     terminateEmployee — reassign them first)
+  //   - anyone with payroll history (a Payslip referencing them) or
+  //     an outstanding loan balance — financial/compliance records
+  //     must never be silently orphaned by a hard delete; Terminate
+  //     is the right action for someone who's actually been paid
+  //
+  // On an allowed delete, records that exist solely to describe this
+  // one employee and have no standalone value or audit significance
+  // once they're gone are cascade-removed along with them (their
+  // login account, uploaded documents, leave requests, probation
+  // record, onboarding record) — left dangling, these would either
+  // show up as broken/crashing references in populate-dependent
+  // views (e.g. exactly the "overdue forever" probation bug Round 3
+  // fixed, for someone whose Employee row no longer even exists) or
+  // sit as meaningless orphaned rows with no one to point to.
+  //
+  // Deliberately NOT cascaded — these are genuine historical/audit
+  // records whose value outlives the employment relationship, and
+  // every one of them already denormalizes the fields (name, job
+  // title, etc.) that a UI needs to display them even once the
+  // employeeId reference is dangling: contracts, performance reviews,
+  // disputes, requisitions, succession-plan successor entries,
+  // resolved/historical loans, GRC meeting/audit/BCP participation,
+  // learning records, vendor assignments.
+  async deleteEmployee(tenantId: string, employeeId: string): Promise<void> {
+    const tId = new Types.ObjectId(tenantId);
+    const employee = await this.employeeModel.findOne({
+      _id: employeeId,
+      tenantId: tId,
+    });
+    if (!employee) throw new NotFoundException('Employee not found');
+
+    if (employee.hierarchyRole === EmployeeHierarchyRole.OWNER) {
+      throw new BadRequestException('The Owner record cannot be deleted.');
+    }
+
+    const directReportCount = await this.employeeModel.countDocuments({
+      tenantId: tId,
+      reportsToManagerId: employee._id,
+      employmentStatus: {
+        $nin: [EmploymentStatus.TERMINATED, EmploymentStatus.RESIGNED],
+      },
+    });
+    if (directReportCount > 0) {
+      throw new BadRequestException(
+        `${employee.firstName} ${employee.lastName} has ${directReportCount} employee(s) reporting to them. Reassign those reports before deleting this record.`,
+      );
+    }
+
+    const payslipCount = await this.payslipModel.countDocuments({
+      employeeId: employee._id,
+    });
+    if (payslipCount > 0) {
+      throw new BadRequestException(
+        `${employee.firstName} ${employee.lastName} has payroll history and can't be deleted. Use "Terminate" instead to preserve their payroll and financial records.`,
+      );
+    }
+
+    const outstandingLoan = await this.loanModel.findOne({
+      employeeId: employee._id,
+      status: { $in: [LoanStatus.ACTIVE, LoanStatus.PAUSED] },
+      outstandingBalance: { $gt: 0 },
+    });
+    if (outstandingLoan) {
+      throw new BadRequestException(
+        `${employee.firstName} ${employee.lastName} has an outstanding loan balance. Resolve or cancel it before deleting this record.`,
+      );
+    }
+
+    await Promise.all([
+      this.userModel.findByIdAndDelete(employee.userId),
+      this.documentFileModel.deleteMany({ employeeId: employee._id }),
+      this.onboardingModel.deleteMany({ employeeId: employee._id }),
+      this.probationRecordModel.deleteMany({ employeeId: employee._id }),
+      this.leaveRequestModel.deleteMany({ employeeId: employee._id }),
+    ]);
+
+    await this.employeeModel.deleteOne({ _id: employee._id, tenantId: tId });
   }
 
   async suspendEmployee(
