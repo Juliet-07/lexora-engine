@@ -19,6 +19,8 @@ import {
   BoardEvaluationCycleSchema,
   BoardEvaluationSubmission,
   BoardEvaluationSubmissionSchema,
+  OrgStructureNode,
+  OrgStructureNodeSchema,
 } from './schemas';
 import {
   MeetingService,
@@ -61,7 +63,6 @@ import {
   Employee,
   EmployeeSchema,
 } from 'src/modules/hr/schemas/employee.schema';
-import { HrTeam, HrTeamSchema } from 'src/modules/hr/schemas/hr.schema';
 
 @Module({
   imports: [
@@ -97,12 +98,15 @@ import { HrTeam, HrTeamSchema } from 'src/modules/hr/schemas/hr.schema';
       { name: PolicyTemplate.name, schema: PolicyTemplateSchema },
       // Registered directly here too (same "direct model injection"
       // convention already used by ComplianceModule's PolicyService/
-      // AuditService for the identical reason) so OrgStructureService
-      // can derive the real org chart from HR's own Employee records —
-      // cross-module *service* DI has broken at runtime before in this
-      // codebase, direct model injection is the working pattern.
+      // AuditService) — MeetingService reaches into HR's own Employee
+      // records directly for the same reason: cross-module *service*
+      // DI has broken at runtime before in this codebase, direct model
+      // injection is the working pattern.
       { name: Employee.name, schema: EmployeeSchema },
-      { name: HrTeam.name, schema: HrTeamSchema },
+      {
+        name: OrgStructureNode.name,
+        schema: OrgStructureNodeSchema,
+      },
     ]),
     // For PlatformContractTemplateService only — SuperAdminModule has
     // no path back into GovernanceModule/ComplianceModule/ToolsModule,
