@@ -18,6 +18,7 @@ import {
   Campaign,
   CampaignDocument,
   CampaignStatus,
+  CampaignType,
   NewsletterDraft,
   NewsletterDraftDocument,
 } from '../schemas';
@@ -45,6 +46,26 @@ import {
 } from 'src/modules/grc/governance/schemas/board-member.schema';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { RegulatoryChangeService } from 'src/modules/grc/compliance/services/regulatory-change.service';
+import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+import {
+  crmNewsletterCampaignTemplate,
+  type CrmNewsletterRecipientRole,
+} from 'src/common/utils/mailing/templates/crm-newsletter-campaign.template';
+
+// Maps the polymorphic recipient's sourceType to the plain-English
+// role shown in the email footer ("...because you are a X of...").
+function recipientRoleLabel(
+  sourceType: SegmentAudience,
+): CrmNewsletterRecipientRole {
+  switch (sourceType) {
+    case SegmentAudience.CONTACT:
+      return 'contact';
+    case SegmentAudience.BOARD_MEMBER:
+      return 'board member';
+    default:
+      return 'client';
+  }
+}
 
 type ResolvedMember = {
   _id: string;
@@ -310,6 +331,11 @@ export class CampaignService {
     private readonly model: Model<CampaignDocument>,
     @InjectModel(BoardMember.name)
     private readonly boardMemberModel: Model<BoardMemberDocument>,
+    // Only for resolveBusinessName — the tenant's own real business
+    // name, shown in the branded email header/footer sent to their
+    // clients/contacts/board members (see sendNow/sendTest below).
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
     private readonly segmentService: SegmentService,
     private readonly emailService: EmailService,
     private readonly eventEmitter: EventEmitter2,
@@ -521,22 +547,15 @@ export class CampaignService {
     return c.toObject();
   }
 
-  private renderHtml(campaign: { subject: string; body: string; event: any }) {
-    if (!campaign.event) return campaign.body;
-    return `
-      <div>
-        <h3>${campaign.event.title ?? ''}</h3>
-        <p>${campaign.event.dateTime ?? ''} — ${campaign.event.location ?? ''}</p>
-        ${campaign.event.rsvp ? '<p><em>RSVP requested</em></p>' : ''}
-        ${campaign.body}
-      </div>
-    `;
-  }
-
   // Real sends, one per real recipient, via EmailService's real SMTP
   // transport. Each recipient's delivered flag reflects whether that
   // specific send actually succeeded — a partial failure doesn't
-  // silently mark everyone delivered.
+  // silently mark everyone delivered. Each recipient gets their own
+  // rendered email — a Lexora-house-style branded template (see
+  // crm-newsletter-campaign.template.ts), personalised with their
+  // own name, their relationship to the tenant (client/contact/board
+  // member), and the tenant's own real business name — rather than
+  // the raw, unstyled rich-text body that used to be sent as-is.
   async sendNow(tenantId: string, id: string) {
     const c = await this.model.findOne({
       _id: id,
@@ -550,14 +569,21 @@ export class CampaignService {
     c.status = CampaignStatus.SENDING;
     await c.save();
 
-    const html = this.renderHtml(c);
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
     for (const r of c.recipients as any[]) {
       try {
-        await this.emailService.sendCampaign(
-          r.email,
-          c.subject || c.name,
-          html,
-        );
+        const { subject, html } = crmNewsletterCampaignTemplate({
+          businessName,
+          recipientName: r.clientName,
+          recipientRole: recipientRoleLabel(
+            r.sourceType ?? SegmentAudience.CLIENT,
+          ),
+          subject: c.subject || c.name,
+          bodyHtml: c.body,
+          isEventInvite: c.type === CampaignType.EVENT_INVITE,
+          event: c.event ?? null,
+        });
+        await this.emailService.sendCampaign(r.email, subject, html);
         r.delivered = true;
         r.deliveryError = null;
         this.eventEmitter.emit('client.newsletter.sent', {
@@ -584,12 +610,16 @@ export class CampaignService {
       tenantId: new Types.ObjectId(tenantId),
     });
     if (!c) throw new NotFoundException('Campaign not found');
-    const html = this.renderHtml(c);
-    await this.emailService.sendCampaign(
-      dto.to,
-      `[TEST] ${c.subject || c.name}`,
-      html,
-    );
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const { subject, html } = crmNewsletterCampaignTemplate({
+      businessName,
+      subject: c.subject || c.name,
+      bodyHtml: c.body,
+      isEventInvite: c.type === CampaignType.EVENT_INVITE,
+      event: c.event ?? null,
+      isTest: true,
+    });
+    await this.emailService.sendCampaign(dto.to, subject, html);
     return { sent: true };
   }
 
