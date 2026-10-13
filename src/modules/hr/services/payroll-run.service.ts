@@ -562,47 +562,43 @@ export class PayrollRunService {
     const sourceCurrency = employee.salaryCurrency ?? policy.currency;
 
     if (sourceCurrency !== run.runCurrency) {
-      const manualRate = (run.manualRates ?? []).find(
-        (r) => r.fromCurrency === sourceCurrency,
-      );
-
-      if (manualRate) {
-        // Tenant explicitly locked this rate for this run — use it
-        // as-is, no API call. This is the default/expected path,
-        // matching how payroll is run in practice today (one fixed
-        // rate set manually per period, e.g. "$1 = 1,455 RWF").
-        exchangeRateApplied = manualRate.rate;
-        exchangeRateDate = run.createdAt ?? new Date();
-        basicSalary = basicSalary * manualRate.rate;
-      } else {
-        // No manual rate was set for this currency pair — fall back
-        // to the live API as a convenience, but this should be the
-        // exception, not the default. The frontend should encourage
-        // tenants to set a rate explicitly before processing a run.
-        const { rate, fetchedAt } = await this.fxService.getRate(
-          sourceCurrency,
-          run.runCurrency,
-        );
-        exchangeRateApplied = rate;
-        exchangeRateDate = fetchedAt;
-        basicSalary = basicSalary * rate;
-      }
+      const resolved = await this.resolveRate(sourceCurrency, run);
+      exchangeRateApplied = resolved.rate;
+      exchangeRateDate = resolved.date;
+      basicSalary = basicSalary * resolved.rate;
     }
 
     const allowanceTypeMap = new Map(
       (policy.allowanceTypes ?? []).map((t) => [t.key, t]),
     );
 
-    const allowances: AllowanceInput[] = (employee.allowances ?? []).map(
-      (a) => {
+    // Each allowance always carries the employee's own salary currency
+    // (enforced at save time), so it needs the exact same conversion
+    // basicSalary just got — reuse the already-resolved rate rather than
+    // defaulting to the raw stored amount, which previously left an
+    // allowance entered as e.g. "$500" showing up on an RWF payslip as
+    // a literal, unconverted "RWF 500". Only re-resolve a rate when an
+    // allowance's stored currency actually differs from the salary's
+    // (a legacy/drift case), so the common case costs no extra lookup.
+    const allowances: AllowanceInput[] = await Promise.all(
+      (employee.allowances ?? []).map(async (a) => {
         const policyType = allowanceTypeMap.get(a.key);
+        const allowanceCurrency = a.currency ?? sourceCurrency;
+        let amount = a.amount;
+        if (allowanceCurrency !== run.runCurrency) {
+          const rate =
+            allowanceCurrency === sourceCurrency
+              ? exchangeRateApplied
+              : (await this.resolveRate(allowanceCurrency, run)).rate;
+          if (rate != null) amount = amount * rate;
+        }
         return {
           key: a.key,
           label: a.label,
-          amount: a.amount,
+          amount,
           isTransportAllowance: policyType?.isTransportAllowance ?? false,
         };
-      },
+      }),
     );
 
     // Overtime: any hours the employee logged AND the tenant approved
@@ -673,6 +669,27 @@ export class PayrollRunService {
       totalEmployerContributions: result.totalEmployerContributions,
       netSalary: result.netSalary,
     });
+  }
+
+  // Resolves fromCurrency -> run.runCurrency: a manually-locked rate for
+  // this run if the tenant set one for that currency pair, otherwise a
+  // live lookup as a fallback. Shared by basicSalary and every allowance
+  // so every amount on a payslip is converted the same way.
+  private async resolveRate(
+    fromCurrency: string,
+    run: PayrollRunDocument,
+  ): Promise<{ rate: number; date: Date }> {
+    const manualRate = (run.manualRates ?? []).find(
+      (r) => r.fromCurrency === fromCurrency,
+    );
+    if (manualRate) {
+      return { rate: manualRate.rate, date: run.createdAt ?? new Date() };
+    }
+    const { rate, fetchedAt } = await this.fxService.getRate(
+      fromCurrency,
+      run.runCurrency,
+    );
+    return { rate, date: fetchedAt };
   }
 
   private async recalculateRunTotals(

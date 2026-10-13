@@ -975,6 +975,24 @@ export class EmployeeService {
         amount: a.amount,
         currency,
       }));
+    } else if (dto.salaryCurrency) {
+      // salaryCurrency changed but this PATCH didn't touch allowances —
+      // re-stamp any already-stored allowances to the new currency too,
+      // so they never drift out of sync with the salary they're meant
+      // to always match (amounts are left as-is, same as how the salary
+      // figure itself isn't re-converted by a currency-only change).
+      const existing = await this.employeeModel
+        .findOne({ _id: employeeId, tenantId: new Types.ObjectId(tenantId) })
+        .select('allowances')
+        .lean();
+      if (existing?.allowances?.length) {
+        update.allowances = existing.allowances.map((a) => ({
+          key: a.key,
+          label: a.label,
+          amount: a.amount,
+          currency: dto.salaryCurrency,
+        }));
+      }
     }
 
     // Reinstating someone from terminated/resigned back into a live
