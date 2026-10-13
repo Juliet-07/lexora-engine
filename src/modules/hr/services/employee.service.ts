@@ -616,6 +616,15 @@ export class EmployeeService {
       bankName: dto.bankName ?? null,
       bankAccountNumber: dto.bankAccountNumber ?? null,
       taxId: dto.taxId ?? null,
+      // Every allowance always carries the employee's own salary
+      // currency — never a currency picked independently per
+      // allowance — so it's set here, not accepted from the client.
+      allowances: (dto.allowances ?? []).map((a) => ({
+        key: a.key,
+        label: a.label,
+        amount: a.amount,
+        currency: dto.salaryCurrency ?? 'RWF',
+      })),
       annualLeaveBalance: dto.annualLeaveBalance ?? 21,
       sickLeaveBalance: dto.sickLeaveBalance ?? 10,
       metadata: { createdBy },
@@ -940,6 +949,33 @@ export class EmployeeService {
       update.probationEndDate = new Date(dto.probationEndDate);
     if (dto.teamId) update.teamId = new Types.ObjectId(dto.teamId);
     if (dto.locationId) update.locationId = new Types.ObjectId(dto.locationId);
+
+    // Every allowance always carries the employee's own salary
+    // currency. This PATCH may change allowances without touching
+    // salaryCurrency (or vice versa), so resolve the currency to use
+    // against whichever one actually applies: the incoming
+    // salaryCurrency if this request sets it, otherwise the
+    // employee's current one.
+    if (dto.allowances) {
+      const currency =
+        dto.salaryCurrency ??
+        (
+          await this.employeeModel
+            .findOne({
+              _id: employeeId,
+              tenantId: new Types.ObjectId(tenantId),
+            })
+            .select('salaryCurrency')
+            .lean()
+        )?.salaryCurrency ??
+        'RWF';
+      update.allowances = dto.allowances.map((a) => ({
+        key: a.key,
+        label: a.label,
+        amount: a.amount,
+        currency,
+      }));
+    }
 
     // Reinstating someone from terminated/resigned back into a live
     // status (active, probation, on_leave, suspended) occupies a

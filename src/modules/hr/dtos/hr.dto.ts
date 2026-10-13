@@ -10,7 +10,9 @@ import {
   IsMongoId,
   MinLength,
   IsArray,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import {
   EmploymentType,
   EmploymentStatus,
@@ -24,6 +26,25 @@ import { StaffRole } from 'src/common/interfaces/user-role.enum';
 // ─────────────────────────────────────────────────────────────
 // EMPLOYEE DTOs
 // ─────────────────────────────────────────────────────────────
+
+// A fixed per-employee allowance (transport, housing, etc). No
+// currency field here on purpose — an allowance always carries the
+// same currency as the employee's own salary (salaryCurrency), set
+// server-side, never chosen independently by the tenant.
+export class EmployeeAllowanceDto {
+  @ApiProperty({ example: 'transport_allowance' })
+  @IsString()
+  key: string;
+
+  @ApiProperty({ example: 'Transport Allowance' })
+  @IsString()
+  label: string;
+
+  @ApiProperty({ example: 50000 })
+  @IsNumber()
+  @Min(0)
+  amount: number;
+}
 
 export class CreateEmployeeDto {
   // ── Required ───────────────────────────────────────────────
@@ -168,6 +189,17 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsString()
   taxId?: string;
+
+  @ApiPropertyOptional({
+    type: [EmployeeAllowanceDto],
+    description:
+      'Fixed per-employee allowances (transport, housing, etc). Always carries the salary currency — do not send a currency per allowance.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EmployeeAllowanceDto)
+  allowances?: EmployeeAllowanceDto[];
 
   // ── Leave entitlements ────────────────────────────────────
   @ApiPropertyOptional({ example: 21, default: 21 })
