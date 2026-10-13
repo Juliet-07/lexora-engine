@@ -17,6 +17,20 @@ export enum SegmentRuleField {
   STATUS = 'status',
 }
 
+// Which real tenant-side audience a segment draws from. Added Oct
+// 2026 alongside Contact/BoardMember support — a segment used to be
+// implicitly Client-only, so `audience` defaults to Client for every
+// segment created before this field existed. Rule-based resolution
+// (SegmentRuleField) only exists for the Client audience today — a
+// Contact/BoardMember segment is always manual (see
+// SegmentService.resolveMembers), since there's no confirmed
+// equivalent rule field for those two collections yet.
+export enum SegmentAudience {
+  CLIENT = 'Client',
+  CONTACT = 'Contact',
+  BOARD_MEMBER = 'BoardMember',
+}
+
 @Schema({ _id: false })
 export class SegmentRule {
   @Prop({ enum: SegmentRuleField, required: true }) field: SegmentRuleField;
@@ -35,7 +49,14 @@ export class Segment {
   @Prop({ default: '' }) description: string;
   @Prop({ enum: SegmentMode, required: true }) mode: SegmentMode;
 
-  @Prop({ type: [Types.ObjectId], ref: 'User', default: [] })
+  @Prop({ enum: SegmentAudience, default: SegmentAudience.CLIENT, index: true })
+  audience: SegmentAudience;
+
+  // Ids of whichever collection `audience` names (User for Client,
+  // Contact for Contact, BoardMember for BoardMember) — no single
+  // `ref` since it varies by audience; resolveMembers looks each one
+  // up against the right model itself.
+  @Prop({ type: [Types.ObjectId], default: [] })
   memberIds: Types.ObjectId[];
   @Prop({ type: SegmentRuleSchema, default: null })
   rule: SegmentRule | null;
@@ -73,8 +94,21 @@ export const CampaignEventDetailsSchema =
 
 @Schema({ _id: false })
 export class CampaignRecipient {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-  clientId: Types.ObjectId;
+  // Generalised Oct 2026 for Contact/BoardMember audiences —
+  // `sourceType`/`sourceId` are the real identity now (set for every
+  // recipient regardless of audience). `clientId` is kept, populated
+  // only when sourceType is Client (same value as sourceId there),
+  // purely so ClientNewsletterService's existing `recipients.clientId`
+  // queries keep working unchanged for the client portal.
+  @Prop({ enum: SegmentAudience, default: SegmentAudience.CLIENT })
+  sourceType: SegmentAudience;
+  @Prop({ type: Types.ObjectId, required: true })
+  sourceId: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  clientId: Types.ObjectId | null;
+  // Recipient's display name — despite the field name (kept for
+  // back-compat with existing stored campaigns and the tenant
+  // frontend), this holds a Contact's or BoardMember's name too now.
   @Prop({ required: true }) clientName: string;
   @Prop({ required: true }) email: string;
 
@@ -104,9 +138,13 @@ export class Campaign {
   @Prop({ required: true, trim: true }) name: string;
   @Prop({ enum: CampaignType, required: true }) type: CampaignType;
 
-  @Prop({ type: Types.ObjectId, ref: 'Segment', required: true })
-  segmentId: Types.ObjectId;
-  @Prop({ required: true }) segmentName: string;
+  // Plural since Oct 2026 — a campaign can target several segments at
+  // once (e.g. a Client segment AND a BoardMember segment in the same
+  // send). Resolved recipients are the union across all of them,
+  // de-duplicated by email — see CampaignService.resolveRecipients.
+  @Prop({ type: [Types.ObjectId], ref: 'Segment', default: [] })
+  segmentIds: Types.ObjectId[];
+  @Prop({ type: [String], default: [] }) segmentNames: string[];
 
   @Prop({ default: '' }) subject: string;
   @Prop({ default: '' }) body: string;

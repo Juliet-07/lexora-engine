@@ -1,8 +1,12 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
+  InsightAdminController,
+  InsightPublicController,
   KnowledgeBaseAdminController,
   KnowledgeBaseController,
+  NewsletterCampaignAdminController,
+  NewsletterSubscriberPublicController,
   PolicyTemplateAdminController,
   PolicyTemplateController,
   SuperAdminController,
@@ -10,7 +14,11 @@ import {
 import {
   SuperAdminService,
   SubscriptionExpiryService,
+  InsightService,
   KnowledgeBaseService,
+  NewsletterCampaignService,
+  NewsletterCampaignSchedulerService,
+  NewsletterSubscriberService,
   PolicyTemplateService,
 } from './services';
 import {
@@ -26,8 +34,14 @@ import {
   PlatformContractTemplateSchema,
   PlatformTemplateFolder,
   PlatformTemplateFolderSchema,
+  Insight,
+  InsightSchema,
   KnowledgeEntry,
   KnowledgeEntrySchema,
+  NewsletterCampaign,
+  NewsletterCampaignSchema,
+  NewsletterSubscriber,
+  NewsletterSubscriberSchema,
   PolicyTemplate,
   PolicyTemplateSchema,
 } from './schemas';
@@ -78,7 +92,16 @@ import { ReactivationController } from './controllers/reactivation.controller';
         schema: PlatformTemplateFolderSchema,
       },
       { name: PaymentTransaction.name, schema: PaymentTransactionSchema },
+      { name: Insight.name, schema: InsightSchema },
       { name: KnowledgeEntry.name, schema: KnowledgeEntrySchema },
+      {
+        name: NewsletterCampaign.name,
+        schema: NewsletterCampaignSchema,
+      },
+      {
+        name: NewsletterSubscriber.name,
+        schema: NewsletterSubscriberSchema,
+      },
       { name: PolicyTemplate.name, schema: PolicyTemplateSchema },
     ]),
   ],
@@ -86,8 +109,12 @@ import { ReactivationController } from './controllers/reactivation.controller';
     SuperAdminController,
     PlatformContractTemplateController,
     PlatformTemplateFolderController,
+    InsightAdminController,
+    InsightPublicController,
     KnowledgeBaseAdminController,
     KnowledgeBaseController,
+    NewsletterCampaignAdminController,
+    NewsletterSubscriberPublicController,
     PolicyTemplateAdminController,
     PolicyTemplateController,
     ReactivationController,
@@ -97,7 +124,11 @@ import { ReactivationController } from './controllers/reactivation.controller';
     SubscriptionExpiryService,
     PlatformContractTemplateService,
     PlatformTemplateFolderService,
+    InsightService,
     KnowledgeBaseService,
+    NewsletterCampaignService,
+    NewsletterCampaignSchedulerService,
+    NewsletterSubscriberService,
     PolicyTemplateService,
   ],
   exports: [

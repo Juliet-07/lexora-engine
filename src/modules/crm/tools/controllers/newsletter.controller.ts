@@ -274,3 +274,30 @@ export class ClientNewsletterController {
     return this.service.getMyNewsletter(t || u, u, id);
   }
 }
+
+// ── Board Portal — "renders in the page for Newsletter" (PO, Oct
+// 2026). Same real-sent-only / real-recipient-only shape as
+// ClientNewsletterController above, scoped to the caller's own
+// BoardMember record via CampaignService.resolveBoardMember.
+@ApiTags('CRM — Tools — Newsletters')
+@ApiBearerAuth()
+@UserTypes(UserType.BOARD_MEMBER)
+@Controller('board-portal/newsletters')
+export class BoardPortalNewsletterController {
+  constructor(private readonly service: CampaignService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'My own real, sent newsletters' })
+  getMyNewsletters(@CurrentUser('sub') userId: string) {
+    return this.service.getMyBoardPortalNewsletters(userId);
+  }
+
+  @Get(':id')
+  @ApiOperation({
+    summary:
+      'One of my own newsletters — marks it opened, a real signal set only when I actually view it',
+  })
+  getMyNewsletter(@Param('id') id: string, @CurrentUser('sub') userId: string) {
+    return this.service.getMyBoardPortalNewsletter(userId, id);
+  }
+}

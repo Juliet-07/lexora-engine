@@ -14,6 +14,7 @@ import {
   SegmentDocument,
   SegmentMode,
   SegmentRuleField,
+  SegmentAudience,
   Campaign,
   CampaignDocument,
   CampaignStatus,
@@ -33,8 +34,24 @@ import {
   ClientProfileRecord,
   ClientProfileDocument,
 } from 'src/modules/tenant/schemas/client-profile.schema';
+import {
+  Contact,
+  ContactDocument,
+} from 'src/modules/crm/crm/schemas/contact.schema';
+import {
+  BoardMember,
+  BoardMemberDocument,
+  BoardMemberLifecycleStatus,
+} from 'src/modules/grc/governance/schemas/board-member.schema';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { RegulatoryChangeService } from 'src/modules/grc/compliance/services/regulatory-change.service';
+
+type ResolvedMember = {
+  _id: string;
+  name: string;
+  email: string;
+  sourceType: SegmentAudience;
+};
 
 // ── Segments — real client targeting. Membership is always resolved
 // live against real User + ClientProfileRecord data, never stored,
@@ -50,6 +67,10 @@ export class SegmentService {
     private readonly userModel: Model<UserDocument>,
     @InjectModel(ClientProfileRecord.name)
     private readonly profileModel: Model<ClientProfileDocument>,
+    @InjectModel(Contact.name)
+    private readonly contactModel: Model<ContactDocument>,
+    @InjectModel(BoardMember.name)
+    private readonly boardMemberModel: Model<BoardMemberDocument>,
   ) {}
 
   async getAll(tenantId: string) {
@@ -65,15 +86,30 @@ export class SegmentService {
     );
   }
 
-  async create(tenantId: string, dto: CreateSegmentDto) {
+  private validateSegmentDto(dto: CreateSegmentDto | UpdateSegmentDto) {
     if (dto.mode === SegmentMode.RULE && !dto.rule) {
       throw new BadRequestException('A rule-based segment needs a real rule');
     }
+    // Rule-based resolution only exists for Client (User fields) —
+    // see resolveMembers. Contact/BoardMember segments must be manual.
+    if (
+      dto.mode === SegmentMode.RULE &&
+      dto.audience !== SegmentAudience.CLIENT
+    ) {
+      throw new BadRequestException(
+        'Rule-based segments are only supported for the Client audience — use a manual segment for Contacts or Board Members',
+      );
+    }
+  }
+
+  async create(tenantId: string, dto: CreateSegmentDto) {
+    this.validateSegmentDto(dto);
     const created = await this.model.create({
       tenantId: new Types.ObjectId(tenantId),
       name: dto.name,
       description: dto.description ?? '',
       mode: dto.mode,
+      audience: dto.audience,
       memberIds: (dto.memberIds ?? []).map((id) => new Types.ObjectId(id)),
       rule: dto.mode === SegmentMode.RULE ? dto.rule : null,
     });
@@ -81,6 +117,7 @@ export class SegmentService {
   }
 
   async update(tenantId: string, id: string, dto: UpdateSegmentDto) {
+    this.validateSegmentDto(dto);
     const s = await this.model.findOne({
       _id: id,
       tenantId: new Types.ObjectId(tenantId),
@@ -89,6 +126,7 @@ export class SegmentService {
     s.name = dto.name;
     s.description = dto.description ?? '';
     s.mode = dto.mode;
+    s.audience = dto.audience;
     s.memberIds = (dto.memberIds ?? []).map((id) => new Types.ObjectId(id));
     s.rule = dto.mode === SegmentMode.RULE ? (dto.rule as any) : null;
     await s.save();
@@ -122,17 +160,60 @@ export class SegmentService {
   }
 
   // Real resolution — manual segments return their real specified
-  // clients; rule segments query real User + ClientProfileRecord
-  // fields live, so results always reflect current reality.
+  // members; Client rule segments query real User + ClientProfileRecord
+  // fields live, so results always reflect current reality. Contact
+  // and BoardMember audiences are manual-only (see
+  // validateSegmentDto) — there's no confirmed rule-field equivalent
+  // for those two collections yet.
   async resolveMembers(
     tenantId: string,
     segment: {
       mode: SegmentMode;
+      audience?: SegmentAudience;
       memberIds: Types.ObjectId[];
       rule: { field: SegmentRuleField; value: string } | null;
     },
-  ): Promise<{ _id: string; name: string; email: string }[]> {
+  ): Promise<ResolvedMember[]> {
     const tId = new Types.ObjectId(tenantId);
+    // Segments created before `audience` existed have none stored —
+    // treat them as Client, their only possible audience at the time.
+    const audience = segment.audience ?? SegmentAudience.CLIENT;
+
+    if (audience === SegmentAudience.CONTACT) {
+      if (!segment.memberIds.length) return [];
+      const contacts = await this.contactModel
+        .find({ _id: { $in: segment.memberIds }, tenantId: tId })
+        .lean();
+      return contacts
+        .filter((c) => !!c.email)
+        .map((c) => ({
+          _id: String(c._id),
+          name: c.name,
+          email: c.email,
+          sourceType: SegmentAudience.CONTACT,
+        }));
+    }
+
+    if (audience === SegmentAudience.BOARD_MEMBER) {
+      if (!segment.memberIds.length) return [];
+      const members = await this.boardMemberModel
+        .find({ _id: { $in: segment.memberIds }, tenantId: tId })
+        .lean();
+      return members
+        .filter(
+          (m) =>
+            !!m.email &&
+            m.lifecycleStatus !== BoardMemberLifecycleStatus.OFFBOARDED,
+        )
+        .map((m) => ({
+          _id: String(m._id),
+          name: m.name,
+          email: m.email,
+          sourceType: SegmentAudience.BOARD_MEMBER,
+        }));
+    }
+
+    // ── Client audience — unchanged from before this field existed ──
 
     if (segment.mode === SegmentMode.MANUAL) {
       if (!segment.memberIds.length) return [];
@@ -143,6 +224,7 @@ export class SegmentService {
         _id: String(u._id),
         name: this.displayName(u),
         email: u.email,
+        sourceType: SegmentAudience.CLIENT,
       }));
     }
 
@@ -157,6 +239,7 @@ export class SegmentService {
         _id: String(u._id),
         name: this.displayName(u),
         email: u.email,
+        sourceType: SegmentAudience.CLIENT,
       }));
     }
 
@@ -168,6 +251,7 @@ export class SegmentService {
         _id: String(u._id),
         name: this.displayName(u),
         email: u.email,
+        sourceType: SegmentAudience.CLIENT,
       }));
     }
 
@@ -187,6 +271,7 @@ export class SegmentService {
         _id: String(u._id),
         name: this.displayName(u),
         email: u.email,
+        sourceType: SegmentAudience.CLIENT,
       }));
     }
 
@@ -223,10 +308,59 @@ export class CampaignService {
   constructor(
     @InjectModel(Campaign.name)
     private readonly model: Model<CampaignDocument>,
+    @InjectModel(BoardMember.name)
+    private readonly boardMemberModel: Model<BoardMemberDocument>,
     private readonly segmentService: SegmentService,
     private readonly emailService: EmailService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  // Real union across every selected segment's real, live-resolved
+  // members — a campaign can target a Client segment AND a
+  // BoardMember segment (etc.) in the same send. De-duplicated by
+  // email (case-insensitive) so the same address is never sent to
+  // twice just because it showed up in two segments.
+  private async resolveRecipients(tenantId: string, segmentIds: string[]) {
+    const segments = await Promise.all(
+      segmentIds.map((id) => this.segmentService.getById(tenantId, id)),
+    );
+    const resolvedPerSegment = await Promise.all(
+      segments.map((s) =>
+        this.segmentService.resolveMembers(tenantId, s as any),
+      ),
+    );
+
+    const byEmail = new Map<string, ResolvedMember>();
+    for (const members of resolvedPerSegment) {
+      for (const m of members) {
+        const key = m.email.toLowerCase();
+        if (!byEmail.has(key)) byEmail.set(key, m);
+      }
+    }
+
+    return {
+      segmentNames: segments.map((s) => s.name),
+      members: Array.from(byEmail.values()),
+    };
+  }
+
+  private toRecipientDocs(members: ResolvedMember[]) {
+    return members.map((m) => ({
+      sourceType: m.sourceType,
+      sourceId: new Types.ObjectId(m._id),
+      clientId:
+        m.sourceType === SegmentAudience.CLIENT
+          ? new Types.ObjectId(m._id)
+          : null,
+      clientName: m.name,
+      email: m.email,
+      delivered: false,
+      deliveryError: null,
+      opened: false,
+      clicked: false,
+      rsvped: false,
+    }));
+  }
 
   async getAll(tenantId: string) {
     return this.model
@@ -245,31 +379,21 @@ export class CampaignService {
 
   async create(tenantId: string, dto: CreateCampaignDto) {
     const tId = new Types.ObjectId(tenantId);
-    const segment = await this.segmentService.getById(tenantId, dto.segmentId);
-    const members = await this.segmentService.resolveMembers(
+    const { segmentNames, members } = await this.resolveRecipients(
       tenantId,
-      segment as any,
+      dto.segmentIds,
     );
 
     const created = await this.model.create({
       tenantId: tId,
       name: dto.name,
       type: dto.type,
-      segmentId: new Types.ObjectId(dto.segmentId),
-      segmentName: segment.name,
+      segmentIds: dto.segmentIds.map((id) => new Types.ObjectId(id)),
+      segmentNames,
       subject: dto.subject ?? '',
       body: dto.body ?? '',
       event: dto.type === 'Event invite' ? (dto.event ?? {}) : null,
-      recipients: members.map((m) => ({
-        clientId: new Types.ObjectId(m._id),
-        clientName: m.name,
-        email: m.email,
-        delivered: false,
-        deliveryError: null,
-        opened: false,
-        clicked: false,
-        rsvped: false,
-      })),
+      recipients: this.toRecipientDocs(members),
     });
     return created.toObject();
   }
@@ -284,13 +408,15 @@ export class CampaignService {
       tenantId: original.tenantId,
       name: `${original.name} (copy)`,
       type: original.type,
-      segmentId: original.segmentId,
-      segmentName: original.segmentName,
+      segmentIds: original.segmentIds,
+      segmentNames: original.segmentNames,
       subject: original.subject,
       body: original.body,
       event: original.event,
       status: CampaignStatus.DRAFT,
       recipients: original.recipients.map((r) => ({
+        sourceType: r.sourceType,
+        sourceId: r.sourceId,
         clientId: r.clientId,
         clientName: r.clientName,
         email: r.email,
@@ -370,27 +496,20 @@ export class CampaignService {
       );
     }
 
-    if (String(c.segmentId) !== dto.segmentId) {
-      const segment = await this.segmentService.getById(
+    const currentSegmentIds = c.segmentIds.map((s) => String(s)).sort();
+    const nextSegmentIds = [...dto.segmentIds].sort();
+    const segmentsChanged =
+      currentSegmentIds.length !== nextSegmentIds.length ||
+      currentSegmentIds.some((id, i) => id !== nextSegmentIds[i]);
+
+    if (segmentsChanged) {
+      const { segmentNames, members } = await this.resolveRecipients(
         tenantId,
-        dto.segmentId,
+        dto.segmentIds,
       );
-      const members = await this.segmentService.resolveMembers(
-        tenantId,
-        segment as any,
-      );
-      c.segmentId = new Types.ObjectId(dto.segmentId);
-      c.segmentName = segment.name;
-      c.recipients = members.map((m) => ({
-        clientId: new Types.ObjectId(m._id),
-        clientName: m.name,
-        email: m.email,
-        delivered: false,
-        deliveryError: null,
-        opened: false,
-        clicked: false,
-        rsvped: false,
-      })) as any;
+      c.segmentIds = dto.segmentIds.map((id) => new Types.ObjectId(id));
+      c.segmentNames = segmentNames;
+      c.recipients = this.toRecipientDocs(members) as any;
     }
 
     c.name = dto.name;
@@ -500,6 +619,90 @@ export class CampaignService {
       await c.save();
     }
     return c.toObject();
+  }
+
+  // ── Board Portal — "renders in the page for Newsletter" (PO, Oct
+  // 2026). Same shape as ClientNewsletterService's sanitizeForClient
+  // below, scoped to BoardMember recipients instead of Client ones.
+  // No cross-module service DI into GovernanceModule here — same
+  // direct-model-injection convention GovernanceModule itself already
+  // uses for cross-module reads (see its own BoardMemberService
+  // constructor comment), so `boardMemberModel` is injected directly
+  // above rather than going through BoardMemberService. ─────────────
+
+  private async resolveBoardMember(userId: string) {
+    const member = await this.boardMemberModel
+      .findOne({ userId: new Types.ObjectId(userId) })
+      .select('_id tenantId')
+      .lean();
+    if (!member) {
+      throw new NotFoundException('No board member record for this account');
+    }
+    return member;
+  }
+
+  private sanitizeForBoardPortal(c: any, boardMemberId: string) {
+    const mine = (c.recipients as any[]).find(
+      (r) =>
+        r.sourceType === SegmentAudience.BOARD_MEMBER &&
+        String(r.sourceId) === boardMemberId,
+    );
+    return {
+      _id: c._id,
+      name: c.name,
+      type: c.type,
+      subject: c.subject,
+      body: c.body,
+      event: c.event,
+      sentAt: c.sentAt,
+      opened: mine?.opened ?? false,
+    };
+  }
+
+  async getMyBoardPortalNewsletters(userId: string) {
+    const member = await this.resolveBoardMember(userId);
+    const campaigns = await this.model
+      .find({
+        tenantId: member.tenantId,
+        status: CampaignStatus.SENT,
+        recipients: {
+          $elemMatch: {
+            sourceType: SegmentAudience.BOARD_MEMBER,
+            sourceId: member._id,
+          },
+        },
+      })
+      .sort({ sentAt: -1 })
+      .lean();
+    return campaigns.map((c) =>
+      this.sanitizeForBoardPortal(c, String(member._id)),
+    );
+  }
+
+  async getMyBoardPortalNewsletter(userId: string, id: string) {
+    const member = await this.resolveBoardMember(userId);
+    const c = await this.model.findOne({
+      _id: id,
+      tenantId: member.tenantId,
+      status: CampaignStatus.SENT,
+    });
+    if (!c) throw new NotFoundException('Newsletter not found');
+    const recipient = (c.recipients as any[]).find(
+      (r) =>
+        r.sourceType === SegmentAudience.BOARD_MEMBER &&
+        String(r.sourceId) === String(member._id),
+    );
+    if (!recipient) {
+      throw new ForbiddenException('This newsletter was not sent to you');
+    }
+    // Same real, in-portal "opened" signal as the client portal's
+    // markOpenedByClient — set when this board member actually views
+    // their own copy, not from any email-open-pixel tracking.
+    if (!recipient.opened) {
+      recipient.opened = true;
+      await c.save();
+    }
+    return this.sanitizeForBoardPortal(c.toObject(), String(member._id));
   }
 }
 

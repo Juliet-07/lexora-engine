@@ -7,11 +7,17 @@ import {
   IsDateString,
   IsMongoId,
   IsArray,
+  ArrayMinSize,
   IsEmail,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { SegmentMode, SegmentRuleField, CampaignType } from '../schemas';
+import {
+  SegmentMode,
+  SegmentRuleField,
+  SegmentAudience,
+  CampaignType,
+} from '../schemas';
 
 export class SegmentRuleDto {
   @ApiProperty({ enum: SegmentRuleField })
@@ -24,6 +30,9 @@ export class CreateSegmentDto {
   @ApiProperty() @IsString() name: string;
   @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
   @ApiProperty({ enum: SegmentMode }) @IsEnum(SegmentMode) mode: SegmentMode;
+  @ApiProperty({ enum: SegmentAudience })
+  @IsEnum(SegmentAudience)
+  audience: SegmentAudience;
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()
@@ -48,7 +57,13 @@ export class CampaignEventDetailsDto {
 export class CreateCampaignDto {
   @ApiProperty() @IsString() name: string;
   @ApiProperty({ enum: CampaignType }) @IsEnum(CampaignType) type: CampaignType;
-  @ApiProperty() @IsMongoId() segmentId: string;
+  // Plural — a campaign can target several segments (of mixed
+  // audiences) at once; see Segment.audience / CampaignService.
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsMongoId({ each: true })
+  segmentIds: string[];
   @ApiPropertyOptional() @IsOptional() @IsString() subject?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() body?: string;
   @ApiPropertyOptional({ type: CampaignEventDetailsDto })
@@ -60,8 +75,8 @@ export class CreateCampaignDto {
 
 // Same real fields as create — editing a draft or still-scheduled
 // campaign is genuinely the same shape of change as creating one.
-// If segmentId differs from the campaign's current one, the service
-// re-resolves real recipients against the new segment, since
+// If segmentIds differ from the campaign's current ones, the service
+// re-resolves real recipients against the new segments, since
 // nothing has actually been sent yet.
 export class UpdateCampaignDto extends CreateCampaignDto {}
 

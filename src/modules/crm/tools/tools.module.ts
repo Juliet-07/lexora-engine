@@ -23,6 +23,14 @@ import {
   ClauseSchema,
 } from 'src/modules/grc/deals/schemas/clause.schema';
 import {
+  Contact,
+  ContactSchema,
+} from 'src/modules/crm/crm/schemas/contact.schema';
+import {
+  BoardMember,
+  BoardMemberSchema,
+} from 'src/modules/grc/governance/schemas/board-member.schema';
+import {
   Comment,
   CommentSchema,
   ToolContract,
@@ -64,6 +72,7 @@ import {
   CampaignController,
   NewsletterDraftController,
   ClientNewsletterController,
+  BoardPortalNewsletterController,
   CalendarController,
   TenantContractTemplateController,
   TenantLetterheadController,
@@ -98,6 +107,13 @@ import {
         schema: ToolContractSigningTokenSchema,
       },
       { name: Vendor.name, schema: VendorSchema },
+      // Registered directly here (not imported via their own modules)
+      // for Segment/CampaignService's Contact and BoardMember audience
+      // support — same "direct model injection avoids circular module
+      // deps" convention GovernanceModule itself documents for its
+      // own cross-module registrations (ToolContract, Employee, etc.)
+      { name: Contact.name, schema: ContactSchema },
+      { name: BoardMember.name, schema: BoardMemberSchema },
     ]),
   ],
   providers: [
@@ -123,6 +139,7 @@ import {
     CampaignController,
     NewsletterDraftController,
     ClientNewsletterController,
+    BoardPortalNewsletterController,
     CalendarController,
     TenantContractTemplateController,
     TenantLetterheadController,
