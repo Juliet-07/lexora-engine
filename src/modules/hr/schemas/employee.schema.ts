@@ -265,6 +265,17 @@ export class Employee {
   @Prop({ type: [EmployeeAllowanceSchema], default: [] })
   allowances: EmployeeAllowance[];
 
+  // ── Overtime ─────────────────────────────────────────────
+  // Contracted weekly hours and the overtime pay multiplier,
+  // set per employee per the payroll engine's worked-example
+  // rules (default 40hr week / 150% multiplier). Hourly rate
+  // for overtime = salary / (weeklyContractedHours * 52 / 12).
+  @Prop({ default: 40 })
+  weeklyContractedHours: number;
+
+  @Prop({ default: 1.5 })
+  overtimeMultiplier: number;
+
   // ── Leave Balance ──────────────────────────────────────────
   @Prop({ default: 21 })
   annualLeaveBalance: number;
@@ -465,6 +476,70 @@ export class EmployeeLoan {
 }
 
 export const EmployeeLoanSchema = SchemaFactory.createForClass(EmployeeLoan);
+
+export type EmployeeOvertimeLogDocument = EmployeeOvertimeLog & Document;
+
+export enum OvertimeStatus {
+  PENDING = 'pending', // employee logged it, awaiting tenant decision — counts as 0 for payroll until approved
+  APPROVED = 'approved',
+  REJECTED = 'rejected', // tenant declined — counts as 0 for payroll, same as never logging it
+}
+
+@Schema({ timestamps: true, collection: 'hr_employee_overtime_logs' })
+export class EmployeeOvertimeLog {
+  @Prop({ type: Types.ObjectId, ref: 'Employee', required: true, index: true })
+  employeeId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  // Human-readable period this overtime applies to, e.g. "October 2026",
+  // matching how PayrollRun.periodLabel is presented elsewhere.
+  @Prop({ required: true, trim: true })
+  periodLabel: string;
+
+  @Prop({ required: true })
+  periodStart: Date;
+
+  @Prop({ required: true })
+  periodEnd: Date;
+
+  @Prop({ required: true, min: 0 })
+  hoursLogged: number;
+
+  // Snapshots of the rate/multiplier/currency in effect when the
+  // employee logged the hours, so a later change to the employee's
+  // salary or contract terms never rewrites an already-logged entry.
+  @Prop({ required: true })
+  hourlyRate: number;
+
+  @Prop({ required: true })
+  multiplier: number;
+
+  @Prop({ required: true })
+  amount: number;
+
+  @Prop({ required: true })
+  currency: string;
+
+  @Prop({ default: null })
+  note: string | null;
+
+  @Prop({ enum: OvertimeStatus, default: OvertimeStatus.PENDING, index: true })
+  status: OvertimeStatus;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  decidedBy: Types.ObjectId | null;
+
+  @Prop({ default: null })
+  decidedAt: Date | null;
+
+  @Prop({ default: null })
+  rejectionReason: string | null;
+}
+
+export const EmployeeOvertimeLogSchema =
+  SchemaFactory.createForClass(EmployeeOvertimeLog);
 
 export type EmployeeRecordDocument = EmployeeRecord & Document;
 @Schema({ timestamps: true, collection: 'employee_records' })

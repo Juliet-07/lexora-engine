@@ -25,6 +25,7 @@ import {
 import {
   PayrollPolicyService,
   EmployeeLoanService,
+  EmployeeOvertimeService,
   PayrollRunService,
   PayslipTemplateService,
   PayrollCalculationService,
@@ -38,6 +39,7 @@ import {
   UpdatePayslipTemplateDto,
   GrossUpFromNetDto,
   DecideLoanRequestDto,
+  DecideOvertimeDto,
   SendPayslipEmailDto,
 } from '../dtos/';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
@@ -213,6 +215,68 @@ export class EmployeeLoanController {
     @CurrentUser('tenantId') t: string,
   ) {
     await this.loanService.deleteLoan(t || u, loanId);
+    return { success: true };
+  }
+}
+
+@ApiTags('HR — Employee Overtime (Tenant)')
+@ApiBearerAuth('bearerAuth')
+@UserTypes(UserType.TENANT)
+@Controller('hr/payroll/overtime')
+export class EmployeeOvertimeController {
+  constructor(private readonly overtimeService: EmployeeOvertimeService) {}
+
+  @Get('pending')
+  @ApiOperation({ summary: 'List overtime entries awaiting a decision' })
+  getPending(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.overtimeService.getPendingForTenant(t || u);
+  }
+
+  @Get()
+  @ApiQuery({ name: 'status', required: false })
+  @ApiOperation({ summary: 'List all overtime entries for this tenant' })
+  getAll(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Query('status') status?: string,
+  ) {
+    return this.overtimeService.getAllForTenant(t || u, status);
+  }
+
+  @Get('employee/:employeeId')
+  @ApiOperation({ summary: "Get a specific employee's overtime history" })
+  getForEmployee(
+    @Param('employeeId') employeeId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.overtimeService.getForEmployee(employeeId, t || u);
+  }
+
+  @Patch(':logId/decide')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Approve or reject a pending overtime entry' })
+  decide(
+    @Param('logId') logId: string,
+    @Body() dto: DecideOvertimeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.overtimeService.decideOvertimeRequest(t || u, logId, u, dto);
+  }
+
+  @Delete(':logId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete an overtime entry' })
+  async delete(
+    @Param('logId') logId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    await this.overtimeService.deleteOvertimeLog(t || u, logId);
     return { success: true };
   }
 }

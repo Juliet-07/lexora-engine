@@ -22,6 +22,7 @@ import {
   AllowanceInput,
 } from './payroll-calculation.service';
 import { EmployeeLoanService } from './employee-loan.service';
+import { EmployeeOvertimeService } from './employee-overtime.service';
 import { ExchangeRateService } from './exchange-rate.service';
 import { CreatePayrollRunDto, SendPayslipEmailDto } from '../dtos/payroll.dto';
 import { PayslipTemplateService } from './payslip-template.service';
@@ -51,6 +52,7 @@ export class PayrollRunService {
     private readonly policyService: PayrollPolicyService,
     private readonly calcService: PayrollCalculationService,
     private readonly loanService: EmployeeLoanService,
+    private readonly overtimeService: EmployeeOvertimeService,
     private readonly fxService: ExchangeRateService,
     private readonly templateService: PayslipTemplateService,
     private readonly employeeService: EmployeeService,
@@ -602,6 +604,31 @@ export class PayrollRunService {
         };
       },
     );
+
+    // Overtime: any hours the employee logged AND the tenant approved
+    // for this period feed into pay, exactly like a normal cash
+    // allowance (taxable, pensionable, paid in cash) per the payroll
+    // engine's worked-example rules. Unlogged or unapproved overtime
+    // simply contributes nothing — there is no separate "0" record.
+    const approvedOvertime =
+      await this.overtimeService.getApprovedOvertimeForPeriod(
+        (employee._id as any).toString(),
+        run.tenantId.toString(),
+        run.periodStart,
+        run.periodEnd,
+      );
+    if (approvedOvertime && approvedOvertime.amount > 0) {
+      const overtimeAmount =
+        exchangeRateApplied != null
+          ? approvedOvertime.amount * exchangeRateApplied
+          : approvedOvertime.amount;
+      allowances.push({
+        key: 'overtime',
+        label: 'Overtime',
+        amount: overtimeAmount,
+        isTransportAllowance: false,
+      });
+    }
 
     const loanDeductions =
       await this.loanService.getActiveLoanDeductionsForEmployee(

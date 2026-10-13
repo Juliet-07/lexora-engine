@@ -277,3 +277,42 @@ export class SendPayslipEmailDto {
   @IsString()
   body?: string;
 }
+
+// ═══════════════════════════════════════════════════════════════
+// OVERTIME — employee logs hours for a month, tenant must approve
+// before the payslip for that month includes the pay. Unlogged or
+// unapproved overtime counts as 0, per the PO's Oct 2026 note.
+// ═══════════════════════════════════════════════════════════════
+
+export class LogOvertimeDto {
+  @ApiProperty({
+    example: '2026-10-01',
+    description:
+      'Any date within the month this overtime applies to — the engine resolves it to that calendar month.',
+  })
+  @IsDateString()
+  periodDate: string;
+
+  @ApiProperty({ example: 10, description: 'Overtime hours worked' })
+  @IsNumber()
+  @Min(0.01)
+  hoursLogged: number;
+
+  @ApiPropertyOptional({
+    description: 'Optional note, e.g. what the overtime was for',
+  })
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class DecideOvertimeDto {
+  @ApiProperty({ enum: ['approved', 'rejected'] })
+  @IsIn(['approved', 'rejected'])
+  decision: 'approved' | 'rejected';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  rejectionReason?: string;
+}

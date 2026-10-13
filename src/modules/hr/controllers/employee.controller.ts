@@ -33,6 +33,7 @@ import {
   RequisitionTypeService,
   EmployeeDocumentService,
   EmployeeLoanService,
+  EmployeeOvertimeService,
   ProbationService,
   DisputeService,
   LearningService,
@@ -58,6 +59,7 @@ import {
   RespondToDisputeDto,
   SubmitAssessmentDto,
   LogOwnerLoanDto,
+  LogOvertimeDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -196,6 +198,7 @@ export class HrEmployeeController {
     private readonly requisitionTypeService: RequisitionTypeService,
     private readonly documentService: EmployeeDocumentService,
     private readonly loanService: EmployeeLoanService,
+    private readonly overtimeService: EmployeeOvertimeService,
     private readonly probationService: ProbationService,
     private readonly disputeService: DisputeService,
     private readonly learningService: LearningService,
@@ -644,6 +647,51 @@ export class HrEmployeeController {
     @CurrentUser('tenantId') tenantId: string,
   ) {
     return this.loanService.logOwnerLoan(tenantId || userId, userId, dto);
+  }
+
+  // ===============================================================
+  // OVERTIME — logged on the payslips page; tenant must approve
+  // before it counts toward that month's payslip. Unapproved or
+  // unlogged overtime counts as 0, per the PO's Oct 2026 note.
+  // ===============================================================
+
+  @Get('overtime')
+  @ApiOperation({ summary: 'Get my overtime log history' })
+  async getMyOvertime(@CurrentUser('sub') userId: string) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.overtimeService.getMyOvertimeLogs(
+      (employee as any)._id.toString(),
+    );
+  }
+
+  @Post('overtime')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Log overtime hours for a month' })
+  async logOvertime(
+    @Body() dto: LogOvertimeDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.overtimeService.logOvertime(
+      (employee as any).tenantId.toString(),
+      (employee as any)._id.toString(),
+      dto,
+    );
+  }
+
+  @Delete('overtime/:logId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remove a still-pending overtime entry' })
+  async deleteMyOvertime(
+    @Param('logId') logId: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    await this.overtimeService.deleteMyOvertimeLog(
+      (employee as any)._id.toString(),
+      logId,
+    );
+    return { success: true };
   }
 
   // ===============================================================

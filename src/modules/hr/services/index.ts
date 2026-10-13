@@ -9,6 +9,7 @@ export * from './dispute.service';
 export * from './employee-document.service';
 export * from './employee-loan.service';
 export * from './employee-onboarding.service';
+export * from './employee-overtime.service';
 export * from './employee-record.service';
 export * from './employee.service';
 export * from './exchange-rate.service';
