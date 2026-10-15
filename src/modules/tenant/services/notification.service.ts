@@ -627,4 +627,28 @@ export class TenantNotificationService {
       '/grc/governance/meetings',
     );
   }
+
+  // ── Board Directory messaging — "create that connection from board
+  // portal to tenant portal" (PO, Oct 2026). Recipient is the tenant
+  // itself, same as every other tenant-is-the-recipient thread above
+  // (tenant.mandate_message.received, finance.bill_payment_reminder) —
+  // there's no assignee to resolve here, a director messaged the
+  // account, not a specific employee. Emitted by
+  // BoardMessagingService#sendMessage when the counterpart is the
+  // synthetic tenant-owner directory entry.
+  @OnEvent('board.message_to_tenant.received')
+  async onBoardMessageToTenantReceived(e: {
+    tenantId: string;
+    boardMemberName: string;
+    preview: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.tenantId,
+      TenantNotificationType.GENERAL,
+      `New message from ${e.boardMemberName}`,
+      e.preview,
+      '/grc/governance/board-messaging',
+    );
+  }
 }

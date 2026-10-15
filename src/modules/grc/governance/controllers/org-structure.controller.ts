@@ -70,14 +70,18 @@ export class OrgStructureController {
   }
 
   @Patch(':id/move')
-  @ApiOperation({ summary: 'Shift a node up or down among its siblings' })
+  @ApiOperation({
+    summary:
+      'Shift a node left or right among its siblings under one parent ' +
+      '— pass contextParentId when the node sits under more than one',
+  })
   move(
     @Param('id') id: string,
     @Body() dto: MoveOrgStructureNodeDto,
     @CurrentUser('tenantId') t: string,
     @CurrentUser('sub') u: string,
   ) {
-    return this.service.move(t || u, id, dto.direction);
+    return this.service.move(t || u, id, dto.direction, dto.contextParentId);
   }
 
   @Delete(':id')

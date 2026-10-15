@@ -6,6 +6,7 @@ import {
   BoardMemberSchema,
 } from 'src/modules/grc/governance/schemas';
 import { BoardPortalController } from './board.controller';
+import { TenantBoardMessagingController } from './board-tenant-messaging.controller';
 import {
   BoardDashboardService,
   BoardMessagingService,
@@ -20,6 +21,7 @@ import {
 import { EsgModule } from '../grc/esg/esg.module';
 import { ComplianceModule } from '../grc/compliance/compliance.module';
 import { FinanceModule } from '../crm/finance/finance.module';
+import { User, UserSchema } from 'src/modules/auth/schemas';
 
 // Every endpoint a signed-in board member (UserType.BOARD_MEMBER) calls
 // from their own portal (lexora-board) lives here, in one place —
@@ -54,6 +56,20 @@ import { FinanceModule } from '../crm/finance/finance.module';
 // userId without a circular service dependency — the same
 // direct-model-injection convention already used throughout this
 // codebase for cross-module reads.
+//
+// TenantBoardMessagingController (Oct 2026) is the tenant-side half
+// of the same messaging feature — "create that connection from board
+// portal to tenant portal" — reached from lexora-tenant's own Board
+// Messaging page rather than the board portal. It lives here, not in
+// GovernanceModule, because it's just another consumer of the same
+// BoardMessagingService/BoardMessage collection this module already
+// owns outright; splitting it into GovernanceModule would mean
+// importing BoardPortalModule's own service back into Governance,
+// which GovernanceModule's own doc comment explicitly rules out
+// (one-directional dependency, no cycle). User is registered here
+// (direct model injection, same convention as BoardMember above) so
+// BoardMessagingService can resolve the tenant's own business name
+// for display/email without a circular service dependency.
 @Module({
   imports: [
     GovernanceModule,
@@ -64,6 +80,7 @@ import { FinanceModule } from '../crm/finance/finance.module';
       { name: BoardMember.name, schema: BoardMemberSchema },
       { name: BoardMessage.name, schema: BoardMessageSchema },
       { name: BoardNotification.name, schema: BoardNotificationSchema },
+      { name: User.name, schema: UserSchema },
     ]),
   ],
   providers: [
@@ -71,6 +88,6 @@ import { FinanceModule } from '../crm/finance/finance.module';
     BoardMessagingService,
     BoardNotificationService,
   ],
-  controllers: [BoardPortalController],
+  controllers: [BoardPortalController, TenantBoardMessagingController],
 })
 export class BoardPortalModule {}

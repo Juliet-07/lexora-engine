@@ -43,19 +43,32 @@ export class OrgStructureNode {
   @Prop({ default: null })
   subtitle: string | null;
 
-  // Self-referencing — null means a root of the chart (e.g.
-  // "Shareholders" or "Board of Directors" with nothing above them).
+  // Self-referencing, and — Oct 2026 — plural: "make it possible that
+  // in the reports to/sits under field more than 1 can be selected,
+  // to allow that one thing can be connected to 2 things" (PO). An
+  // empty array means a root of the chart (e.g. "Shareholders" or
+  // "Board of Directors" with nothing above them); more than one
+  // entry means the node is rendered once under each parent (see
+  // OrgStructureService#getTree) — e.g. a department head who also
+  // sits on a committee that reports elsewhere.
+  //
+  // Replaces the earlier single `parentId: ObjectId | null` field.
+  // OrgStructureService#onModuleInit backfills any pre-existing
+  // document that still only has the old field, so this is safe to
+  // read as the sole source of truth going forward.
   @Prop({
-    type: Types.ObjectId,
-    ref: 'OrgStructureNode',
-    default: null,
+    type: [{ type: Types.ObjectId, ref: 'OrgStructureNode' }],
+    default: [],
     index: true,
   })
-  parentId: Types.ObjectId | null;
+  parentIds: Types.ObjectId[];
 
-  // Sibling display order under the same parent — set automatically on
-  // create (appended last) and adjusted via the builder's move
-  // up/down actions.
+  // Sibling display order — set automatically on create (appended
+  // last within its first parent group, or root) and adjusted via the
+  // builder's move up/down actions. A node shown under more than one
+  // parent shares this single order value across every occurrence;
+  // see OrgStructureService#move for how a specific occurrence's
+  // sibling group is chosen.
   @Prop({ default: 0 })
   order: number;
 }

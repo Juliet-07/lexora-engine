@@ -1545,6 +1545,14 @@ export class BoardMemberService {
   // card and start a message thread — never another tenant's board,
   // and never an offboarded director (same exclusion getAll()'s own
   // `isActive` flag uses).
+  // Includes a synthetic "Account Owner" entry for the tenant itself
+  // (Oct 2026: "the tenant owner should be listed as part of the
+  // board directory so that they can be messaged") — there's no
+  // separate Tenant collection, so its id is the tenant's own User
+  // _id, prefixed `tenant:` on the wire (see BoardMessagingService)
+  // purely to disambiguate it from a real BoardMember id for the
+  // messaging endpoints; `isTenant` lets the board portal's Directory
+  // page badge it differently if it chooses to.
   async getDirectoryForPortal(userId: string) {
     const { boardMemberId, tenantId } = await this.resolveBoardMember(userId);
     const members = await this.boardMemberModel
@@ -1557,19 +1565,44 @@ export class BoardMemberService {
       )
       .sort({ name: 1 })
       .lean();
-    return members.map((m) => ({
-      id: m._id,
-      name: m.name,
-      role: m.role,
-      email: m.email,
-      bio: m.bio ?? '',
-      appointedAt: m.appointedAt,
-      termEnds: m.termEnds,
-      lifecycleStatus: m.lifecycleStatus,
-      attendancePercentage: m.attendancePercentage ?? 100,
-      committees: (m.committees ?? []).map((c: any) => c.name),
-      isYou: m._id.toString() === boardMemberId,
-    }));
+
+    const [businessName, tenantUser] = await Promise.all([
+      resolveBusinessName(this.userModel, tenantId),
+      this.userModel.findById(tenantId).select('email').lean(),
+    ]);
+
+    const ownerEntry = {
+      id: `tenant:${tenantId}`,
+      name: businessName,
+      role: 'Account Owner',
+      email: (tenantUser as any)?.email ?? '',
+      bio: '',
+      appointedAt: null,
+      termEnds: null,
+      lifecycleStatus: BoardMemberLifecycleStatus.ACTIVE,
+      attendancePercentage: null,
+      committees: [],
+      isYou: false,
+      isTenant: true,
+    };
+
+    return [
+      ownerEntry,
+      ...members.map((m) => ({
+        id: m._id,
+        name: m.name,
+        role: m.role,
+        email: m.email,
+        bio: m.bio ?? '',
+        appointedAt: m.appointedAt,
+        termEnds: m.termEnds,
+        lifecycleStatus: m.lifecycleStatus,
+        attendancePercentage: m.attendancePercentage ?? 100,
+        committees: (m.committees ?? []).map((c: any) => c.name),
+        isYou: m._id.toString() === boardMemberId,
+        isTenant: false,
+      })),
+    ];
   }
 
   // ── Board-portal notifications — resolving BoardMember → User id ──
