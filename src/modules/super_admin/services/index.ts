@@ -1,4 +1,6 @@
+export * from './availability.service';
 export * from './contract-template.service';
+export * from './demo-request.service';
 export * from './insight.service';
 export * from './knowledge-base.service';
 export * from './newsletter-campaign.service';

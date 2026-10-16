@@ -1,4 +1,6 @@
+export * from './availability.schema';
 export * from './contract-template.schema';
+export * from './demo-request.schema';
 export * from './insight.schema';
 export * from './knowledge-entry.schema';
 export * from './module.schema';

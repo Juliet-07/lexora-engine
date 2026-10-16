@@ -39,6 +39,18 @@ function ctaButton(label: string, url: string) {
   return `<a href="${esc(url || '#')}" style="display:inline-block;background:${COLORS.accent};color:#ffffff;font-weight:700;font-size:13.5px;padding:13px 28px;border-radius:7px;text-decoration:none;${FONT}">${esc(label)}</a>`;
 }
 
+// A plain <img> inside a table cell is safe in every mail client —
+// unlike flexbox/grid, this isn't the part of HTML email that's
+// unreliable. Renders nothing when the campaign doesn't have one, so
+// every template works exactly as before when imageUrl is left blank.
+// GIFs pass through untouched (mail clients play them natively).
+function imageRow(imageUrl: string | undefined, imageAlt: string | undefined) {
+  if (!imageUrl) return '';
+  return `<tr><td style="padding:0;line-height:0;font-size:0;">
+    <img src="${esc(imageUrl)}" alt="${esc(imageAlt || '')}" width="640" style="display:block;width:100%;max-width:640px;height:auto;border:0;outline:none;" />
+  </td></tr>`;
+}
+
 function header() {
   return `
   <tr><td style="padding:22px 36px 18px;text-align:center;border-bottom:1px solid ${COLORS.line};">
@@ -56,7 +68,11 @@ function footer(unsubscribeUrl: string) {
   </td></tr>`;
 }
 
-function wrapEmail(bodyRows: string, previewText: string, unsubscribeUrl: string) {
+function wrapEmail(
+  bodyRows: string,
+  previewText: string,
+  unsubscribeUrl: string,
+) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -78,8 +94,14 @@ function wrapEmail(bodyRows: string, previewText: string, unsubscribeUrl: string
 </html>`;
 }
 
-function renderRegulatoryAlert(data: Record<string, any>, previewText: string, unsubscribeUrl: string) {
-  const checklist: string[] = Array.isArray(data.checklist) ? data.checklist : [];
+function renderRegulatoryAlert(
+  data: Record<string, any>,
+  previewText: string,
+  unsubscribeUrl: string,
+) {
+  const checklist: string[] = Array.isArray(data.checklist)
+    ? data.checklist
+    : [];
   const checklistHtml = checklist
     .map(
       (item) =>
@@ -90,6 +112,7 @@ function renderRegulatoryAlert(data: Record<string, any>, previewText: string, u
   const body = `
   <tr><td style="background:${COLORS.red};color:#ffffff;text-align:center;padding:9px;font-size:11.5px;font-weight:800;letter-spacing:.08em;${FONT}">&#9888; URGENT &mdash; REGULATORY ALERT</td></tr>
   ${header()}
+  ${imageRow(data.imageUrl, data.imageAlt)}
   <tr><td style="padding:30px 36px 10px;">
     ${data.refTag ? `<span style="display:inline-block;font-family:'SF Mono','Courier New',monospace;font-size:10px;letter-spacing:.03em;color:${COLORS.soft};background:#f1f0f7;border-radius:4px;padding:2px 7px;margin-bottom:8px;">${esc(data.refTag)}</span><br/>` : ''}
     <span style="font-size:21px;line-height:1.3;font-weight:700;color:${COLORS.ink};${FONT}">${esc(data.heading)}</span>
@@ -105,7 +128,11 @@ function renderRegulatoryAlert(data: Record<string, any>, previewText: string, u
   return wrapEmail(body, previewText, unsubscribeUrl);
 }
 
-function renderQuarterlyRoundup(data: Record<string, any>, previewText: string, unsubscribeUrl: string) {
+function renderQuarterlyRoundup(
+  data: Record<string, any>,
+  previewText: string,
+  unsubscribeUrl: string,
+) {
   const sections: any[] = Array.isArray(data.sections) ? data.sections : [];
   const sectionsHtml = sections
     .map(
@@ -140,6 +167,7 @@ function renderQuarterlyRoundup(data: Record<string, any>, previewText: string, 
     <div style="font-size:11px;letter-spacing:.12em;color:#b9b0f5;font-weight:700;${FONT}">${esc(data.eyebrow)}</div>
     <div style="font-size:24px;margin:6px 0 0;font-weight:700;${FONT}">${esc(data.heading)}</div>
   </td></tr>
+  ${imageRow(data.imageUrl, data.imageAlt)}
   <tr><td style="padding:26px 36px 6px;font-size:13.5px;line-height:1.7;color:${COLORS.inkSoft};${FONT}">${esc(data.intro)}</td></tr>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${sectionsHtml}</table>
   ${blogHtml}`;
@@ -149,7 +177,11 @@ function renderQuarterlyRoundup(data: Record<string, any>, previewText: string, 
   return wrapEmail(body, previewText, unsubscribeUrl);
 }
 
-function renderArticleSpotlight(data: Record<string, any>, previewText: string, unsubscribeUrl: string) {
+function renderArticleSpotlight(
+  data: Record<string, any>,
+  previewText: string,
+  unsubscribeUrl: string,
+) {
   const moreItems: any[] = Array.isArray(data.moreItems) ? data.moreItems : [];
   const moreHtml = moreItems.length
     ? `<tr><td style="padding:20px 36px 26px;background:${COLORS.paper};">
@@ -176,6 +208,7 @@ function renderArticleSpotlight(data: Record<string, any>, previewText: string, 
   <tr><td style="background:${COLORS.accent};background-image:linear-gradient(135deg,#5b4bff,#8b7be0);padding:40px 36px 22px;">
     <span style="background:rgba(255,255,255,.18);color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.06em;padding:5px 11px;border-radius:20px;">${esc(data.heroLabel)}</span>
   </td></tr>
+  ${imageRow(data.imageUrl, data.imageAlt)}
   <tr><td style="padding:28px 36px 8px;">
     <div style="font-size:11.5px;font-weight:800;letter-spacing:.08em;color:${COLORS.accent};margin-bottom:8px;${FONT}">${esc(data.eyebrow)}</div>
     <div style="font-size:22px;line-height:1.3;font-weight:700;color:${COLORS.ink};margin:0 0 10px;${FONT}">${esc(data.heading)}</div>
@@ -188,7 +221,11 @@ function renderArticleSpotlight(data: Record<string, any>, previewText: string, 
   return wrapEmail(body, previewText, unsubscribeUrl);
 }
 
-function renderEventInvite(data: Record<string, any>, previewText: string, unsubscribeUrl: string) {
+function renderEventInvite(
+  data: Record<string, any>,
+  previewText: string,
+  unsubscribeUrl: string,
+) {
   const infoRows: any[] = Array.isArray(data.infoRows) ? data.infoRows : [];
   const infoHtml = infoRows.length
     ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${COLORS.line};border-radius:9px;margin-bottom:22px;">
@@ -233,6 +270,7 @@ function renderEventInvite(data: Record<string, any>, previewText: string, unsub
       </td>
     </tr></table>
   </td></tr>
+  ${imageRow(data.imageUrl, data.imageAlt)}
   <tr><td style="padding:26px 36px 6px;">
     <p style="font-size:13.5px;line-height:1.7;color:${COLORS.inkSoft};${FONT}">${esc(data.bodyText)}</p>
     ${infoHtml}

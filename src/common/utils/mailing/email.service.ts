@@ -260,6 +260,22 @@ import {
   TaxObligationReminderEmailData,
   taxObligationReminderTemplate,
 } from './templates/tax-obligation-reminder.template';
+import {
+  DemoRequestThankYouEmailData,
+  demoRequestThankYouTemplate,
+} from './templates/demo-request-thank-you.template';
+import {
+  DemoRequestScheduledEmailData,
+  demoRequestScheduledTemplate,
+} from './templates/demo-request-scheduled.template';
+import {
+  DemoRequestRescheduledEmailData,
+  demoRequestRescheduledTemplate,
+} from './templates/demo-request-rescheduled.template';
+import {
+  DemoRequestCancelledEmailData,
+  demoRequestCancelledTemplate,
+} from './templates/demo-request-cancelled.template';
 
 @Injectable()
 export class EmailService {
@@ -1150,6 +1166,56 @@ export class EmailService {
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to,
+      subject,
+      html,
+    });
+  }
+
+  // ─── Public-website "Contact / book a demo" flow ───────────────
+
+  async sendDemoRequestThankYou(
+    data: DemoRequestThankYouEmailData,
+  ): Promise<void> {
+    const { subject, html } = demoRequestThankYouTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendDemoRequestScheduled(
+    data: DemoRequestScheduledEmailData,
+  ): Promise<void> {
+    const { subject, html } = demoRequestScheduledTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendDemoRequestRescheduled(
+    data: DemoRequestRescheduledEmailData,
+  ): Promise<void> {
+    const { subject, html } = demoRequestRescheduledTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendDemoRequestCancelled(
+    data: DemoRequestCancelledEmailData,
+  ): Promise<void> {
+    const { subject, html } = demoRequestCancelledTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
       subject,
       html,
     });
