@@ -721,6 +721,17 @@ export class BoardPortalController {
     return this.governanceCodeService.getPendingForBoardMember(userId);
   }
 
+  @Get('governance-codes/published')
+  @ApiOperation({
+    summary:
+      "Every published governance code for this director's tenant — " +
+      "the board's own read-only code library, not just the ones this " +
+      'director was personally asked to approve',
+  })
+  getPublishedGovernanceCodes(@CurrentUser('sub') userId: string) {
+    return this.governanceCodeService.getPublishedForBoardMember(userId);
+  }
+
   @Post('governance-codes/:id/decide')
   @ApiOperation({ summary: 'Approve or reject a governance code' })
   decideGovernanceCode(

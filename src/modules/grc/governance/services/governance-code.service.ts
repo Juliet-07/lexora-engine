@@ -302,6 +302,47 @@ export class GovernanceCodeService {
     });
   }
 
+  // Every Published code for this director's tenant — the board's own
+  // read-only code library (Oct 2026: "after a governance code is
+  // approved by board and published, the board member should be able
+  // to see the governance codes that are published and can read the
+  // document"). Deliberately NOT scoped to boardApprovals like
+  // getPendingForBoardMember above — a director added after a code's
+  // approval round closed (or a Board Charter bootstrap-published
+  // with zero board members at the time) has no row there and would
+  // otherwise never see it, even though it's live and binding on them
+  // too. documents[] (the uploaded file attachments) are included
+  // here — getPendingForBoardMember never needed them since that view
+  // is approval-text-only, but the published library is specifically
+  // about reading the actual document, same as the Document Vault.
+  async getPublishedForBoardMember(userId: string) {
+    const { tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    const codes = await this.codeModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        status: GovernanceCodeStatus.PUBLISHED,
+      })
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    return codes.map((c: any) => ({
+      id: c._id,
+      title: c.title,
+      category: c.category,
+      version: c.version,
+      body: c.body,
+      documents: (c.documents ?? []).map((d: any) => ({
+        name: d.name,
+        fileUrl: d.fileUrl,
+        mimeType: d.mimeType,
+        size: d.size,
+        uploadedAt: d.uploadedAt,
+      })),
+      updatedAt: c.updatedAt,
+    }));
+  }
+
   async decideBoardApproval(
     userId: string,
     id: string,
