@@ -14,13 +14,7 @@ import {
   EmployeeDocument,
 } from '../schemas';
 import { LogOvertimeDto, DecideOvertimeDto } from '../dtos';
-
-// Standard monthly-hours figure for a 40-hour work week, per the
-// payroll engine's worked example: 40 hours * 52 weeks / 12 months.
-// Used as the divisor for employees on a 40hr week; employees with a
-// different contracted weekly hours figure scale proportionally.
-const STANDARD_WEEKLY_HOURS = 40;
-const STANDARD_MONTHLY_HOURS = (STANDARD_WEEKLY_HOURS * 52) / 12; // 173.33...
+import { OvertimePolicyService } from './overtime-policy.service';
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -33,6 +27,7 @@ export class EmployeeOvertimeService {
     private readonly overtimeModel: Model<EmployeeOvertimeLogDocument>,
     @InjectModel(Employee.name)
     private readonly employeeModel: Model<EmployeeDocument>,
+    private readonly overtimePolicyService: OvertimePolicyService,
   ) {}
 
   // ── Employee-facing: log overtime for a month ──────────────────
@@ -50,6 +45,23 @@ export class EmployeeOvertimeService {
     if (employee.salary == null) {
       throw new BadRequestException(
         'Your salary has not been set yet — ask your employer to set it before logging overtime.',
+      );
+    }
+
+    // Overtime rules differ by the country a tenant operates from, so
+    // the rate structure comes entirely from the tenant's own
+    // OvertimePolicy (per location, falling back to the tenant
+    // default) rather than any hardcoded default. If the tenant
+    // hasn't set one up, overtime is not calculated at all — per the
+    // PO's Oct 2026 note — rather than silently falling back to the
+    // old Rwanda-shaped 40hr/1.5x behavior.
+    const policy = await this.overtimePolicyService.getPolicyForLocation(
+      tenantId,
+      employee.locationId ? employee.locationId.toString() : null,
+    );
+    if (!policy) {
+      throw new BadRequestException(
+        "Your employer hasn't set up an overtime rule for your location yet, so overtime can't be logged. Ask them to configure an Overtime Policy under Payroll.",
       );
     }
 
@@ -73,12 +85,39 @@ export class EmployeeOvertimeService {
       year: 'numeric',
     });
 
-    const weeklyHours = employee.weeklyContractedHours ?? STANDARD_WEEKLY_HOURS;
-    const monthlyHours = (weeklyHours * 52) / 12 || STANDARD_MONTHLY_HOURS;
+    const monthlyHours = (policy.standardWeeklyHours * 52) / 12;
     const hourlyRate = employee.salary / monthlyHours;
-    const multiplier = employee.overtimeMultiplier ?? 1.5;
-    const amount = round2(dto.hoursLogged * hourlyRate * multiplier);
 
+    // Progressive tiers, bracket-style: each tier's multiplier applies
+    // only to the slice of hoursLogged that falls within its band of
+    // TOTAL overtime hours for the period. A flat-rate policy is just
+    // one open-ended tier, so this collapses to the old flat
+    // calculation in that common case.
+    let remainingHours = dto.hoursLogged;
+    let hoursConsumed = 0;
+    let amount = 0;
+    let weightedMultiplier = 0;
+    for (const tier of policy.tiers) {
+      if (remainingHours <= 0) break;
+      const cap = tier.upToHours == null ? Infinity : tier.upToHours;
+      const hoursAvailableInTier = Math.max(0, cap - hoursConsumed);
+      const hoursInTier = Math.min(remainingHours, hoursAvailableInTier);
+      if (hoursInTier <= 0) continue;
+      amount += hoursInTier * hourlyRate * tier.multiplier;
+      weightedMultiplier += hoursInTier * tier.multiplier;
+      hoursConsumed += hoursInTier;
+      remainingHours -= hoursInTier;
+    }
+    // The blended multiplier is stored for display/history purposes
+    // (e.g. "10 hrs @ 2,500/hr × 1.7") — the actual pay is `amount`,
+    // computed above from each tier's own multiplier.
+    const multiplier =
+      dto.hoursLogged > 0 ? round2(weightedMultiplier / dto.hoursLogged) : 0;
+    amount = round2(amount);
+
+    // Snapshot the rate/multiplier/currency in effect right now, so a
+    // later change to the employee's salary or the tenant's overtime
+    // policy never rewrites an already-logged entry.
     return this.overtimeModel.create({
       employeeId: employee._id,
       tenantId: new Types.ObjectId(tenantId),

@@ -13,6 +13,7 @@ export * from './learning.schema';
 export * from './leave-policy.schema';
 export * from './leave-request.schema';
 export * from './offboarding-record.schema';
+export * from './overtime-policy.schema';
 export * from './payroll.schema';
 export * from './performance-improvement-plan.schema';
 export * from './performance.schema';

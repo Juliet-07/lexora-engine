@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsEnum,
   IsArray,
+  ArrayMinSize,
   IsBoolean,
   ValidateNested,
   Min,
@@ -276,6 +277,65 @@ export class SendPayslipEmailDto {
   @IsOptional()
   @IsString()
   body?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// OVERTIME POLICY — tenant-configurable overtime rule, per location
+// or tenant-wide default (mirrors UpsertPayrollPolicyDto). Overtime
+// rules differ by the country a tenant operates from, so this
+// replaces the old hardcoded 40hr/1.5x defaults. If no policy is
+// configured, overtime is not calculated (see
+// EmployeeOvertimeService#logOvertime) — PO's Oct 2026 note.
+// ═══════════════════════════════════════════════════════════════
+
+export class OvertimePolicyTierDto {
+  @ApiPropertyOptional({
+    description:
+      'Total overtime hours for the period this tier covers up to. Omit on the last tier so it covers every hour beyond the earlier tiers.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  upToHours?: number | null;
+
+  @ApiProperty({
+    example: 1.5,
+    description: 'Pay multiplier for hours in this tier',
+  })
+  @IsNumber()
+  @Min(0)
+  multiplier: number;
+}
+
+export class UpsertOvertimePolicyDto {
+  @ApiPropertyOptional({ description: 'Omit for tenant-wide default policy' })
+  @IsOptional()
+  @IsMongoId()
+  locationId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiProperty({
+    example: 40,
+    description: "The full-time week this policy's hourly rate is based on",
+  })
+  @IsNumber()
+  @Min(1)
+  standardWeeklyHours: number;
+
+  @ApiProperty({
+    type: [OvertimePolicyTierDto],
+    description:
+      'Rate tiers in ascending order of hours; exactly one — the last — must omit upToHours',
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => OvertimePolicyTierDto)
+  tiers: OvertimePolicyTierDto[];
 }
 
 // ═══════════════════════════════════════════════════════════════

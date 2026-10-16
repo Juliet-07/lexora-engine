@@ -24,6 +24,7 @@ import {
 } from '@nestjs/swagger';
 import {
   PayrollPolicyService,
+  OvertimePolicyService,
   EmployeeLoanService,
   EmployeeOvertimeService,
   PayrollRunService,
@@ -35,6 +36,7 @@ import {
 import {
   UpsertPayrollPolicyDto,
   ApplyRwandaPresetDto,
+  UpsertOvertimePolicyDto,
   CreatePayrollRunDto,
   UpdatePayslipTemplateDto,
   GrossUpFromNetDto,
@@ -153,6 +155,67 @@ export class PayrollPolicyController {
     @CurrentUser('tenantId') t: string,
   ) {
     await this.policyService.deletePolicy(t || u, policyId);
+    return { success: true };
+  }
+}
+
+@ApiTags('HR — Overtime Policy (Tenant)')
+@ApiBearerAuth('bearerAuth')
+@UserTypes(UserType.TENANT)
+@Controller('hr/payroll/overtime-policy')
+export class OvertimePolicyController {
+  constructor(private readonly overtimePolicyService: OvertimePolicyService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'List all overtime policies for this tenant' })
+  getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
+    return this.overtimePolicyService.getAllPolicies(t || u);
+  }
+
+  @Get('for-location/:locationId')
+  @ApiOperation({
+    summary:
+      'Resolve the effective overtime policy for a location (falls back to tenant default)',
+  })
+  getForLocation(
+    @Param('locationId') locationId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.overtimePolicyService.getPolicyForLocation(t || u, locationId);
+  }
+
+  @Get('default')
+  @ApiOperation({ summary: 'Get the tenant-wide default overtime policy' })
+  getDefault(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.overtimePolicyService.getPolicyForLocation(t || u, null);
+  }
+
+  @Post()
+  @ApiOperation({
+    summary:
+      'Create or update an overtime policy (omit locationId for tenant default). No policy configured means overtime is not calculated for that location.',
+  })
+  upsert(
+    @Body() dto: UpsertOvertimePolicyDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.overtimePolicyService.upsertPolicy(t || u, dto);
+  }
+
+  @Delete(':policyId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete an overtime policy' })
+  async delete(
+    @Param('policyId') policyId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    await this.overtimePolicyService.deletePolicy(t || u, policyId);
     return { success: true };
   }
 }

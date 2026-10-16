@@ -265,11 +265,16 @@ export class Employee {
   @Prop({ type: [EmployeeAllowanceSchema], default: [] })
   allowances: EmployeeAllowance[];
 
-  // ── Overtime ─────────────────────────────────────────────
-  // Contracted weekly hours and the overtime pay multiplier,
-  // set per employee per the payroll engine's worked-example
-  // rules (default 40hr week / 150% multiplier). Hourly rate
-  // for overtime = salary / (weeklyContractedHours * 52 / 12).
+  // ── Overtime (deprecated) ───────────────────────────────────
+  // Superseded Oct 2026 by the tenant-configurable OvertimePolicy
+  // (per location or tenant-wide default — see
+  // schemas/overtime-policy.schema.ts and
+  // EmployeeOvertimeService#logOvertime), because overtime rules
+  // differ by the country a tenant operates from and these two
+  // fields hardcoded a single Rwanda-shaped rule (40hr week /
+  // 1.5x) that no UI ever let a tenant change. Left in place,
+  // unused, rather than removed, since dropping a Mongoose field
+  // is low-value churn; no code reads them anymore.
   @Prop({ default: 40 })
   weeklyContractedHours: number;
 

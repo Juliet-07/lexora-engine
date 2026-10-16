@@ -17,6 +17,7 @@ export * from './job-opening.service';
 export * from './learning.service';
 export * from './leave.service';
 export * from './offboarding.service';
+export * from './overtime-policy.service';
 export * from './overview.service';
 export * from './payroll-calculation.service';
 export * from './payroll-export.service';
