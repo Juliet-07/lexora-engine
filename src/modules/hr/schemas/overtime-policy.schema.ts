@@ -3,28 +3,31 @@ import { Document, Types } from 'mongoose';
 
 export type OvertimePolicyDocument = OvertimePolicy & Document;
 
-// One rate band of an overtime policy. Overtime is logged as a single
-// monthly hours total (not day-by-day attendance), so "tier" here
-// means a band of TOTAL overtime hours for the period, applied
-// progressively like a tax bracket — e.g. a country whose labor law
-// pays 1.5x for the first 8 OT hours in a month and 2x beyond that
-// would be two tiers: { upToHours: 8, multiplier: 1.5 } then
-// { upToHours: null, multiplier: 2 }. A flat-rate country (most
-// common) just needs one open-ended tier.
+// Pay multipliers by the kind of day the overtime fell on. Oct 2026
+// PO note: overtime pay rules differ by day type almost everywhere —
+// ordinary weekdays usually get a lower rate than weekends or public
+// holidays — so this replaces a flat single-multiplier policy with
+// one rate per day type, each independently settable by the tenant.
+// Defaults (1.5x ordinary, 2x weekend/holiday) are a common starting
+// point, not a Rwanda-specific rule — the tenant can change any of
+// them.
 @Schema({ _id: false })
-export class OvertimePolicyTier {
-  @Prop({ default: null })
-  upToHours: number | null; // null = open-ended — must be the last tier
+export class OvertimePolicyRates {
+  @Prop({ required: true, default: 1.5, min: 0 })
+  ordinary: number; // Monday–Friday, not a flagged public holiday
 
-  @Prop({ required: true, min: 0 })
-  multiplier: number;
+  @Prop({ required: true, default: 2, min: 0 })
+  weekend: number; // Saturday/Sunday, not a flagged public holiday
+
+  @Prop({ required: true, default: 2, min: 0 })
+  publicHoliday: number; // flagged as a public holiday, any day of week
 }
-export const OvertimePolicyTierSchema =
-  SchemaFactory.createForClass(OvertimePolicyTier);
+export const OvertimePolicyRatesSchema =
+  SchemaFactory.createForClass(OvertimePolicyRates);
 
 // Tenant-configurable overtime rule. Oct 2026 PO note: overtime rules
 // differ by the country a tenant operates from, so the old hardcoded
-// Rwanda-shaped defaults (40hr week / 1.5x, baked into
+// Rwanda-shaped defaults (40hr week / flat 1.5x, baked into
 // EmployeeOvertimeService) are replaced by this — a policy a tenant
 // sets up themselves, per location or as a tenant-wide default,
 // mirroring PayrollPolicy's locationId-or-default shape. If no policy
@@ -48,10 +51,8 @@ export class OvertimePolicy {
   @Prop({ required: true, default: 40, min: 1 })
   standardWeeklyHours: number;
 
-  // Ascending by upToHours; the last tier's upToHours must be null
-  // (enforced in OvertimePolicyService, not here).
-  @Prop({ type: [OvertimePolicyTierSchema], default: [] })
-  tiers: OvertimePolicyTier[];
+  @Prop({ type: OvertimePolicyRatesSchema, required: true })
+  rates: OvertimePolicyRates;
 }
 
 export const OvertimePolicySchema =

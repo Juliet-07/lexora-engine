@@ -1,15 +1,7 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import {
-  OvertimePolicy,
-  OvertimePolicyDocument,
-  OvertimePolicyTier,
-} from '../schemas';
+import { OvertimePolicy, OvertimePolicyDocument } from '../schemas';
 import { UpsertOvertimePolicyDto } from '../dtos';
 
 @Injectable()
@@ -68,36 +60,6 @@ export class OvertimePolicyService {
     return allLocationIds.filter((id) => !coveredSet.has(id));
   }
 
-  // Ascending by upToHours, with exactly one open-ended (null) tier
-  // which must come last — the shape a progressive bracket calc needs.
-  private normalizeTiers(
-    tiers: UpsertOvertimePolicyDto['tiers'],
-  ): OvertimePolicyTier[] {
-    if (!tiers?.length) {
-      throw new BadRequestException(
-        'At least one overtime rate tier is required.',
-      );
-    }
-    const sorted = [...tiers].sort((a, b) => {
-      const av = a.upToHours;
-      const bv = b.upToHours;
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      return av - bv;
-    });
-    const openEnded = sorted.filter((t) => t.upToHours == null);
-    if (openEnded.length !== 1 || sorted[sorted.length - 1].upToHours != null) {
-      throw new BadRequestException(
-        'Exactly one tier — the last one — must have no "up to hours" cap, so it covers every hour beyond the earlier tiers.',
-      );
-    }
-    return sorted.map((t) => ({
-      upToHours: t.upToHours ?? null,
-      multiplier: t.multiplier,
-    }));
-  }
-
   // ── TENANT — create or update a policy for a location (or default) ──
 
   async upsertPolicy(
@@ -108,7 +70,6 @@ export class OvertimePolicyService {
     const locationId = dto.locationId
       ? new Types.ObjectId(dto.locationId)
       : null;
-    const tiers = this.normalizeTiers(dto.tiers);
 
     return this.policyModel.findOneAndUpdate(
       { tenantId: tId, locationId },
@@ -117,7 +78,7 @@ export class OvertimePolicyService {
         locationId,
         name: dto.name ?? '',
         standardWeeklyHours: dto.standardWeeklyHours,
-        tiers,
+        rates: dto.rates,
       },
       { upsert: true, new: true },
     );

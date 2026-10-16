@@ -5,7 +5,6 @@ import {
   IsNumber,
   IsEnum,
   IsArray,
-  ArrayMinSize,
   IsBoolean,
   ValidateNested,
   Min,
@@ -282,29 +281,39 @@ export class SendPayslipEmailDto {
 // ═══════════════════════════════════════════════════════════════
 // OVERTIME POLICY — tenant-configurable overtime rule, per location
 // or tenant-wide default (mirrors UpsertPayrollPolicyDto). Overtime
-// rules differ by the country a tenant operates from, so this
-// replaces the old hardcoded 40hr/1.5x defaults. If no policy is
-// configured, overtime is not calculated (see
-// EmployeeOvertimeService#logOvertime) — PO's Oct 2026 note.
+// pay rate depends on the kind of day it was worked (ordinary
+// weekday vs. weekend vs. public holiday) as well as the country a
+// tenant operates from, so this replaces the old hardcoded 40hr/1.5x
+// flat defaults. If no policy is configured, overtime is not
+// calculated (see EmployeeOvertimeService#logOvertime) — PO's Oct
+// 2026 note.
 // ═══════════════════════════════════════════════════════════════
 
-export class OvertimePolicyTierDto {
-  @ApiPropertyOptional({
-    description:
-      'Total overtime hours for the period this tier covers up to. Omit on the last tier so it covers every hour beyond the earlier tiers.',
-  })
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  upToHours?: number | null;
-
+export class OvertimePolicyRatesDto {
   @ApiProperty({
     example: 1.5,
-    description: 'Pay multiplier for hours in this tier',
+    description: 'Multiplier for overtime on an ordinary weekday',
   })
   @IsNumber()
   @Min(0)
-  multiplier: number;
+  ordinary: number;
+
+  @ApiProperty({
+    example: 2,
+    description: 'Multiplier for overtime on a Saturday/Sunday',
+  })
+  @IsNumber()
+  @Min(0)
+  weekend: number;
+
+  @ApiProperty({
+    example: 2,
+    description:
+      'Multiplier for overtime flagged as worked on a public holiday',
+  })
+  @IsNumber()
+  @Min(0)
+  publicHoliday: number;
 }
 
 export class UpsertOvertimePolicyDto {
@@ -326,16 +335,10 @@ export class UpsertOvertimePolicyDto {
   @Min(1)
   standardWeeklyHours: number;
 
-  @ApiProperty({
-    type: [OvertimePolicyTierDto],
-    description:
-      'Rate tiers in ascending order of hours; exactly one — the last — must omit upToHours',
-  })
-  @IsArray()
-  @ArrayMinSize(1)
-  @ValidateNested({ each: true })
-  @Type(() => OvertimePolicyTierDto)
-  tiers: OvertimePolicyTierDto[];
+  @ApiProperty({ type: OvertimePolicyRatesDto })
+  @ValidateNested()
+  @Type(() => OvertimePolicyRatesDto)
+  rates: OvertimePolicyRatesDto;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -346,17 +349,26 @@ export class UpsertOvertimePolicyDto {
 
 export class LogOvertimeDto {
   @ApiProperty({
-    example: '2026-10-01',
+    example: '2026-10-14',
     description:
-      'Any date within the month this overtime applies to — the engine resolves it to that calendar month.',
+      "The specific date the overtime was worked — determines the calendar month it counts toward, and (along with isPublicHoliday) which of the policy's day-type rates applies.",
   })
   @IsDateString()
-  periodDate: string;
+  workDate: string;
 
   @ApiProperty({ example: 10, description: 'Overtime hours worked' })
   @IsNumber()
   @Min(0.01)
   hoursLogged: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Tick when workDate is a public holiday, even if it also falls on a weekday — self-reported, there is no holiday calendar.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isPublicHoliday?: boolean;
 
   @ApiPropertyOptional({
     description: 'Optional note, e.g. what the overtime was for',

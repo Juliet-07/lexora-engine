@@ -490,6 +490,17 @@ export enum OvertimeStatus {
   REJECTED = 'rejected', // tenant declined — counts as 0 for payroll, same as never logging it
 }
 
+// Which kind of day the overtime was worked on, since the pay rate
+// depends on it (Oct 2026 PO note). Weekend/ordinary is derived from
+// workDate's day of week; public holiday is the employee's own flag
+// at logging time — there's no tenant-maintained holiday calendar,
+// so this is self-reported rather than system-detected.
+export enum OvertimeDayType {
+  ORDINARY = 'ordinary', // Monday–Friday, not flagged as a public holiday
+  WEEKEND = 'weekend', // Saturday/Sunday, not flagged as a public holiday
+  PUBLIC_HOLIDAY = 'public_holiday',
+}
+
 @Schema({ timestamps: true, collection: 'hr_employee_overtime_logs' })
 export class EmployeeOvertimeLog {
   @Prop({ type: Types.ObjectId, ref: 'Employee', required: true, index: true })
@@ -497,6 +508,21 @@ export class EmployeeOvertimeLog {
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   tenantId: Types.ObjectId;
+
+  // The specific date the overtime was worked — drives dayType below.
+  @Prop({ required: true })
+  workDate: Date;
+
+  // Self-reported by the employee when logging — ticked when workDate
+  // is a public holiday, even if it also happens to be a weekday.
+  @Prop({ default: false })
+  isPublicHoliday: boolean;
+
+  // Snapshot of the day-type classification at logging time (derived
+  // from workDate + isPublicHoliday), so a later change to either
+  // never rewrites an already-logged entry's rate.
+  @Prop({ enum: OvertimeDayType, required: true })
+  dayType: OvertimeDayType;
 
   // Human-readable period this overtime applies to, e.g. "October 2026",
   // matching how PayrollRun.periodLabel is presented elsewhere.

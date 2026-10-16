@@ -664,6 +664,19 @@ export class HrEmployeeController {
     );
   }
 
+  @Get('overtime/policy')
+  @ApiOperation({
+    summary:
+      "Get the overtime policy that applies to me (my location, falling back to the tenant default), or null if my employer hasn't set one up — lets the UI disable logging overtime rather than letting it fail on submit",
+  })
+  async getMyOvertimePolicy(@CurrentUser('sub') userId: string) {
+    const employee = await this.employeeService.getMyProfile(userId);
+    return this.overtimeService.getMyOvertimePolicy(
+      (employee as any).tenantId.toString(),
+      (employee as any)._id.toString(),
+    );
+  }
+
   @Post('overtime')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Log overtime hours for a month' })

@@ -10,8 +10,10 @@ import {
   EmployeeOvertimeLog,
   EmployeeOvertimeLogDocument,
   OvertimeStatus,
+  OvertimeDayType,
   Employee,
   EmployeeDocument,
+  OvertimePolicyDocument,
 } from '../schemas';
 import { LogOvertimeDto, DecideOvertimeDto } from '../dtos';
 import { OvertimePolicyService } from './overtime-policy.service';
@@ -32,6 +34,37 @@ export class EmployeeOvertimeService {
 
   // ── Employee-facing: log overtime for a month ──────────────────
 
+  // Shared by logOvertime and getMyOvertimePolicy — overtime rules
+  // differ by the country a tenant operates from, so the rate
+  // structure comes entirely from the tenant's own OvertimePolicy
+  // (per location, falling back to the tenant default) rather than
+  // any hardcoded default.
+  private async resolvePolicyForEmployee(
+    tenantId: string,
+    employee: EmployeeDocument,
+  ): Promise<OvertimePolicyDocument | null> {
+    return this.overtimePolicyService.getPolicyForLocation(
+      tenantId,
+      employee.locationId ? employee.locationId.toString() : null,
+    );
+  }
+
+  // Lets the employee-facing UI check up front whether logging
+  // overtime is even possible, so it can disable the button instead
+  // of letting the employee hit the BadRequestException in
+  // logOvertime below.
+  async getMyOvertimePolicy(
+    tenantId: string,
+    employeeId: string,
+  ): Promise<OvertimePolicyDocument | null> {
+    const employee = await this.employeeModel.findOne({
+      _id: new Types.ObjectId(employeeId),
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!employee) throw new NotFoundException('Employee profile not found');
+    return this.resolvePolicyForEmployee(tenantId, employee);
+  }
+
   async logOvertime(
     tenantId: string,
     employeeId: string,
@@ -48,32 +81,25 @@ export class EmployeeOvertimeService {
       );
     }
 
-    // Overtime rules differ by the country a tenant operates from, so
-    // the rate structure comes entirely from the tenant's own
-    // OvertimePolicy (per location, falling back to the tenant
-    // default) rather than any hardcoded default. If the tenant
-    // hasn't set one up, overtime is not calculated at all — per the
-    // PO's Oct 2026 note — rather than silently falling back to the
-    // old Rwanda-shaped 40hr/1.5x behavior.
-    const policy = await this.overtimePolicyService.getPolicyForLocation(
-      tenantId,
-      employee.locationId ? employee.locationId.toString() : null,
-    );
+    // If the tenant hasn't set one up, overtime is not calculated at
+    // all — per the PO's Oct 2026 note — rather than silently falling
+    // back to the old Rwanda-shaped 40hr/1.5x behavior.
+    const policy = await this.resolvePolicyForEmployee(tenantId, employee);
     if (!policy) {
       throw new BadRequestException(
         "Your employer hasn't set up an overtime rule for your location yet, so overtime can't be logged. Ask them to configure an Overtime Policy under Payroll.",
       );
     }
 
-    const periodDate = new Date(dto.periodDate);
+    const workDate = new Date(dto.workDate);
     const periodStart = new Date(
-      periodDate.getFullYear(),
-      periodDate.getMonth(),
+      workDate.getFullYear(),
+      workDate.getMonth(),
       1,
     );
     const periodEnd = new Date(
-      periodDate.getFullYear(),
-      periodDate.getMonth() + 1,
+      workDate.getFullYear(),
+      workDate.getMonth() + 1,
       0,
       23,
       59,
@@ -85,42 +111,37 @@ export class EmployeeOvertimeService {
       year: 'numeric',
     });
 
+    // Day type drives the rate: self-reported public holiday beats
+    // the calendar, otherwise it's derived from workDate's weekday —
+    // there's no tenant-maintained holiday calendar to check against.
+    const dayOfWeek = workDate.getDay(); // 0 = Sunday, 6 = Saturday
+    const isPublicHoliday = !!dto.isPublicHoliday;
+    const dayType = isPublicHoliday
+      ? OvertimeDayType.PUBLIC_HOLIDAY
+      : dayOfWeek === 0 || dayOfWeek === 6
+        ? OvertimeDayType.WEEKEND
+        : OvertimeDayType.ORDINARY;
+
+    const multiplier =
+      dayType === OvertimeDayType.PUBLIC_HOLIDAY
+        ? policy.rates.publicHoliday
+        : dayType === OvertimeDayType.WEEKEND
+          ? policy.rates.weekend
+          : policy.rates.ordinary;
+
     const monthlyHours = (policy.standardWeeklyHours * 52) / 12;
     const hourlyRate = employee.salary / monthlyHours;
+    const amount = round2(dto.hoursLogged * hourlyRate * multiplier);
 
-    // Progressive tiers, bracket-style: each tier's multiplier applies
-    // only to the slice of hoursLogged that falls within its band of
-    // TOTAL overtime hours for the period. A flat-rate policy is just
-    // one open-ended tier, so this collapses to the old flat
-    // calculation in that common case.
-    let remainingHours = dto.hoursLogged;
-    let hoursConsumed = 0;
-    let amount = 0;
-    let weightedMultiplier = 0;
-    for (const tier of policy.tiers) {
-      if (remainingHours <= 0) break;
-      const cap = tier.upToHours == null ? Infinity : tier.upToHours;
-      const hoursAvailableInTier = Math.max(0, cap - hoursConsumed);
-      const hoursInTier = Math.min(remainingHours, hoursAvailableInTier);
-      if (hoursInTier <= 0) continue;
-      amount += hoursInTier * hourlyRate * tier.multiplier;
-      weightedMultiplier += hoursInTier * tier.multiplier;
-      hoursConsumed += hoursInTier;
-      remainingHours -= hoursInTier;
-    }
-    // The blended multiplier is stored for display/history purposes
-    // (e.g. "10 hrs @ 2,500/hr × 1.7") — the actual pay is `amount`,
-    // computed above from each tier's own multiplier.
-    const multiplier =
-      dto.hoursLogged > 0 ? round2(weightedMultiplier / dto.hoursLogged) : 0;
-    amount = round2(amount);
-
-    // Snapshot the rate/multiplier/currency in effect right now, so a
-    // later change to the employee's salary or the tenant's overtime
-    // policy never rewrites an already-logged entry.
+    // Snapshot the rate/multiplier/dayType/currency in effect right
+    // now, so a later change to the employee's salary or the tenant's
+    // overtime policy never rewrites an already-logged entry.
     return this.overtimeModel.create({
       employeeId: employee._id,
       tenantId: new Types.ObjectId(tenantId),
+      workDate,
+      isPublicHoliday,
+      dayType,
       periodLabel,
       periodStart,
       periodEnd,
