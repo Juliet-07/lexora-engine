@@ -832,8 +832,12 @@ export class HrEmployeeController {
   @ApiOperation({
     summary: "Reviews awaiting THIS manager's input, across all direct reports",
   })
-  getPendingReviewsForMyTeam(@CurrentUser('sub') userId: string) {
-    return this.performanceReviewService.getPendingReviewsForManager(userId);
+  async getPendingReviewsForMyTeam(@CurrentUser('sub') userId: string) {
+    const reviews =
+      await this.performanceReviewService.getPendingReviewsForManager(userId);
+    return this.performanceReviewService.enrichReviewsWithSubjectContext(
+      reviews,
+    );
   }
 
   @Get('reviews/reviewed-by-me')
@@ -856,10 +860,13 @@ export class HrEmployeeController {
       userId,
       id,
     );
-    return {
-      review,
-      scores: this.performanceReviewService.getScoredView(review),
-    };
+    const [enrichedReview, scores] = [
+      await this.performanceReviewService.enrichReviewWithSubjectContext(
+        review,
+      ),
+      this.performanceReviewService.getScoredView(review),
+    ];
+    return { review: enrichedReview, scores };
   }
   // ===============================================================
   // PROBATION (manager-side actions on a direct report's probation

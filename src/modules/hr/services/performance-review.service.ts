@@ -88,6 +88,61 @@ export class PerformanceReviewService {
       .lean() as any;
   }
 
+  // The frontend's review-detail screens (ManagerReviewSheet,
+  // ManagerTeamReviewsPanel, Performance.tsx) have always expected
+  // subjectHierarchyRole/employeeEmploymentStatus/probationEndDate on
+  // the review they're shown — that's what gates the "this is a
+  // probation review, a recommendation is required" UI and its HOD
+  // badge. Those fields were never actually on the PerformanceReview
+  // schema or attached anywhere, so they were always undefined: the
+  // probation-recommendation textarea never rendered for ANYONE
+  // (manager or tenant), yet completeReview() below still requires
+  // that reasoning whenever the review is genuinely probation-linked
+  // — an unconditional dead end for every Month 3 evaluation. This
+  // pulls the real values from the subject Employee record so the
+  // UI gate actually has something to key off.
+  async enrichReviewWithSubjectContext(
+    review: PerformanceReviewDocument,
+  ): Promise<PerformanceReviewDocument & Record<string, unknown>> {
+    const employee = await this.employeeModel
+      .findById(review.employeeId)
+      .select('hierarchyRole employmentStatus probationEndDate')
+      .lean();
+    const plain =
+      typeof (review as any).toObject === 'function'
+        ? (review as any).toObject()
+        : review;
+    return {
+      ...plain,
+      subjectHierarchyRole: employee?.hierarchyRole ?? null,
+      employeeEmploymentStatus: employee?.employmentStatus ?? null,
+      probationEndDate: employee?.probationEndDate ?? null,
+    };
+  }
+
+  async enrichReviewsWithSubjectContext(
+    reviews: PerformanceReviewDocument[],
+  ): Promise<(PerformanceReviewDocument & Record<string, unknown>)[]> {
+    if (reviews.length === 0) return [];
+    const employeeIds = reviews.map((r) => r.employeeId);
+    const employees = await this.employeeModel
+      .find({ _id: { $in: employeeIds } })
+      .select('hierarchyRole employmentStatus probationEndDate')
+      .lean();
+    const byId = new Map(employees.map((e) => [e._id.toString(), e]));
+    return reviews.map((r) => {
+      const employee = byId.get(r.employeeId.toString());
+      const plain =
+        typeof (r as any).toObject === 'function' ? (r as any).toObject() : r;
+      return {
+        ...plain,
+        subjectHierarchyRole: employee?.hierarchyRole ?? null,
+        employeeEmploymentStatus: employee?.employmentStatus ?? null,
+        probationEndDate: employee?.probationEndDate ?? null,
+      };
+    });
+  }
+
   getScoredView(review: PerformanceReviewDocument) {
     const kpiSection = this.scoringService.scoreKpiSection(review.kpis);
     const competencySection = this.scoringService.scoreFrameworkSection(

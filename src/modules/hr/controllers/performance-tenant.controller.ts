@@ -21,6 +21,7 @@ import {
   UpsertKpiTemplateDto,
   UpdateFrameworkDto,
   CreateReviewCycleDto,
+  UpdateManagerReviewSectionDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -242,7 +243,11 @@ export class PerformanceReviewController {
     @CurrentUser('tenantId') t: string,
   ) {
     const review = await this.reviewService.getReviewById(t || u, reviewId);
-    return { review, scores: this.reviewService.getScoredView(review) };
+    const [enrichedReview, scores] = [
+      await this.reviewService.enrichReviewWithSubjectContext(review),
+      this.reviewService.getScoredView(review),
+    ];
+    return { review: enrichedReview, scores };
   }
 
   @Get('pending/hods')
@@ -254,13 +259,34 @@ export class PerformanceReviewController {
     return this.reviewService.getPendingHodReviews(u);
   }
 
+  @Patch(':reviewId/manager')
+  @ApiOperation({
+    summary:
+      "Tenant fills in the manager/reviewer section of a Head of Department's review",
+  })
+  updateManagerSection(
+    @Param('reviewId') reviewId: string,
+    @Body() dto: UpdateManagerReviewSectionDto,
+    @CurrentUser('sub') u: string,
+  ) {
+    return this.reviewService.updateManagerSection(u, reviewId, dto);
+  }
+
   @Post(':reviewId/complete')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "Tenant completes and signs off a Head of Department's review",
   })
-  complete(@Param('reviewId') reviewId: string, @CurrentUser('sub') u: string) {
-    return this.reviewService.completeReview(u, reviewId);
+  complete(
+    @Param('reviewId') reviewId: string,
+    @Body() dto: { probationRecommendationReasoning?: string },
+    @CurrentUser('sub') u: string,
+  ) {
+    return this.reviewService.completeReview(
+      u,
+      reviewId,
+      dto?.probationRecommendationReasoning,
+    );
   }
 
   @Get(':employeeId/history')
