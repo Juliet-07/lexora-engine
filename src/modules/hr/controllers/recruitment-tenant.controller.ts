@@ -7,12 +7,16 @@ import {
   Body,
   Param,
   Query,
+  Res,
   HttpCode,
   HttpStatus,
   UploadedFile,
   UseInterceptors,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
+import { Response } from 'express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -39,6 +43,12 @@ import {
   UpdateCandidateDto,
   MoveCandidateStageDto,
   UpdateOffboardingDto,
+  UpdateFairnessChecklistDto,
+  ServeNoticeDto,
+  FileOffboardingAppealDto,
+  RecordAppealOutcomeDto,
+  WithdrawAppealDto,
+  UpdateExitInterviewDto,
   CreateSuccessionPlanDto,
   UpdateSuccessionPlanDto,
   AddSuccessorDto,
@@ -58,6 +68,34 @@ const certificateOfServiceStorage = diskStorage({
       'offboarding',
       'certificates',
     );
+    if (!existsSync(uploadPath)) {
+      mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) => {
+    const ext = extname(file.originalname);
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
+
+const noticeFileStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(process.cwd(), 'uploads', 'offboarding', 'notices');
+    if (!existsSync(uploadPath)) {
+      mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) => {
+    const ext = extname(file.originalname);
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
+
+const appealFileStorage = diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadPath = join(process.cwd(), 'uploads', 'offboarding', 'appeals');
     if (!existsSync(uploadPath)) {
       mkdirSync(uploadPath, { recursive: true });
     }
@@ -197,7 +235,13 @@ export class CandidateController {
 @UserTypes(UserType.TENANT)
 @Controller('hr/recruitment/offboarding')
 export class OffboardingController {
-  constructor(private readonly offboardingService: OffboardingService) {}
+  constructor(
+    // See hr/services/payroll-run.service.ts — OffboardingService sits
+    // in a circular import with EmployeeService, which leaves a plain
+    // injection of it unresolvable at boot without forwardRef.
+    @Inject(forwardRef(() => OffboardingService))
+    private readonly offboardingService: OffboardingService,
+  ) {}
 
   @Get()
   @ApiQuery({ name: 'status', required: false })
@@ -277,6 +321,238 @@ export class OffboardingController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.offboardingService.sendCertificateOfService(t || u, recordId);
+  }
+
+  @Post(':recordId/certificate/generate')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Generate a draft Certificate of Service PDF for this record',
+  })
+  generateCertificate(
+    @Param('recordId') recordId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.generateCertificate(t || u, recordId);
+  }
+
+  // ── Step 1: Pre-termination fairness checklist ──
+
+  @Patch(':recordId/fairness')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update the pre-termination fairness checklist' })
+  updateFairness(
+    @Param('recordId') recordId: string,
+    @Body() dto: UpdateFairnessChecklistDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.updateFairnessChecklist(
+      t || u,
+      recordId,
+      dto,
+    );
+  }
+
+  // ── Step 2: Draft & serve notice ──
+
+  @Get(':recordId/notice/pdf')
+  @ApiOperation({ summary: 'Download the drafted termination notice as PDF' })
+  async downloadNoticePdf(
+    @Param('recordId') recordId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.offboardingService.getNoticePdf(t || u, recordId);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="termination-notice-${recordId}.pdf"`,
+      'Content-Length': buffer.length,
+    });
+    res.send(buffer);
+  }
+
+  @Get(':recordId/notice/docx')
+  @ApiOperation({ summary: 'Download the drafted termination notice as Word' })
+  async downloadNoticeDocx(
+    @Param('recordId') recordId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.offboardingService.getNoticeDocx(
+      t || u,
+      recordId,
+    );
+    res.set({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'Content-Disposition': `attachment; filename="termination-notice-${recordId}.docx"`,
+      'Content-Length': buffer.length,
+    });
+    res.send(buffer);
+  }
+
+  @Patch(':recordId/notice/serve')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mark the termination notice as served' })
+  serveNotice(
+    @Param('recordId') recordId: string,
+    @Body() dto: ServeNoticeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.serveNotice(t || u, recordId, dto);
+  }
+
+  @Post(':recordId/notice/file')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: noticeFileStorage,
+      fileFilter: certificateOfServiceFileFilter,
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOperation({ summary: 'Upload the signed termination notice document' })
+  uploadNoticeFile(
+    @Param('recordId') recordId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.uploadNoticeFile(t || u, recordId, file);
+  }
+
+  // ── Step 3: Appeal period (Art. 29) ──
+
+  @Post(':recordId/appeal/file')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'File an appeal on behalf of the employee' })
+  fileAppeal(
+    @Param('recordId') recordId: string,
+    @Body() dto: FileOffboardingAppealDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.fileAppeal(t || u, recordId, dto);
+  }
+
+  @Patch(':recordId/appeal/outcome')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Record the outcome of an appeal hearing' })
+  recordAppealOutcome(
+    @Param('recordId') recordId: string,
+    @Body() dto: RecordAppealOutcomeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.recordAppealOutcome(t || u, recordId, dto);
+  }
+
+  @Post(':recordId/appeal/withdraw')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Withdraw a filed appeal' })
+  withdrawAppeal(
+    @Param('recordId') recordId: string,
+    @Body() dto: WithdrawAppealDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.withdrawAppeal(t || u, recordId, dto);
+  }
+
+  @Post(':recordId/appeal/upload')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: appealFileStorage,
+      fileFilter: certificateOfServiceFileFilter,
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiQuery({ name: 'kind', enum: ['hearing_minutes', 'withdrawal_letter'] })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOperation({
+    summary: 'Upload appeal hearing minutes or a withdrawal letter',
+  })
+  uploadAppealFile(
+    @Param('recordId') recordId: string,
+    @Query('kind') kind: 'hearing_minutes' | 'withdrawal_letter',
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    if (kind !== 'hearing_minutes' && kind !== 'withdrawal_letter') {
+      throw new BadRequestException(
+        'kind must be "hearing_minutes" or "withdrawal_letter".',
+      );
+    }
+    return this.offboardingService.uploadAppealFile(
+      t || u,
+      recordId,
+      kind,
+      file,
+    );
+  }
+
+  // ── Step 4: Exit interview ──
+
+  @Patch(':recordId/exit-interview')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update any part of the exit interview process' })
+  updateExitInterview(
+    @Param('recordId') recordId: string,
+    @Body() dto: UpdateExitInterviewDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.updateExitInterview(t || u, recordId, dto);
+  }
+
+  // ── Step 6: Final pay computation ──
+
+  @Post(':recordId/final-pay/compute')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Compute (or recompute) the final pay breakdown from real salary, leave and policy data',
+  })
+  computeFinalPay(
+    @Param('recordId') recordId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.computeFinalPay(t || u, recordId);
+  }
+
+  @Post(':recordId/final-pay/approve')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Approve the computed final pay and send to payroll',
+  })
+  approveFinalPay(
+    @Param('recordId') recordId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.approveFinalPay(t || u, recordId);
   }
 }
 

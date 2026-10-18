@@ -50,6 +50,9 @@ import {
   HrReportsService,
   LearningService,
   CertificatePdfService,
+  TerminationNoticePdfService,
+  TerminationNoticeDocxService,
+  EmploymentCertificatePdfService,
 } from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import {
@@ -300,6 +303,9 @@ import {
     HrReportsService,
     LearningService,
     CertificatePdfService,
+    TerminationNoticePdfService,
+    TerminationNoticeDocxService,
+    EmploymentCertificatePdfService,
   ],
   exports: [
     EmployeeService,

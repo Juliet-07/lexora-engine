@@ -13,6 +13,8 @@ import {
   UseInterceptors,
   UseFilters,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -145,6 +147,10 @@ const courseFileFilter = (_req: any, file: Express.Multer.File, cb: any) => {
 export class HrTenantController {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    // See payroll-run.service.ts — EmployeeService sits in a circular
+    // import with OffboardingService, which leaves a plain injection
+    // of it unresolvable at boot without forwardRef.
+    @Inject(forwardRef(() => EmployeeService))
     private readonly employeeService: EmployeeService,
     private readonly leaveService: LeaveService,
     private readonly attendanceService: AttendanceService,

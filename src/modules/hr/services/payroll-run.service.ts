@@ -3,6 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -55,6 +57,11 @@ export class PayrollRunService {
     private readonly overtimeService: EmployeeOvertimeService,
     private readonly fxService: ExchangeRateService,
     private readonly templateService: PayslipTemplateService,
+    // EmployeeService now sits in a circular import with
+    // OffboardingService (reinstatement on an overturned appeal calls
+    // back into EmployeeService), which otherwise leaves this plain
+    // injection unresolvable at boot ("dependency at index [9] ...").
+    @Inject(forwardRef(() => EmployeeService))
     private readonly employeeService: EmployeeService,
     private readonly emailService: EmailService,
     private readonly pdfService: PayslipPdfService,

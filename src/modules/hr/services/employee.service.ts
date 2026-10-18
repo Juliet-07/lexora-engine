@@ -3,6 +3,8 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -94,6 +96,7 @@ export class EmployeeService {
     private readonly probationRecordModel: Model<ProbationRecordDocument>,
     @InjectModel(LeaveRequest.name)
     private readonly leaveRequestModel: Model<LeaveRequestDocument>,
+    @Inject(forwardRef(() => OffboardingService))
     private readonly offboardingService: OffboardingService,
     private readonly mailService: EmailService,
     private readonly eventEmitter: EventEmitter2,
@@ -1376,9 +1379,11 @@ export class EmployeeService {
       employeeId: (employee._id as any).toString(),
       employeeName: `${employee.firstName} ${employee.lastName}`,
       jobTitle: employee.jobTitle,
+      startDate: employee.startDate,
       endDate: new Date(dto.endDate),
       reason: dto.reason ?? null,
       status: dto.status,
+      category: dto.category ?? null,
     });
 
     // Only actual terminations get this notice — resignations are
@@ -1405,6 +1410,36 @@ export class EmployeeService {
           // Don't let an email failure undo the termination itself.
         });
     }
+
+    return employee;
+  }
+
+  // Called from OffboardingService.recordAppealOutcome() when an
+  // appeal is upheld as "overturned" or "modified" — the termination
+  // decision is reversed, so the employee goes back onto the books.
+  // Distinct from reinstateEmployee() above, which ends a SUSPENSION;
+  // this ends a TERMINATION. Direct-report reassignment made while
+  // terminating is NOT undone automatically (the replacement manager
+  // may already be settled in); HR re-assigns reports back manually
+  // if that's what they want.
+  async reverseTerminationByAppeal(
+    tenantId: string,
+    employeeId: string,
+  ): Promise<EmployeeDocument> {
+    const employee = await this.employeeModel.findOne({
+      _id: employeeId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!employee) throw new NotFoundException('Employee not found');
+
+    employee.employmentStatus = EmploymentStatus.ACTIVE as any;
+    employee.endDate = null as any;
+    await employee.save();
+
+    this.eventEmitter.emit('employee.reinstated', {
+      tenantId,
+      employeeId: (employee._id as Types.ObjectId).toString(),
+    });
 
     return employee;
   }

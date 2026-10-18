@@ -3,6 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -43,6 +45,10 @@ export class DisputeService {
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly emailService: EmailService,
+    // See payroll-run.service.ts — EmployeeService sits in a circular
+    // import with OffboardingService, which leaves a plain injection
+    // of it unresolvable at boot without forwardRef.
+    @Inject(forwardRef(() => EmployeeService))
     private readonly employeeService: EmployeeService,
     private readonly letterPdfService: DisputeLetterPdfService,
   ) {}

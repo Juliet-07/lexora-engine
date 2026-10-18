@@ -83,6 +83,81 @@ export class UpdateOffboardingDto {
   clearanceChecklist?: UpdateClearanceItemDto[];
   @ApiPropertyOptional() @IsOptional() @IsString() handoverNotes?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() assignedTo?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  handoverAssigneeName?: string;
+}
+
+// ─────────────────────────────────────────────────────────────
+// OFFBOARDING — step workflow DTOs
+// ─────────────────────────────────────────────────────────────
+
+export class UpdateFairnessItemDto {
+  @ApiProperty() @IsNumber() index: number;
+  @ApiProperty({ enum: ['pass', 'pending'] })
+  @IsIn(['pass', 'pending'])
+  status: 'pass' | 'pending';
+}
+
+export class UpdateFairnessChecklistDto {
+  @ApiProperty({ type: [UpdateFairnessItemDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => UpdateFairnessItemDto)
+  items: UpdateFairnessItemDto[];
+}
+
+export class ServeNoticeDto {
+  @ApiProperty({ enum: ['serve', 'pil', 'garden', 'summary'] })
+  @IsIn(['serve', 'pil', 'garden', 'summary'])
+  noticeType: 'serve' | 'pil' | 'garden' | 'summary';
+  @ApiProperty() @IsString() method: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() servedAt?: string;
+}
+
+export class FileOffboardingAppealDto {
+  @ApiProperty() @IsString() filedAt: string;
+  @ApiProperty() @IsString() grounds: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() hearingDate?: string;
+}
+
+export class RecordAppealOutcomeDto {
+  @ApiProperty({
+    enum: ['upheld', 'overturned', 'modified', 'adjourned'],
+  })
+  @IsIn(['upheld', 'overturned', 'modified', 'adjourned'])
+  decision: 'upheld' | 'overturned' | 'modified' | 'adjourned';
+  @ApiPropertyOptional() @IsOptional() @IsString() panelMembers?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+}
+
+export class WithdrawAppealDto {
+  @ApiProperty() @IsString() reason: string;
+}
+
+export class UpdateExitInterviewDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() formSent?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() formDeadline?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() scheduled?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() scheduledAt?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() interviewer?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() location?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() done?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() reasonCategory?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(5)
+  rating?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() whatWentWell?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() whatToImprove?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  fairnessAssessment?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
 }
 
 export class CreateSuccessionPlanDto {

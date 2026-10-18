@@ -11,6 +11,7 @@ import {
   MinLength,
   IsArray,
   ValidateNested,
+  IsIn,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
@@ -302,6 +303,41 @@ export class TerminateEmployeeDto {
   @IsOptional()
   @IsString()
   reassignDirectReportsTo?: string;
+
+  @ApiPropertyOptional({
+    enum: [
+      'misconduct',
+      'performance',
+      'redundancy',
+      'mutual',
+      'resignation',
+      'fixed_term',
+      'retirement',
+      'probation',
+    ],
+    description:
+      'Termination category — drives the offboarding fairness-checklist defaults and statutory guidance. Only meaningful when status is "terminated".',
+  })
+  @IsOptional()
+  @IsIn([
+    'misconduct',
+    'performance',
+    'redundancy',
+    'mutual',
+    'resignation',
+    'fixed_term',
+    'retirement',
+    'probation',
+  ])
+  category?: string;
+
+  @ApiPropertyOptional({
+    enum: ['serve', 'pil', 'garden', 'summary'],
+    description: 'How the notice period is being handled.',
+  })
+  @IsOptional()
+  @IsIn(['serve', 'pil', 'garden', 'summary'])
+  noticeType?: string;
 }
 
 export class PromoteToHeadOfDepartmentDto {
