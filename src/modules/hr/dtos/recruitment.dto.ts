@@ -162,7 +162,9 @@ export class UpdateExitInterviewDto {
 
 export class CreateSuccessionPlanDto {
   @ApiProperty() @IsString() criticalRole: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() department?: string;
   @ApiProperty() @IsMongoId() incumbentId: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() businessImpact?: string;
   @ApiPropertyOptional()
   @IsOptional()
   @IsIn(['low', 'medium', 'high'])
@@ -176,6 +178,8 @@ export class CreateSuccessionPlanDto {
 
 export class UpdateSuccessionPlanDto {
   @ApiPropertyOptional() @IsOptional() @IsString() criticalRole?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() department?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() businessImpact?: string;
   @ApiPropertyOptional()
   @IsOptional()
   @IsIn(['low', 'medium', 'high'])
@@ -195,7 +199,96 @@ export class AddSuccessorDto {
   readiness?: string;
   @ApiPropertyOptional()
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  readinessPct?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsIn(['high', 'medium', 'low'])
   potential?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() strengths?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() gaps?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+}
+
+export class RecordSuccessorAssessmentDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(5)
+  technicalKnowledge?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(5)
+  leadershipAbility?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(5)
+  strategicThinking?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(5)
+  stakeholderManagement?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(5)
+  industryKnowledge?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(5)
+  culturalFit?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() comments?: string;
+}
+
+export class CreateDevelopmentMilestoneDto {
+  @ApiProperty() @IsString() item: string;
+  @ApiProperty() @IsString() dueDate: string;
+}
+
+export class CreateDevelopmentPlanDto {
+  @ApiProperty() @IsString() targetRole: string;
+  @ApiProperty() @IsNumber() @Min(1) timelineMonths: number;
+  @ApiProperty() @IsString() startDate: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() objectives?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateDevelopmentMilestoneDto)
+  milestones?: CreateDevelopmentMilestoneDto[];
+}
+
+export class AddMilestoneDto {
+  @ApiProperty() @IsString() item: string;
+  @ApiProperty() @IsString() dueDate: string;
+}
+
+export class UpdateMilestoneStatusDto {
+  @ApiProperty({ enum: ['pending', 'in_progress', 'done'] })
+  @IsIn(['pending', 'in_progress', 'done'])
+  status: string;
+}
+
+export class SetNextReviewDto {
+  @ApiProperty() @IsString() nextReviewDate: string;
+}
+
+export class SetEmergencyCoverDto {
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() interimCoverId?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  externalBackupNotes?: string;
 }

@@ -52,6 +52,12 @@ import {
   CreateSuccessionPlanDto,
   UpdateSuccessionPlanDto,
   AddSuccessorDto,
+  RecordSuccessorAssessmentDto,
+  CreateDevelopmentPlanDto,
+  AddMilestoneDto,
+  UpdateMilestoneStatusDto,
+  SetNextReviewDto,
+  SetEmergencyCoverDto,
   CreateJobOpeningDto,
   UpdateJobOpeningDto,
 } from '../dtos';
@@ -569,6 +575,43 @@ export class SuccessionPlanController {
     return this.planService.getAll(t || u);
   }
 
+  // ── Computed views — declared ahead of the `:planId` route below so
+  // none of these is ever swallowed as a plan id. ──
+  @Get('risk-alerts')
+  @ApiOperation({
+    summary:
+      'Succession risk alerts — no successor, successor behind schedule, or role holder exiting',
+  })
+  getRiskAlerts(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.planService.getRiskAlerts(t || u);
+  }
+
+  @Get('bench-strength')
+  @ApiOperation({
+    summary: 'Bench-strength summary across all critical roles',
+  })
+  getBenchStrength(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.planService.getBenchStrength(t || u);
+  }
+
+  @Get('nine-box')
+  @ApiOperation({
+    summary:
+      'Every nominated successor plotted by performance (from their latest performance review) vs. potential',
+  })
+  getNineBox(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.planService.getNineBox(t || u);
+  }
+
   @Get(':planId')
   @ApiOperation({ summary: 'Get a single succession plan' })
   getOne(
@@ -636,6 +679,122 @@ export class SuccessionPlanController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.planService.removeSuccessor(t || u, planId, employeeId);
+  }
+
+  @Patch(':planId/successors/:employeeId/assessment')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Record a readiness assessment for a successor',
+  })
+  recordAssessment(
+    @Param('planId') planId: string,
+    @Param('employeeId') employeeId: string,
+    @Body() dto: RecordSuccessorAssessmentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.planService.recordAssessment(
+      t || u,
+      planId,
+      employeeId,
+      dto,
+      null,
+    );
+  }
+
+  @Post(':planId/successors/:employeeId/development-plan')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create a development plan for a successor' })
+  createDevelopmentPlan(
+    @Param('planId') planId: string,
+    @Param('employeeId') employeeId: string,
+    @Body() dto: CreateDevelopmentPlanDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.planService.createDevelopmentPlan(
+      t || u,
+      planId,
+      employeeId,
+      dto,
+    );
+  }
+
+  @Post(':planId/successors/:employeeId/development-plan/milestones')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Add a milestone to a development plan' })
+  addMilestone(
+    @Param('planId') planId: string,
+    @Param('employeeId') employeeId: string,
+    @Body() dto: AddMilestoneDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.planService.addMilestone(t || u, planId, employeeId, dto);
+  }
+
+  @Patch(
+    ':planId/successors/:employeeId/development-plan/milestones/:milestoneId',
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Update a development milestone's status" })
+  updateMilestoneStatus(
+    @Param('planId') planId: string,
+    @Param('employeeId') employeeId: string,
+    @Param('milestoneId') milestoneId: string,
+    @Body() dto: UpdateMilestoneStatusDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.planService.updateMilestoneStatus(
+      t || u,
+      planId,
+      employeeId,
+      milestoneId,
+      dto.status,
+    );
+  }
+
+  @Patch(':planId/successors/:employeeId/development-plan/next-review')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Set a development plan's next review date" })
+  setDevPlanNextReview(
+    @Param('planId') planId: string,
+    @Param('employeeId') employeeId: string,
+    @Body() dto: SetNextReviewDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.planService.setDevPlanNextReview(
+      t || u,
+      planId,
+      employeeId,
+      dto,
+    );
+  }
+
+  @Patch(':planId/emergency-cover')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Set a role's emergency cover plan" })
+  setEmergencyCover(
+    @Param('planId') planId: string,
+    @Body() dto: SetEmergencyCoverDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.planService.setEmergencyCover(t || u, planId, dto);
+  }
+
+  @Patch(':planId/next-review')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Set a succession plan's next review date" })
+  setNextReview(
+    @Param('planId') planId: string,
+    @Body() dto: SetNextReviewDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.planService.setNextReview(t || u, planId, dto);
   }
 }
 
