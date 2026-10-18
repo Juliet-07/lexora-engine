@@ -136,16 +136,16 @@ export class TerminationNoticeDocxService {
       }),
       new Paragraph({ text: data.signatoryTitle }),
       new Paragraph({ text: data.businessName }),
-      new Paragraph({ text: '' }),
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: 'cc: Employee file · RSSB notification · Labour inspector (if applicable)',
-            size: 18,
-            color: '777777',
-          }),
-        ],
-      }),
+      // new Paragraph({ text: '' }),
+      // new Paragraph({
+      //   children: [
+      //     new TextRun({
+      //       text: 'cc: Employee file · RSSB notification · Labour inspector (if applicable)',
+      //       size: 18,
+      //       color: '777777',
+      //     }),
+      //   ],
+      // }),
     ];
 
     const doc = new Document({

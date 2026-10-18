@@ -13,6 +13,8 @@ import {
   Res,
   UseInterceptors,
   UploadedFile,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -32,6 +34,7 @@ import {
   PayrollCalculationService,
   ExchangeRateService,
   PayrollExportService,
+  OffboardingService,
 } from '../services';
 import {
   UpsertPayrollPolicyDto,
@@ -353,12 +356,45 @@ export class PayrollRunController {
     private readonly runService: PayrollRunService,
     private readonly fxService: ExchangeRateService,
     private readonly exportService: PayrollExportService,
+    // See hr/services/payroll-run.service.ts — OffboardingService sits
+    // in a circular import with EmployeeService, which leaves a plain
+    // injection of it unresolvable at boot without forwardRef.
+    @Inject(forwardRef(() => OffboardingService))
+    private readonly offboardingService: OffboardingService,
   ) {}
 
   @Get()
   @ApiOperation({ summary: 'List all payroll runs for this tenant' })
   getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
     return this.runService.getAllRuns(t || u);
+  }
+
+  // ── Offboarding payroll: employees whose final pay has been
+  // approved. They've dropped out of the normal run (no longer
+  // active), so this is where the tenant sees what's still owed and
+  // settles it. Declared ahead of the `:runId` route below so
+  // "offboarding" is never swallowed as a run id. ──
+  @Get('offboarding')
+  @ApiOperation({
+    summary:
+      'List employees with an approved final pay, excluded from normal payroll runs',
+  })
+  getOffboardingPayable(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.listPayableFinalPay(t || u);
+  }
+
+  @Post('offboarding/:recordId/mark-paid')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Mark an employee's approved final pay as paid" })
+  markOffboardingPaid(
+    @Param('recordId') recordId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.markFinalPayPaid(t || u, recordId);
   }
 
   @Get('period-status')

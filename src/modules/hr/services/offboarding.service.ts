@@ -521,12 +521,24 @@ export class OffboardingService {
     const businessName = await resolveBusinessName(this.userModel, tenantId);
     const tenant = await this.userModel
       .findById(tenantId)
-      .select('firstName lastName tenantProfile.businessName')
+      .select(
+        'firstName lastName tenantProfile.businessName tenantProfile.address tenantProfile.logoUrl',
+      )
       .lean();
+    const profile = (tenant as any)?.tenantProfile;
+    const businessAddress =
+      [
+        profile?.address?.city,
+        profile?.address?.state,
+        profile?.address?.country,
+      ]
+        .filter(Boolean)
+        .join(', ') || null;
 
     return this.noticePdfService.buildNoticePdf({
       businessName,
-      businessAddress: null,
+      businessAddress,
+      logoDataUrl: profile?.logoUrl || null,
       employeeName: record.employeeName,
       jobTitle: record.jobTitle,
       category: record.category ?? record.type,
@@ -974,6 +986,54 @@ export class OffboardingService {
     return record;
   }
 
+  // Once final pay is approved, the employee drops out of the normal
+  // payroll run (they're no longer active) — this is the list behind
+  // the Payroll page's "Offboarding" tab, so the tenant can still see
+  // what's owed and settle it outside the regular run.
+  async listPayableFinalPay(tenantId: string) {
+    const records = await this.offboardingModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        'finalPay.approved': true,
+      })
+      .sort({ 'finalPay.paid': 1, 'finalPay.approvedAt': -1 })
+      .lean();
+
+    return records.map((r: any) => ({
+      _id: r._id,
+      employeeId: r.employeeId,
+      employeeName: r.employeeName,
+      jobTitle: r.jobTitle,
+      type: r.type,
+      category: r.category,
+      endDate: r.endDate,
+      netFinalPay: r.finalPay.netFinalPay,
+      grossFinalPay: r.finalPay.grossFinalPay,
+      currency: r.finalPay.currency,
+      approvedAt: r.finalPay.approvedAt,
+      paid: !!r.finalPay.paid,
+      paidAt: r.finalPay.paidAt ?? null,
+    }));
+  }
+
+  async markFinalPayPaid(
+    tenantId: string,
+    recordId: string,
+  ): Promise<OffboardingRecordDocument> {
+    const record = await this.getById(tenantId, recordId);
+    if (!record.finalPay?.approved) {
+      throw new BadRequestException(
+        'Final pay must be approved before it can be marked as paid.',
+      );
+    }
+    if (!record.finalPay.paid) {
+      record.finalPay.paid = true;
+      record.finalPay.paidAt = new Date();
+      await record.save();
+    }
+    return record;
+  }
+
   // ═══════════════════════════════════════════════════════════
   // STEP 7: CERTIFICATE OF SERVICE
   // ═══════════════════════════════════════════════════════════
@@ -987,12 +1047,22 @@ export class OffboardingService {
     const businessName = await resolveBusinessName(this.userModel, tenantId);
     const tenant = await this.userModel
       .findById(tenantId)
-      .select('firstName lastName')
+      .select('firstName lastName tenantProfile.address tenantProfile.logoUrl')
       .lean();
+    const profile = (tenant as any)?.tenantProfile;
+    const businessAddress =
+      [
+        profile?.address?.city,
+        profile?.address?.state,
+        profile?.address?.country,
+      ]
+        .filter(Boolean)
+        .join(', ') || null;
 
     const pdfBuffer = await this.certificatePdfService.buildCertificatePdf({
       businessName,
-      businessAddress: null,
+      businessAddress,
+      logoDataUrl: profile?.logoUrl || null,
       employeeName: record.employeeName,
       jobTitle: record.jobTitle,
       startDate: employee.startDate,

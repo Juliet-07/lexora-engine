@@ -150,6 +150,12 @@ export class OffboardingFinalPay {
   @Prop({ default: false }) approved: boolean;
   @Prop({ default: null }) approvedAt: Date | null;
   @Prop({ default: null }) sentToPayrollAt: Date | null;
+  // An approved final pay is excluded from the employee's next regular
+  // payroll run (they're no longer active), so it has to be settled
+  // and tracked separately — this is what the Payroll page's
+  // "Offboarding" tab marks once the payout has actually gone out.
+  @Prop({ default: false }) paid: boolean;
+  @Prop({ default: null }) paidAt: Date | null;
 }
 export const OffboardingFinalPaySchema =
   SchemaFactory.createForClass(OffboardingFinalPay);
