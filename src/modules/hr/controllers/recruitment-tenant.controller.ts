@@ -45,6 +45,11 @@ import {
   UpdateOffboardingDto,
   UpdateFairnessChecklistDto,
   ServeNoticeDto,
+  SaveNoticeDraftDto,
+  SendNoticeDto,
+  SaveCertificateDraftDto,
+  SendCertificateContentDto,
+  ComputeFinalPayDto,
   FileOffboardingAppealDto,
   RecordAppealOutcomeDto,
   WithdrawAppealDto,
@@ -342,6 +347,43 @@ export class OffboardingController {
     return this.offboardingService.generateCertificate(t || u, recordId);
   }
 
+  @Post(':recordId/certificate/draft')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Save the tenant's own typed Certificate of Service as a draft",
+  })
+  saveCertificateDraft(
+    @Param('recordId') recordId: string,
+    @Body() dto: SaveCertificateDraftDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.saveCertificateDraft(
+      t || u,
+      recordId,
+      dto.content,
+    );
+  }
+
+  @Post(':recordId/certificate/send-content')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Email the tenant's own typed Certificate of Service to the employee — replaces the upload/generate-then-send PDF path above. Completes offboarding: for a termination, this is what finalizes it.",
+  })
+  sendCertificateContent(
+    @Param('recordId') recordId: string,
+    @Body() dto: SendCertificateContentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.sendCertificateContent(
+      t || u,
+      recordId,
+      dto.content,
+    );
+  }
+
   // ── Step 1: Pre-termination fairness checklist ──
 
   @Patch(':recordId/fairness')
@@ -410,6 +452,44 @@ export class OffboardingController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.offboardingService.serveNotice(t || u, recordId, dto);
+  }
+
+  @Post(':recordId/notice/draft')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Save the tenant's own typed termination notice as a draft",
+  })
+  saveNoticeDraft(
+    @Param('recordId') recordId: string,
+    @Body() dto: SaveNoticeDraftDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.saveNoticeDraft(
+      t || u,
+      recordId,
+      dto.content,
+    );
+  }
+
+  @Post(':recordId/notice/send')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Email the tenant's own typed termination notice to the employee — replaces the old PDF/DOCX generation",
+  })
+  sendNotice(
+    @Param('recordId') recordId: string,
+    @Body() dto: SendNoticeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.offboardingService.sendNotice(
+      t || u,
+      recordId,
+      dto.content,
+      dto.noticeType,
+    );
   }
 
   @Post(':recordId/notice/file')
@@ -542,10 +622,15 @@ export class OffboardingController {
   })
   computeFinalPay(
     @Param('recordId') recordId: string,
+    @Body() dto: ComputeFinalPayDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.offboardingService.computeFinalPay(t || u, recordId);
+    return this.offboardingService.computeFinalPay(
+      t || u,
+      recordId,
+      dto?.includeThirteenthMonth ?? true,
+    );
   }
 
   @Post(':recordId/final-pay/approve')

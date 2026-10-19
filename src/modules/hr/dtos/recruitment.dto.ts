@@ -116,6 +116,50 @@ export class ServeNoticeDto {
   @ApiPropertyOptional() @IsOptional() @IsString() servedAt?: string;
 }
 
+export class SaveNoticeDraftDto {
+  @ApiProperty() @IsString() content: string;
+}
+
+export class SendNoticeDto {
+  @ApiProperty() @IsString() content: string;
+  @ApiPropertyOptional({ enum: ['serve', 'pil', 'garden', 'summary'] })
+  @IsOptional()
+  @IsIn(['serve', 'pil', 'garden', 'summary'])
+  noticeType?: 'serve' | 'pil' | 'garden' | 'summary';
+}
+
+export class SaveCertificateDraftDto {
+  @ApiProperty() @IsString() content: string;
+}
+
+export class SendCertificateContentDto {
+  @ApiProperty() @IsString() content: string;
+}
+
+export class ComputeFinalPayDto {
+  @ApiPropertyOptional({
+    default: true,
+    description:
+      '13th month / bonus does not always apply to an exit — set false to exclude it from the computed breakdown.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  includeThirteenthMonth?: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────
+// EMPLOYEE SELF-SERVICE — notices & resignation
+// ─────────────────────────────────────────────────────────────
+
+export class FileSelfAppealDto {
+  @ApiProperty() @IsString() grounds: string;
+}
+
+export class SubmitResignationNoticeDto {
+  @ApiProperty() @IsString() content: string;
+  @ApiProperty() @IsString() lastWorkingDay: string;
+}
+
 export class FileOffboardingAppealDto {
   @ApiProperty() @IsString() filedAt: string;
   @ApiProperty() @IsString() grounds: string;

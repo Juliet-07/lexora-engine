@@ -788,8 +788,23 @@ export class EmployeeService {
     if (filters.teamId) query.teamId = new Types.ObjectId(filters.teamId);
     if (filters.locationId)
       query.locationId = new Types.ObjectId(filters.locationId);
-    if (filters.employmentStatus)
+    if (filters.employmentStatus) {
+      // Caller asked for a specific status explicitly — honor it as-is,
+      // including 'terminated'/'resigned' (e.g. the Archived view below
+      // uses this directly).
       query.employmentStatus = filters.employmentStatus;
+    } else if (filters.archived) {
+      // The Archived view: only terminated/resigned employees.
+      query.employmentStatus = { $in: ['terminated', 'resigned'] };
+    } else {
+      // Default: a terminated or resigned employee is no longer part of
+      // headcount and shouldn't show up in the regular directory, or
+      // anywhere else "active employees" are listed (assignment pickers,
+      // etc.) — same exclusion already applied by the other employee
+      // lookups in this file (direct reports, hierarchy queries, the
+      // headcount dashboard).
+      query.employmentStatus = { $nin: ['terminated', 'resigned'] };
+    }
     if (filters.employmentType) query.employmentType = filters.employmentType;
     if (filters.search) {
       query.$or = [
@@ -1320,6 +1335,16 @@ export class EmployeeService {
     });
     if (!employee) throw new NotFoundException('Employee not found');
 
+    const existingProcess = await this.offboardingService.findActiveForEmployee(
+      tenantId,
+      (employee._id as Types.ObjectId).toString(),
+    );
+    if (existingProcess) {
+      throw new BadRequestException(
+        'This employee already has an offboarding process in progress.',
+      );
+    }
+
     const directReportCount = await this.employeeModel.countDocuments({
       tenantId: new Types.ObjectId(tenantId),
       reportsToManagerId: employee._id,
@@ -1354,25 +1379,43 @@ export class EmployeeService {
       );
     }
 
-    employee.employmentStatus = dto.status as any;
-    employee.endDate = new Date(dto.endDate);
-    await employee.save();
-
     if (dto.status !== 'terminated' && dto.status !== 'resigned') {
       throw new BadRequestException(
         'Offboarding can only be triggered for a "terminated" or "resigned" status.',
       );
     }
 
-    // Lets ProbationService end an in-progress probation the moment
-    // employment itself ends, rather than leaving the record open to
-    // be endlessly (and wrongly) flagged "overdue" on the Probation
-    // dashboard for someone who no longer works here. Same decoupled
-    // event pattern as 'employee.probation.started' above.
-    this.eventEmitter.emit('employee.terminated', {
-      tenantId,
-      employeeId: (employee._id as Types.ObjectId).toString(),
-    });
+    const isTermination = dto.status === EmploymentStatus.TERMINATED;
+
+    employee.endDate = new Date(dto.endDate);
+    if (!isTermination) {
+      // Resignation is voluntary and announced — the employee already
+      // knows, so there's no notice/appeal process to sit through. Keep
+      // today's behavior: flip immediately.
+      employee.employmentStatus = dto.status as any;
+    }
+    // A dismissal, by contrast, is only a DECISION to offboard — not yet
+    // a fact. Due process (notice, the appeal window, final pay, the
+    // certificate of service) still has to run, and an appeal can
+    // reverse it entirely. So the employee stays fully active — counted
+    // in headcount, assignable, able to log in — until every one of the
+    // 7 offboarding steps completes (certificate of service sent), at
+    // which point OffboardingService calls finalizeTermination() below
+    // to actually flip employmentStatus and deactivate their login.
+    await employee.save();
+
+    if (!isTermination) {
+      // Lets ProbationService end an in-progress probation the moment
+      // employment itself ends, rather than leaving the record open to
+      // be endlessly (and wrongly) flagged "overdue" on the Probation
+      // dashboard for someone who no longer works here. Same decoupled
+      // event pattern as 'employee.probation.started' above. For a
+      // termination this fires later, from finalizeTermination().
+      this.eventEmitter.emit('employee.terminated', {
+        tenantId,
+        employeeId: (employee._id as Types.ObjectId).toString(),
+      });
+    }
 
     await this.offboardingService.createFromTermination({
       tenantId,
@@ -1386,30 +1429,99 @@ export class EmployeeService {
       category: dto.category ?? null,
     });
 
-    // Only actual terminations get this notice — resignations are
-    // voluntary, the employee already knows.
-    if (dto.status === EmploymentStatus.TERMINATED) {
-      const tenant = await this.userModel
-        .findById(tenantId)
-        .select('tenantProfile firstName')
-        .lean();
-      const businessName =
-        (tenant as any)?.tenantProfile?.businessName ||
-        (tenant as any)?.firstName ||
-        'Your Organization';
+    // The old "termination notice" email is gone — the tenant now
+    // composes and sends the actual notice themselves, from Step 2 of
+    // the offboarding flow (OffboardingService.sendNotice), with
+    // whatever text they typed. Nothing automatic to send here anymore.
 
-      await this.mailService
-        .sendEmployeeTerminated({
-          to: employee.email,
-          firstName: employee.firstName,
-          businessName,
-          endDate: employee.endDate as Date,
-          reason: dto.reason ?? null,
-        })
-        .catch(() => {
-          // Don't let an email failure undo the termination itself.
-        });
+    return employee;
+  }
+
+  // Called once an offboarding record for a TERMINATION reaches
+  // COMPLETED — i.e. all 7 steps are done and the certificate of
+  // service has just been sent (see OffboardingService.
+  // maybeFinalizeTermination). This is the moment the dismissal
+  // becomes real: the employee drops out of headcount and every
+  // "active employees" list, and their login stops working.
+  // No-ops quietly if the employee is already terminated, so it's
+  // always safe to call.
+  async finalizeTermination(
+    tenantId: string,
+    employeeId: string,
+  ): Promise<void> {
+    const employee = await this.employeeModel.findOne({
+      _id: employeeId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (
+      !employee ||
+      employee.employmentStatus === EmploymentStatus.TERMINATED
+    ) {
+      return;
     }
+
+    employee.employmentStatus = EmploymentStatus.TERMINATED as any;
+    await employee.save();
+
+    if (employee.userId) {
+      await this.userModel.findByIdAndUpdate(employee.userId, {
+        status: AccountStatus.INACTIVE,
+      });
+    }
+
+    this.eventEmitter.emit('employee.terminated', {
+      tenantId,
+      employeeId: (employee._id as Types.ObjectId).toString(),
+    });
+  }
+
+  // The employee's own, self-submitted resignation (from their Notices
+  // dashboard) — unlike a dismissal, this is voluntary and the employee
+  // already knows, so it keeps today's "flip immediately" behavior: a
+  // real RESIGNATION offboarding record is created right away, carrying
+  // their own typed letter as both the notice content and the reason.
+  async submitOwnResignation(
+    userId: string,
+    dto: { content: string; lastWorkingDay: string },
+  ): Promise<EmployeeDocument> {
+    const employee = await this.employeeModel.findOne({
+      userId: new Types.ObjectId(userId),
+    });
+    if (!employee) throw new NotFoundException('Employee profile not found');
+
+    const tenantId = (employee.tenantId as Types.ObjectId).toString();
+
+    const existingProcess = await this.offboardingService.findActiveForEmployee(
+      tenantId,
+      (employee._id as Types.ObjectId).toString(),
+    );
+    if (existingProcess) {
+      throw new BadRequestException(
+        'An offboarding process is already in progress for you.',
+      );
+    }
+
+    employee.employmentStatus = EmploymentStatus.RESIGNED as any;
+    employee.endDate = new Date(dto.lastWorkingDay);
+    await employee.save();
+
+    this.eventEmitter.emit('employee.terminated', {
+      tenantId,
+      employeeId: (employee._id as Types.ObjectId).toString(),
+    });
+
+    await this.offboardingService.createFromTermination({
+      tenantId,
+      employeeId: (employee._id as Types.ObjectId).toString(),
+      employeeName: `${employee.firstName} ${employee.lastName}`,
+      jobTitle: employee.jobTitle,
+      startDate: employee.startDate,
+      endDate: new Date(dto.lastWorkingDay),
+      reason: dto.content,
+      status: 'resigned',
+      category: null,
+      noticeContent: dto.content,
+    });
 
     return employee;
   }

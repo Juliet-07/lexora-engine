@@ -12,6 +12,7 @@ import {
   IsArray,
   ValidateNested,
   IsIn,
+  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
@@ -276,6 +277,17 @@ export class EmployeeFilterDto {
   @IsOptional()
   @IsEnum(EmploymentStatus)
   employmentStatus?: EmploymentStatus;
+
+  // The regular directory excludes terminated/resigned employees by
+  // default (see EmployeeService.getEmployees) — pass archived: true to
+  // see that excluded set instead, as its own "Archived" view.
+  @ApiPropertyOptional({
+    description:
+      'View terminated/resigned employees instead of the active directory.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  archived?: boolean;
 
   @ApiPropertyOptional({ enum: EmploymentType })
   @IsOptional()

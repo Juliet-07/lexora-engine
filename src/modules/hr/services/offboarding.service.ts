@@ -342,6 +342,10 @@ export class OffboardingService {
     reason: string | null;
     status: 'terminated' | 'resigned';
     category?: string | null;
+    // Only ever set for a self-submitted resignation (the employee's
+    // own typed letter) — a tenant-initiated termination leaves this
+    // null; the notice itself is composed later, in Step 2.
+    noticeContent?: string | null;
   }): Promise<OffboardingRecordDocument> {
     const category =
       params.status === 'resigned'
@@ -372,6 +376,7 @@ export class OffboardingService {
       status: OffboardingStatus.NOT_STARTED,
       noticePeriodDays: notice.days,
       noticePeriodLabel: notice.label,
+      noticeContent: params.noticeContent ?? null,
       fairnessChecklist,
       clearanceChecklist: DEFAULT_CLEARANCE_CHECKLIST.map((c) => ({
         key: c.key,
@@ -380,6 +385,24 @@ export class OffboardingService {
         clearedAt: null,
         notes: null,
       })),
+    });
+  }
+
+  // Guards against starting a second offboarding process for someone
+  // already mid-exit — meaningful now that a TERMINATION record no
+  // longer flips the employee's status the instant it's created (see
+  // EmployeeService.terminateEmployee), so the "Terminate" action
+  // would otherwise still look available throughout the process.
+  async findActiveForEmployee(
+    tenantId: string,
+    employeeId: string,
+  ): Promise<OffboardingRecordDocument | null> {
+    return this.offboardingModel.findOne({
+      tenantId: new Types.ObjectId(tenantId),
+      employeeId: new Types.ObjectId(employeeId),
+      status: {
+        $in: [OffboardingStatus.NOT_STARTED, OffboardingStatus.IN_PROGRESS],
+      },
     });
   }
 
@@ -580,6 +603,86 @@ export class OffboardingService {
     });
   }
 
+  // The tenant now composes the notice itself in a rich-text editor
+  // rather than reviewing/downloading the system-generated PDF/DOCX
+  // above (those remain available but are no longer the primary
+  // path) — saveNoticeDraft lets them save their typing without
+  // sending anything yet; sendNotice below actually serves it.
+  async saveNoticeDraft(
+    tenantId: string,
+    recordId: string,
+    content: string,
+  ): Promise<OffboardingRecordDocument> {
+    const record = await this.getById(tenantId, recordId);
+    record.noticeContent = content;
+    await record.save();
+    return record;
+  }
+
+  async sendNotice(
+    tenantId: string,
+    recordId: string,
+    content: string,
+    noticeType?: string,
+  ): Promise<OffboardingRecordDocument> {
+    const record = await this.getById(tenantId, recordId);
+    const employee = await this.getEmployeeFor(record);
+
+    if (
+      record.fairnessChecklist.length > 0 &&
+      record.fairnessChecklist.some((f) => f.status !== 'pass')
+    ) {
+      throw new BadRequestException(
+        'Complete the pre-termination checklist before sending the notice.',
+      );
+    }
+
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+
+    record.noticeContent = content;
+    record.noticeServed = true;
+    record.noticeServedAt = new Date();
+    record.noticeMethod = 'email';
+    if (noticeType) record.noticeType = noticeType as any;
+
+    // Appeal window opens the moment notice is sent (Art. 29).
+    const deadline = new Date();
+    deadline.setDate(deadline.getDate() + 7); // 5 working days ≈ 7 calendar days
+    record.appeal = {
+      window: '5 working days',
+      deadline,
+      filed: false,
+      filedAt: null,
+      filedBy: null,
+      grounds: null,
+      letterFile: null,
+      hearingDate: null,
+      status: AppealOutcomeDecision.PENDING,
+      panelMembers: null,
+      hearingNotes: null,
+      hearingMinutesFile: null,
+      withdrawnReason: null,
+      withdrawnAt: null,
+      withdrawnFile: null,
+    } as any;
+
+    this.recomputeStatus(record);
+    await record.save();
+
+    await this.emailService
+      .sendCampaign(
+        employee.email,
+        `Notice of Termination of Employment — ${businessName}`,
+        content,
+      )
+      .catch(() => {
+        // The notice is saved and marked served regardless — don't let
+        // a mail-transport hiccup block the rest of the workflow.
+      });
+
+    return record;
+  }
+
   async serveNotice(
     tenantId: string,
     recordId: string,
@@ -610,6 +713,7 @@ export class OffboardingService {
       deadline,
       filed: false,
       filedAt: null,
+      filedBy: null,
       grounds: null,
       letterFile: null,
       hearingDate: null,
@@ -664,6 +768,7 @@ export class OffboardingService {
       ...(record.appeal as any),
       filed: true,
       filedAt: new Date(dto.filedAt),
+      filedBy: 'tenant',
       grounds: dto.grounds,
       hearingDate: dto.hearingDate ? new Date(dto.hearingDate) : null,
       status: dto.hearingDate
@@ -675,6 +780,100 @@ export class OffboardingService {
     record.noticePausedAt = new Date();
     record.noticePausedReason =
       'Appeal filed, notice period suspended pending outcome (Art. 29)';
+
+    await record.save();
+    return record;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // EMPLOYEE SELF-SERVICE — Notices dashboard
+  // ═══════════════════════════════════════════════════════════
+
+  private async getEmployeeByUserId(userId: string): Promise<EmployeeDocument> {
+    const employee = await this.employeeModel.findOne({
+      userId: new Types.ObjectId(userId),
+    });
+    if (!employee) {
+      throw new NotFoundException('Employee profile not found');
+    }
+    return employee;
+  }
+
+  // Every offboarding record that was ever opened for this employee —
+  // in practice almost always 0 or 1, but returned as a list so a
+  // past, already-completed exit (e.g. a prior stint) never masks a
+  // new one.
+  async getMyNotices(userId: string) {
+    const employee = await this.getEmployeeByUserId(userId);
+    return this.offboardingModel
+      .find({
+        tenantId: employee.tenantId,
+        employeeId: employee._id,
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  async acknowledgeMyNotice(
+    userId: string,
+    recordId: string,
+  ): Promise<OffboardingRecordDocument> {
+    const employee = await this.getEmployeeByUserId(userId);
+    const record = await this.offboardingModel.findOne({
+      _id: recordId,
+      employeeId: employee._id,
+    });
+    if (!record) throw new NotFoundException('Notice not found');
+    if (!record.noticeAcknowledgedAt) {
+      record.noticeAcknowledgedAt = new Date();
+      await record.save();
+    }
+    return record;
+  }
+
+  // Same appeal mechanics as the tenant-side fileAppeal() above, but
+  // scoped to the employee's own record and enforcing the 5-working-
+  // day window themselves (the tenant side files on the employee's
+  // behalf and isn't held to the deadline, since HR may be recording
+  // something the employee already raised in person).
+  async fileMyAppeal(
+    userId: string,
+    recordId: string,
+    grounds: string,
+  ): Promise<OffboardingRecordDocument> {
+    const employee = await this.getEmployeeByUserId(userId);
+    const record = await this.offboardingModel.findOne({
+      _id: recordId,
+      employeeId: employee._id,
+    });
+    if (!record) throw new NotFoundException('Notice not found');
+    if (!record.noticeServed) {
+      throw new BadRequestException(
+        'The appeal window only opens once notice has been served.',
+      );
+    }
+    if (record.appeal?.filed) {
+      throw new BadRequestException('An appeal has already been filed.');
+    }
+    if (record.appeal?.deadline && new Date() > record.appeal.deadline) {
+      throw new BadRequestException(
+        'The 5 working day appeal window has closed.',
+      );
+    }
+
+    record.appeal = {
+      ...(record.appeal as any),
+      filed: true,
+      filedAt: new Date(),
+      filedBy: 'employee',
+      grounds,
+      status: AppealOutcomeDecision.PENDING,
+    } as any;
+
+    record.noticePaused = true;
+    record.noticePausedAt = new Date();
+    record.noticePausedReason =
+      'Appeal filed by employee, notice period suspended pending outcome (Art. 29)';
 
     await record.save();
     return record;
@@ -705,6 +904,11 @@ export class OffboardingService {
       record.status = OffboardingStatus.REVERSED;
       record.noticePaused = true;
       record.noticePausedReason = `Appeal ${dto.decision} — employee reinstated.`;
+      // Reinstated means payroll just goes back to normal — no exit
+      // payout, so any final pay already computed (step 6 can, in
+      // theory, run before the appeal resolves) is discarded rather
+      // than left sitting there approved.
+      record.finalPay = null;
     } else if (dto.decision === 'upheld') {
       record.noticePaused = false;
       record.noticePausedReason = null;
@@ -816,6 +1020,7 @@ export class OffboardingService {
   async computeFinalPay(
     tenantId: string,
     recordId: string,
+    includeThirteenthMonth: boolean = true,
   ): Promise<OffboardingRecordDocument> {
     const record = await this.getById(tenantId, recordId);
     const employee = await this.getEmployeeFor(record);
@@ -855,9 +1060,9 @@ export class OffboardingService {
           1,
       ),
     );
-    const thirteenthMonthAmount = Math.round(
-      (monthlySalary / 12) * monthsThisYear,
-    );
+    const thirteenthMonthAmount = includeThirteenthMonth
+      ? Math.round((monthlySalary / 12) * monthsThisYear)
+      : 0;
 
     // Policy + allowances, for the statutory-deduction engine.
     const policy = await this.payrollPolicyService.getPolicyForLocation(
@@ -886,11 +1091,15 @@ export class OffboardingService {
         label: 'Accrued annual leave payout',
         amount: leaveBalanceAmount,
       },
-      {
-        key: 'thirteenth_month',
-        label: 'Pro-rata 13th month / bonus',
-        amount: thirteenthMonthAmount,
-      },
+      ...(includeThirteenthMonth
+        ? [
+            {
+              key: 'thirteenth_month',
+              label: 'Pro-rata 13th month / bonus',
+              amount: thirteenthMonthAmount,
+            },
+          ]
+        : []),
       ...(transportAllowanceProrated > 0
         ? [
             {
@@ -940,6 +1149,7 @@ export class OffboardingService {
       proRataAmount,
       leaveBalanceDays,
       leaveBalanceAmount,
+      includeThirteenthMonth,
       thirteenthMonthAmount,
       transportAllowanceProrated,
       outstandingAdvances,
@@ -1164,6 +1374,74 @@ export class OffboardingService {
     record.certificateOfServiceSentAt = new Date();
     this.recomputeStatus(record);
     await record.save();
+    await this.maybeFinalizeTermination(record);
     return record;
+  }
+
+  // The tenant's own typed certificate (rich-text HTML) — saved but not
+  // yet sent, same draft/send split as the notice above.
+  async saveCertificateDraft(
+    tenantId: string,
+    recordId: string,
+    content: string,
+  ): Promise<OffboardingRecordDocument> {
+    const record = await this.getById(tenantId, recordId);
+    record.certificateContent = content;
+    await record.save();
+    return record;
+  }
+
+  // Sends the tenant's own typed certificate directly as the email body
+  // (EmailService.sendCampaign — no PDF/DOCX attachment), replacing the
+  // upload/generate-then-sendCertificateOfService path above as the
+  // primary route. Once this lands, Step 7 — and with it all 7 offboarding
+  // steps — is complete, so for a TERMINATION record this is also the
+  // moment the employee is actually terminated: see maybeFinalizeTermination.
+  async sendCertificateContent(
+    tenantId: string,
+    recordId: string,
+    content: string,
+  ): Promise<OffboardingRecordDocument> {
+    const record = await this.getById(tenantId, recordId);
+    const employee = await this.getEmployeeFor(record);
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+
+    record.certificateContent = content;
+    record.certificateOfServiceSentAt = new Date();
+    this.recomputeStatus(record);
+    await record.save();
+
+    await this.emailService
+      .sendCampaign(
+        employee.email,
+        `Certificate of Service — ${businessName}`,
+        content,
+      )
+      .catch(() => {});
+
+    await this.maybeFinalizeTermination(record);
+    return record;
+  }
+
+  // All 7 offboarding steps are complete exactly when recomputeStatus
+  // has just set the record to COMPLETED — for a TERMINATION (not a
+  // RESIGNATION, which already flips the employee's status immediately
+  // on initiation), that's the trigger to actually terminate the
+  // employee: flip employmentStatus, deactivate their login, drop them
+  // out of headcount. Safe to call unconditionally after any save that
+  // might have completed the record; EmployeeService.finalizeTermination
+  // itself no-ops if the employee is already terminated.
+  private async maybeFinalizeTermination(
+    record: OffboardingRecordDocument,
+  ): Promise<void> {
+    if (
+      record.status === OffboardingStatus.COMPLETED &&
+      record.type === OffboardingType.TERMINATION
+    ) {
+      await this.employeeService.finalizeTermination(
+        record.tenantId.toString(),
+        record.employeeId.toString(),
+      );
+    }
   }
 }

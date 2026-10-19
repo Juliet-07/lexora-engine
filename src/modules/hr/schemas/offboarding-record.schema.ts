@@ -93,6 +93,11 @@ export class OffboardingAppeal {
 
   @Prop({ default: false }) filed: boolean;
   @Prop({ default: null }) filedAt: Date | null;
+  // Who actually filed it — the employee themselves (from their Notices
+  // dashboard) or HR on their behalf. Purely informational: the outcome
+  // workflow below is identical either way.
+  @Prop({ enum: ['employee', 'tenant'], default: null })
+  filedBy: 'employee' | 'tenant' | null;
   @Prop({ default: null }) grounds: string | null;
   @Prop({ type: OffboardingFileRefSchema, default: null })
   letterFile: OffboardingFileRef | null;
@@ -136,6 +141,10 @@ export class OffboardingFinalPay {
   @Prop({ required: true }) proRataAmount: number;
   @Prop({ required: true }) leaveBalanceDays: number;
   @Prop({ required: true }) leaveBalanceAmount: number;
+  // Not every exit includes a 13th month / bonus payout — the tenant
+  // chooses whether to include it each time they (re)compute, and this
+  // records that choice so the breakdown stays self-explanatory.
+  @Prop({ default: true }) includeThirteenthMonth: boolean;
   @Prop({ required: true }) thirteenthMonthAmount: number;
   @Prop({ default: 0 }) transportAllowanceProrated: number;
   @Prop({ default: 0 }) outstandingAdvances: number;
@@ -201,6 +210,13 @@ export class OffboardingRecord {
   @Prop({ default: false }) noticeServed: boolean;
   @Prop({ default: null }) noticeServedAt: Date | null;
   @Prop({ default: null }) noticeMethod: string | null;
+  // The tenant's own typed notice (rich-text HTML), composed in-app and
+  // emailed directly — replaces the old system-generated PDF/DOCX as
+  // the primary path. Also what the employee sees on their Notices
+  // dashboard. For a RESIGNATION record, this instead holds the
+  // employee's own self-submitted resignation letter.
+  @Prop({ default: null }) noticeContent: string | null;
+  @Prop({ default: null }) noticeAcknowledgedAt: Date | null;
   @Prop({ type: OffboardingFileRefSchema, default: null })
   noticeFile: OffboardingFileRef | null;
   @Prop({ default: false }) noticePaused: boolean;
@@ -263,6 +279,11 @@ export class OffboardingRecord {
   // same field so upload/send/re-send all work identically either way.
   @Prop({ type: OffboardingFileRefSchema, default: null })
   certificateOfServiceFile: OffboardingFileRef | null;
+
+  // The tenant's own typed certificate (rich-text HTML) — an
+  // alternative to the upload/generate-PDF path above, emailed
+  // directly as the primary route now.
+  @Prop({ default: null }) certificateContent: string | null;
 }
 
 export const OffboardingRecordSchema =

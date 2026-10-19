@@ -39,6 +39,7 @@ import {
   ProbationService,
   DisputeService,
   LearningService,
+  OffboardingService,
 } from '../services';
 import {
   CompleteOnboardingDto,
@@ -62,6 +63,8 @@ import {
   SubmitAssessmentDto,
   LogOwnerLoanDto,
   LogOvertimeDto,
+  FileSelfAppealDto,
+  SubmitResignationNoticeDto,
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
@@ -208,6 +211,11 @@ export class HrEmployeeController {
     private readonly probationService: ProbationService,
     private readonly disputeService: DisputeService,
     private readonly learningService: LearningService,
+    // Same circular-import situation as EmployeeService above, from the
+    // other side: OffboardingService injects EmployeeService, so this
+    // controller needs forwardRef too.
+    @Inject(forwardRef(() => OffboardingService))
+    private readonly offboardingService: OffboardingService,
   ) {}
 
   // ===============================================================
@@ -353,6 +361,55 @@ export class HrEmployeeController {
     },
   ) {
     return this.employeeService.updateMyProfile(userId, dto);
+  }
+
+  // ===============================================================
+  // MY NOTICES (offboarding self-service — notice/appeal dashboard,
+  // and the employee's own resignation flow)
+  // ===============================================================
+
+  @Get('offboarding/my-notices')
+  @ApiOperation({
+    summary: 'List my offboarding records (notice, appeal status, certificate)',
+  })
+  getMyNotices(@CurrentUser('sub') userId: string) {
+    return this.offboardingService.getMyNotices(userId);
+  }
+
+  @Post('offboarding/my-notices/:recordId/acknowledge')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Acknowledge having read a notice' })
+  acknowledgeMyNotice(
+    @CurrentUser('sub') userId: string,
+    @Param('recordId') recordId: string,
+  ) {
+    return this.offboardingService.acknowledgeMyNotice(userId, recordId);
+  }
+
+  @Post('offboarding/my-notices/:recordId/appeal')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'File my own appeal against a termination notice (within the 5 working day window)',
+  })
+  fileMyAppeal(
+    @CurrentUser('sub') userId: string,
+    @Param('recordId') recordId: string,
+    @Body() dto: FileSelfAppealDto,
+  ) {
+    return this.offboardingService.fileMyAppeal(userId, recordId, dto.grounds);
+  }
+
+  @Post('offboarding/resignation')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Submit my own resignation notice',
+  })
+  submitMyResignation(
+    @CurrentUser('sub') userId: string,
+    @Body() dto: SubmitResignationNoticeDto,
+  ) {
+    return this.employeeService.submitOwnResignation(userId, dto);
   }
 
   // ===============================================================
