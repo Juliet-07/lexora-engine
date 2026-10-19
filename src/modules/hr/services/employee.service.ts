@@ -1558,18 +1558,19 @@ export class EmployeeService {
       lastWorkingDay: new Date(dto.lastWorkingDay),
     });
 
-    // `reason` is a short plain-text field shown as-is (no HTML
-    // rendering) elsewhere in the offboarding record — e.g. the
-    // detail panel's "Notes" block. The full typed letter, as rich
-    // HTML, belongs in noticeContent instead (rendered properly on
-    // both the tenant's Step 2 and the employee's own Notices page),
-    // so strip tags here rather than dumping raw HTML into a
-    // plain-text field.
+    // `reason` is a plain-text field shown in the offboarding record's
+    // "Notes" block (no HTML rendering there). The full typed letter,
+    // as rich HTML, belongs in noticeContent instead (rendered properly
+    // on both the tenant's Step 2 and the employee's own Notices page),
+    // so strip tags here rather than dumping raw HTML into a plain-text
+    // field. Previously capped at 300 chars, which just cut the text off
+    // mid-sentence with no way to read the rest — the tenant-side "Notes"
+    // block now clips its own preview and offers a "Read more" popup for
+    // the full text, so this no longer needs to truncate at all.
     const plainTextReason = dto.content
       .replace(/<[^>]*>/g, ' ')
       .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 300);
+      .trim();
 
     await this.offboardingService.createFromTermination({
       tenantId,
