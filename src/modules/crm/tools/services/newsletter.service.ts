@@ -18,9 +18,11 @@ import {
   Campaign,
   CampaignDocument,
   CampaignStatus,
-  CampaignType,
   NewsletterDraft,
   NewsletterDraftDocument,
+  Alert,
+  AlertDocument,
+  AlertStatus,
 } from '../schemas';
 import {
   CreateSegmentDto,
@@ -29,6 +31,10 @@ import {
   UpdateCampaignDto,
   ScheduleCampaignDto,
   SendTestDto,
+  CreateAlertDto,
+  UpdateAlertDto,
+  ScheduleAlertDto,
+  SendTestAlertDto,
 } from '../dtos';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import {
@@ -51,6 +57,7 @@ import {
   crmNewsletterCampaignTemplate,
   type CrmNewsletterRecipientRole,
 } from 'src/common/utils/mailing/templates/crm-newsletter-campaign.template';
+import { crmAlertTemplate } from 'src/common/utils/mailing/templates/crm-alert.template';
 
 // Maps the polymorphic recipient's sourceType to the plain-English
 // role shown in the email footer ("...because you are a X of...").
@@ -418,7 +425,10 @@ export class CampaignService {
       segmentNames,
       subject: dto.subject ?? '',
       body: dto.body ?? '',
-      event: dto.type === 'Event invite' ? (dto.event ?? {}) : null,
+      // Event invite retired Oct 2026 — every new campaign is a
+      // Newsletter, so there's no longer a create-time source for
+      // event details.
+      event: null,
       recipients: this.toRecipientDocs(members),
     });
     return created.toObject();
@@ -542,7 +552,8 @@ export class CampaignService {
     c.type = dto.type;
     c.subject = dto.subject ?? '';
     c.body = dto.body ?? '';
-    c.event = dto.type === 'Event invite' ? ((dto.event as any) ?? {}) : null;
+    // Event invite retired Oct 2026 — see create() above.
+    c.event = null;
     await c.save();
     return c.toObject();
   }
@@ -580,7 +591,11 @@ export class CampaignService {
           ),
           subject: c.subject || c.name,
           bodyHtml: c.body,
-          isEventInvite: c.type === CampaignType.EVENT_INVITE,
+          // Event invite retired Oct 2026 — CampaignType no longer
+          // offers it, so no campaign sent from here on is one. A
+          // genuinely old document (from before the retirement) that
+          // still carries event data is rendered as a plain newsletter.
+          isEventInvite: false,
           event: c.event ?? null,
         });
         await this.emailService.sendCampaign(r.email, subject, html);
@@ -615,7 +630,7 @@ export class CampaignService {
       businessName,
       subject: c.subject || c.name,
       bodyHtml: c.body,
-      isEventInvite: c.type === CampaignType.EVENT_INVITE,
+      isEventInvite: false,
       event: c.event ?? null,
       isTest: true,
     });
@@ -913,6 +928,308 @@ export class CampaignSchedulerService {
       } catch (err: any) {
         this.logger.error(
           `Failed to send scheduled campaign ${c._id}: ${err?.message}`,
+        );
+      }
+    }
+  }
+}
+
+// ── Alerts — category/priority-driven notices (regulatory, legal,
+// financial, compliance, etc.) broadcast to real segment members.
+// Same real send/snapshot mechanics as CampaignService — real SMTP
+// sends via EmailService, real recipient snapshot at creation time,
+// clicked/RSVP'd left honestly unused (an alert is never an RSVP'able
+// event) — just its own content shape and its own branded template
+// (crm-alert.template.ts) rather than a Campaign with extra fields. ─
+
+@Injectable()
+export class AlertService {
+  constructor(
+    @InjectModel(Alert.name)
+    private readonly model: Model<AlertDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
+    private readonly segmentService: SegmentService,
+    private readonly emailService: EmailService,
+  ) {}
+
+  // Same union-across-segments, de-duplicated-by-email resolution as
+  // CampaignService.resolveRecipients — kept as its own copy (rather
+  // than extracted to a shared helper) since Alert and Campaign are
+  // deliberately separate send paths with their own schemas.
+  private async resolveRecipients(tenantId: string, segmentIds: string[]) {
+    const segments = await Promise.all(
+      segmentIds.map((id) => this.segmentService.getById(tenantId, id)),
+    );
+    const resolvedPerSegment = await Promise.all(
+      segments.map((s) =>
+        this.segmentService.resolveMembers(tenantId, s as any),
+      ),
+    );
+
+    const byEmail = new Map<string, ResolvedMember>();
+    for (const members of resolvedPerSegment) {
+      for (const m of members) {
+        const key = m.email.toLowerCase();
+        if (!byEmail.has(key)) byEmail.set(key, m);
+      }
+    }
+
+    return {
+      segmentNames: segments.map((s) => s.name),
+      members: Array.from(byEmail.values()),
+    };
+  }
+
+  private toRecipientDocs(members: ResolvedMember[]) {
+    return members.map((m) => ({
+      sourceType: m.sourceType,
+      sourceId: new Types.ObjectId(m._id),
+      clientId:
+        m.sourceType === SegmentAudience.CLIENT
+          ? new Types.ObjectId(m._id)
+          : null,
+      clientName: m.name,
+      email: m.email,
+      delivered: false,
+      deliveryError: null,
+      opened: false,
+      clicked: false,
+      rsvped: false,
+    }));
+  }
+
+  async getAll(tenantId: string) {
+    return this.model
+      .find({ tenantId: new Types.ObjectId(tenantId) })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  async getById(tenantId: string, id: string) {
+    const a = await this.model
+      .findOne({ _id: id, tenantId: new Types.ObjectId(tenantId) })
+      .lean();
+    if (!a) throw new NotFoundException('Alert not found');
+    return a;
+  }
+
+  async create(tenantId: string, dto: CreateAlertDto) {
+    const tId = new Types.ObjectId(tenantId);
+    const { segmentNames, members } = await this.resolveRecipients(
+      tenantId,
+      dto.segmentIds,
+    );
+
+    const created = await this.model.create({
+      tenantId: tId,
+      title: dto.title,
+      category: dto.category,
+      priority: dto.priority,
+      triggerType: dto.triggerType ?? '',
+      source: dto.source ?? '',
+      summary: dto.summary,
+      actionRequired: dto.actionRequired ?? '',
+      effectiveDate: dto.effectiveDate ? new Date(dto.effectiveDate) : null,
+      deadline: dto.deadline ? new Date(dto.deadline) : null,
+      segmentIds: dto.segmentIds.map((id) => new Types.ObjectId(id)),
+      segmentNames,
+      recipients: this.toRecipientDocs(members),
+    });
+    return created.toObject();
+  }
+
+  // Real content editing — allowed for Draft and Scheduled, refused
+  // once Sending or Sent, same rule as CampaignService.update. If the
+  // target segment changed, recipients are genuinely re-resolved.
+  async update(tenantId: string, id: string, dto: UpdateAlertDto) {
+    const a = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!a) throw new NotFoundException('Alert not found');
+    if (a.status !== AlertStatus.DRAFT && a.status !== AlertStatus.SCHEDULED) {
+      throw new BadRequestException(
+        'This alert has already been sent or is sending — it can no longer be edited',
+      );
+    }
+
+    const currentSegmentIds = a.segmentIds.map((s) => String(s)).sort();
+    const nextSegmentIds = [...dto.segmentIds].sort();
+    const segmentsChanged =
+      currentSegmentIds.length !== nextSegmentIds.length ||
+      currentSegmentIds.some((id, i) => id !== nextSegmentIds[i]);
+
+    if (segmentsChanged) {
+      const { segmentNames, members } = await this.resolveRecipients(
+        tenantId,
+        dto.segmentIds,
+      );
+      a.segmentIds = dto.segmentIds.map((id) => new Types.ObjectId(id));
+      a.segmentNames = segmentNames;
+      a.recipients = this.toRecipientDocs(members) as any;
+    }
+
+    a.title = dto.title;
+    a.category = dto.category;
+    a.priority = dto.priority;
+    a.triggerType = dto.triggerType ?? '';
+    a.source = dto.source ?? '';
+    a.summary = dto.summary;
+    a.actionRequired = dto.actionRequired ?? '';
+    a.effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : null;
+    a.deadline = dto.deadline ? new Date(dto.deadline) : null;
+    await a.save();
+    return a.toObject();
+  }
+
+  async delete(tenantId: string, id: string) {
+    const res = await this.model.deleteOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!res.deletedCount) throw new NotFoundException('Alert not found');
+    return { deleted: true };
+  }
+
+  async schedule(tenantId: string, id: string, dto: ScheduleAlertDto) {
+    const a = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!a) throw new NotFoundException('Alert not found');
+    if (a.status !== AlertStatus.DRAFT) {
+      throw new BadRequestException('Only a draft alert can be scheduled');
+    }
+    a.status = AlertStatus.SCHEDULED;
+    a.scheduledAt = new Date(dto.scheduledAt);
+    await a.save();
+    return a.toObject();
+  }
+
+  async unschedule(tenantId: string, id: string) {
+    const a = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!a) throw new NotFoundException('Alert not found');
+    if (a.status !== AlertStatus.SCHEDULED) {
+      throw new BadRequestException(
+        'Only a scheduled alert can be unscheduled',
+      );
+    }
+    a.status = AlertStatus.DRAFT;
+    a.scheduledAt = null;
+    await a.save();
+    return a.toObject();
+  }
+
+  // Real sends, one per real recipient, via EmailService's real SMTP
+  // transport — same partial-failure handling as
+  // CampaignService.sendNow: each recipient's delivered flag reflects
+  // whether that specific send actually succeeded.
+  async sendNow(tenantId: string, id: string) {
+    const a = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!a) throw new NotFoundException('Alert not found');
+    if (a.status === AlertStatus.SENT) {
+      throw new BadRequestException('This alert has already been sent');
+    }
+
+    a.status = AlertStatus.SENDING;
+    await a.save();
+
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    for (const r of a.recipients as any[]) {
+      try {
+        const { subject, html } = crmAlertTemplate({
+          businessName,
+          recipientName: r.clientName,
+          recipientRole: recipientRoleLabel(
+            r.sourceType ?? SegmentAudience.CLIENT,
+          ),
+          title: a.title,
+          category: a.category,
+          priority: a.priority,
+          summary: a.summary,
+          actionRequired: a.actionRequired || null,
+          source: a.source || null,
+          effectiveDate: a.effectiveDate ? a.effectiveDate.toISOString() : null,
+          deadline: a.deadline ? a.deadline.toISOString() : null,
+        });
+        await this.emailService.sendCampaign(r.email, subject, html);
+        r.delivered = true;
+        r.deliveryError = null;
+      } catch (err: any) {
+        r.delivered = false;
+        r.deliveryError = err?.message ?? 'Send failed';
+      }
+    }
+
+    a.status = AlertStatus.SENT;
+    a.sentAt = new Date();
+    await a.save();
+    return a.toObject();
+  }
+
+  async sendTest(tenantId: string, id: string, dto: SendTestAlertDto) {
+    const a = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!a) throw new NotFoundException('Alert not found');
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const { subject, html } = crmAlertTemplate({
+      businessName,
+      title: a.title,
+      category: a.category,
+      priority: a.priority,
+      summary: a.summary,
+      actionRequired: a.actionRequired || null,
+      source: a.source || null,
+      effectiveDate: a.effectiveDate ? a.effectiveDate.toISOString() : null,
+      deadline: a.deadline ? a.deadline.toISOString() : null,
+      isTest: true,
+    });
+    await this.emailService.sendCampaign(dto.to, subject, html);
+    return { sent: true };
+  }
+}
+
+// ── Same missing piece as CampaignSchedulerService, for Alerts — a
+// real background job that actually sends a scheduled alert once its
+// time arrives. Reuses AlertService.sendNow so a scheduled send and a
+// manual "Send now" can never diverge in behaviour. ──────────────────
+
+@Injectable()
+export class AlertSchedulerService {
+  private readonly logger = new Logger(AlertSchedulerService.name);
+
+  constructor(
+    @InjectModel(Alert.name)
+    private readonly model: Model<AlertDocument>,
+    private readonly alertService: AlertService,
+  ) {}
+
+  @Cron(CronExpression.EVERY_MINUTE)
+  async sendDueAlerts(): Promise<void> {
+    const due = await this.model
+      .find({
+        status: AlertStatus.SCHEDULED,
+        scheduledAt: { $lte: new Date() },
+      })
+      .select('_id tenantId')
+      .lean();
+
+    for (const a of due) {
+      try {
+        await this.alertService.sendNow(String(a.tenantId), String(a._id));
+        this.logger.log(`Sent scheduled alert ${a._id}`);
+      } catch (err: any) {
+        this.logger.error(
+          `Failed to send scheduled alert ${a._id}: ${err?.message}`,
         );
       }
     }

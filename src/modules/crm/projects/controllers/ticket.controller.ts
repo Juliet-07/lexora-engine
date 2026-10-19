@@ -6,6 +6,7 @@ import {
   Body,
   Param,
   Query,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -13,11 +14,12 @@ import {
   ApiOperation,
   ApiQuery,
 } from '@nestjs/swagger';
-import { TicketService } from '../services';
+import { TicketService, MandateService, TimeEntryService } from '../services';
 import {
   AssignTicketDto,
   UpdateTicketStatusDto,
   AddTicketNoteDto,
+  ConvertTicketToMandateDto,
 } from '../dtos';
 import { TicketStatus } from '../schemas';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
@@ -35,7 +37,15 @@ import { RequiresModule } from 'src/common/decorators/requires-module.decorator'
 @RequiresModule(PlatformModuleKey.CRM)
 @Controller('crm/tickets')
 export class TicketController {
-  constructor(private readonly service: TicketService) {}
+  constructor(
+    private readonly service: TicketService,
+    // Composed here rather than inside TicketService, which stays a
+    // leaf with no knowledge of Mandate/TimeEntry (see ProjectsModule's
+    // docstring) — "Convert to mandate" genuinely needs both, so the
+    // controller is where that composition belongs.
+    private readonly mandateService: MandateService,
+    private readonly timeEntryService: TimeEntryService,
+  ) {}
 
   @Get()
   @ApiQuery({ name: 'status', required: false, enum: TicketStatus })
@@ -103,6 +113,73 @@ export class TicketController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.setStatus(t || u, id, dto);
+  }
+
+  // Real conversion — a ticket that's grown past a quick fix becomes
+  // a billable Mandate: the tenant confirms the engagement details
+  // Mandate.create() needs (fee structure, manager, budget, target
+  // date) that a ticket has no equivalent of, and whatever hours are
+  // already logged on the ticket transfer onto the new mandate as its
+  // first time entry. A ticket can only be converted once.
+  @Post(':id/convert-to-mandate')
+  @ApiOperation({
+    summary:
+      'Turn this ticket into a Mandate — billable engagement details confirmed here, logged ticket time carried over',
+  })
+  async convertToMandate(
+    @Param('id') id: string,
+    @Body() dto: ConvertTicketToMandateDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const ticket = await this.service.getById(tenantId, id);
+    if ((ticket as any).convertedToMandateId) {
+      throw new BadRequestException(
+        `This ticket was already converted to mandate ${(ticket as any).convertedToMandateRef}`,
+      );
+    }
+
+    const mandate = await this.mandateService.create(tenantId, {
+      name: dto.name?.trim() || ticket.subject,
+      description: ticket.description || '',
+      clientUserId: String(ticket.clientUserId),
+      clientName: ticket.clientName,
+      type: dto.type,
+      manager: dto.manager,
+      teamId: dto.teamId,
+      teamName: dto.teamName,
+      targetDate: dto.targetDate,
+      budget: dto.budget,
+      feeStructure: dto.feeStructure,
+      currency: dto.currency,
+    });
+
+    // Carry over whatever time was already logged on the ticket — only
+    // possible once there's a real agent to attribute it to; loggedHrs
+    // has no logging UI yet (see Ticket.loggedHrs), so in practice this
+    // is usually 0 today, but the transfer is real once that exists.
+    if (ticket.loggedHrs > 0 && ticket.agentUserId) {
+      await this.timeEntryService.create(tenantId, {
+        memberUserId: String(ticket.agentUserId),
+        member: ticket.agent || 'Service desk',
+        mandateId: String((mandate as any)._id),
+        mandateName: (mandate as any).name,
+        taskTitle: `Service desk — ${ticket.ref}`,
+        narrative: `Time logged on service desk ticket ${ticket.ref}: ${ticket.subject}`,
+        date: new Date().toISOString(),
+        hours: ticket.loggedHrs,
+        billable: true,
+      });
+    }
+
+    const updatedTicket = await this.service.markConverted(
+      tenantId,
+      id,
+      String((mandate as any)._id),
+      (mandate as any).ref,
+    );
+    return { mandate, ticket: updatedTicket };
   }
 
   @Post(':id/notes')

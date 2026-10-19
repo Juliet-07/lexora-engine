@@ -71,9 +71,14 @@ export const SegmentSchema = SchemaFactory.createForClass(Segment);
 // CampaignRecipient below. Clicked/RSVP'd are honestly left false —
 // no email provider with click tracking is connected here. ────────
 
+// "Event invite" was retired Oct 2026 — CRM → Tools → Event Management
+// (src/pages/crm/tools/Events.tsx on the tenant) is now the one real
+// place an event lives, with its own invites/registrations/check-in;
+// this type no longer offers a shortcut that duplicated it. Historic
+// campaigns stored with that string (if any) just read back as plain
+// data — nothing here enforces the enum on read, only on write.
 export enum CampaignType {
   NEWSLETTER = 'Newsletter',
-  EVENT_INVITE = 'Event invite',
 }
 export enum CampaignStatus {
   DRAFT = 'Draft',
@@ -190,3 +195,82 @@ export class NewsletterDraft {
 }
 export const NewsletterDraftSchema =
   SchemaFactory.createForClass(NewsletterDraft);
+
+// ── Alerts — a distinct concept from Campaign: category/priority-
+// driven regulatory, legal, financial, compliance and other notices
+// broadcast to real segment members, with their own list, filter and
+// approve-and-send workflow (per the product owner's "Alerts" tab
+// design) rather than a Campaign with extra fields bolted on. Reuses
+// Segment and CampaignRecipient — same real send/snapshot semantics
+// as Campaign, just a different shape of content and its own send
+// path (AlertService, not CampaignService). ───────────────────────
+
+export enum AlertCategory {
+  REGULATORY = 'Regulatory',
+  LEGAL = 'Legal',
+  FINANCIAL = 'Financial',
+  COMPLIANCE = 'Compliance',
+  GOVERNMENT = 'Government',
+  SYSTEM = 'System',
+  ENGINEERING = 'Engineering',
+  INDUSTRY = 'Industry',
+  HEALTH_SAFETY = 'Health & Safety',
+  ENVIRONMENTAL = 'Environmental',
+  CYBERSECURITY = 'Cybersecurity',
+  SUPPLY_CHAIN = 'Supply chain',
+}
+export const ALERT_CATEGORIES: AlertCategory[] = Object.values(AlertCategory);
+
+export enum AlertPriority {
+  CRITICAL = 'Critical',
+  HIGH = 'High',
+  MEDIUM = 'Medium',
+  LOW = 'Low',
+}
+export const ALERT_PRIORITIES: AlertPriority[] = Object.values(AlertPriority);
+
+export enum AlertStatus {
+  DRAFT = 'Draft',
+  SCHEDULED = 'Scheduled',
+  SENDING = 'Sending',
+  SENT = 'Sent',
+}
+
+export type AlertDocument = Alert & Document;
+
+@Schema({ timestamps: true, collection: 'crm_tools_alerts' })
+export class Alert {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  tenantId: Types.ObjectId;
+
+  @Prop({ required: true, trim: true }) title: string;
+  @Prop({ enum: AlertCategory, required: true, index: true })
+  category: AlertCategory;
+  @Prop({ enum: AlertPriority, required: true, index: true })
+  priority: AlertPriority;
+  // Free text rather than a hard enum — the prototype's trigger-type
+  // list (regulation change, filing deadline, gazette notice, etc.)
+  // is long and advisory-firm-specific; locking it to a fixed enum
+  // would just mean adding a new one every time a tenant hits a type
+  // that isn't listed yet.
+  @Prop({ default: '' }) triggerType: string;
+  @Prop({ default: '' }) source: string;
+  @Prop({ required: true }) summary: string;
+  @Prop({ default: '' }) actionRequired: string;
+  @Prop({ default: null }) effectiveDate: Date | null;
+  @Prop({ default: null }) deadline: Date | null;
+
+  @Prop({ type: [Types.ObjectId], ref: 'Segment', default: [] })
+  segmentIds: Types.ObjectId[];
+  @Prop({ type: [String], default: [] }) segmentNames: string[];
+
+  @Prop({ enum: AlertStatus, default: AlertStatus.DRAFT, index: true })
+  status: AlertStatus;
+  @Prop({ default: null }) scheduledAt: Date | null;
+  @Prop({ default: null }) sentAt: Date | null;
+
+  // Same real snapshot-at-creation-time semantics as Campaign.recipients.
+  @Prop({ type: [CampaignRecipientSchema], default: [] })
+  recipients: CampaignRecipient[];
+}
+export const AlertSchema = SchemaFactory.createForClass(Alert);

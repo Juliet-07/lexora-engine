@@ -268,6 +268,32 @@ export class TicketService {
     }
   }
 
+  // Called by TicketController.convertToMandate once the real Mandate
+  // (and, where there's logged time to carry over, its TimeEntry)
+  // already exist — this just stores the link and guards against
+  // doing it twice. Deliberately doesn't create the Mandate itself:
+  // TicketService stays a leaf with no knowledge of Mandate/
+  // TimeEntry, matching every other service in this module (see
+  // ProjectsModule's docstring) — the controller composes the three
+  // leaf services instead.
+  async markConverted(
+    tenantId: string,
+    id: string,
+    mandateId: string,
+    mandateRef: string,
+  ) {
+    const t = await this.getRawDoc(tenantId, id);
+    if (t.convertedToMandateId) {
+      throw new BadRequestException(
+        `This ticket was already converted to mandate ${t.convertedToMandateRef}`,
+      );
+    }
+    t.convertedToMandateId = new Types.ObjectId(mandateId);
+    t.convertedToMandateRef = mandateRef;
+    await t.save();
+    return this.normalize(t.toObject());
+  }
+
   async addNote(tenantId: string, id: string, dto: AddTicketNoteDto) {
     const t = await this.getRawDoc(tenantId, id);
     t.notes.push({

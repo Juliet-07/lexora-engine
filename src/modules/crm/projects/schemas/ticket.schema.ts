@@ -113,6 +113,15 @@ export class Ticket {
   // "Convert to mandate" below.
   @Prop({ default: 0 }) loggedHrs: number;
 
+  // Set once by TicketController.convertToMandate — real link to the
+  // Mandate this ticket turned into, so "Convert to mandate" can be
+  // disabled afterwards and the tenant can jump straight to it. A
+  // ticket converts at most once; this is the guard against doing it
+  // twice as much as it's a display field.
+  @Prop({ type: Types.ObjectId, ref: 'Mandate', default: null })
+  convertedToMandateId: Types.ObjectId | null;
+  @Prop({ default: '' }) convertedToMandateRef: string;
+
   @Prop({ default: null, min: 1, max: 5 }) rating: number | null;
   @Prop({ default: null }) ratingComment: string | null;
 

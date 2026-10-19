@@ -5,12 +5,21 @@ import {
   IsEnum,
   IsBoolean,
   IsMongoId,
+  IsNumber,
+  IsDateString,
   Min,
   Max,
   IsInt,
   IsArray,
 } from 'class-validator';
-import { TicketPriority, TicketStatus, KbAudience, KbStatus } from '../schemas';
+import {
+  TicketPriority,
+  TicketStatus,
+  KbAudience,
+  KbStatus,
+  MandateType,
+  FeeStructure,
+} from '../schemas';
 
 // The only real ticket-creation entry point — a client raising one.
 // There's no tenant-side "New ticket" button by design; tenants
@@ -94,4 +103,29 @@ export class UpdateKbArticleDto {
 
 export class VoteKbArticleDto {
   @ApiProperty() @IsBoolean() helpful: boolean;
+}
+
+// "Convert to mandate" — turns a service-desk request into a real,
+// billable Mandate once it's grown past a quick fix. The tenant
+// confirms the real engagement details (fee structure, manager,
+// budget, target date) that Mandate.create() requires but a ticket
+// has no equivalent of; name/description/client are carried over
+// from the ticket itself rather than asked for again.
+export class ConvertTicketToMandateDto {
+  @ApiPropertyOptional({
+    description: 'Defaults to the ticket subject if left blank.',
+  })
+  @IsOptional()
+  @IsString()
+  name?: string;
+  @ApiProperty({ enum: MandateType }) @IsEnum(MandateType) type: MandateType;
+  @ApiProperty({ enum: FeeStructure })
+  @IsEnum(FeeStructure)
+  feeStructure: FeeStructure;
+  @ApiProperty() @IsNumber() @Min(0) budget: number;
+  @ApiProperty() @IsDateString() targetDate: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() manager?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() teamId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() teamName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
 }

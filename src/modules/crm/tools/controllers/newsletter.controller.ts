@@ -13,6 +13,7 @@ import {
   CampaignService,
   NewsletterDraftService,
   ClientNewsletterService,
+  AlertService,
 } from '../services';
 import {
   CreateSegmentDto,
@@ -22,6 +23,10 @@ import {
   ScheduleCampaignDto,
   SendTestDto,
   MarkDraftConvertedDto,
+  CreateAlertDto,
+  UpdateAlertDto,
+  ScheduleAlertDto,
+  SendTestAlertDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
@@ -238,6 +243,115 @@ export class NewsletterDraftController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.markConverted(t || u, id, dto.campaignId);
+  }
+}
+
+@ApiTags('CRM — Tools — Newsletters')
+@ApiBearerAuth()
+@UserTypes(UserType.TENANT)
+@RequiresModule(PlatformModuleKey.CRM)
+@Controller('tools/alerts')
+export class AlertController {
+  constructor(private readonly service: AlertService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'All alerts' })
+  getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
+    return this.service.getAll(t || u);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'One alert' })
+  getById(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getById(t || u, id);
+  }
+
+  @Post()
+  @ApiOperation({
+    summary:
+      "Create an alert — snapshots the target segment's real members at creation time",
+  })
+  create(
+    @Body() dto: CreateAlertDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.create(t || u, dto);
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary:
+      'Edit an alert — allowed while Draft or Scheduled; refused once Sending or Sent',
+  })
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateAlertDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.update(t || u, id, dto);
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Delete an alert' })
+  delete(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.delete(t || u, id);
+  }
+
+  @Post(':id/schedule')
+  @ApiOperation({ summary: 'Schedule a draft alert for a future send' })
+  schedule(
+    @Param('id') id: string,
+    @Body() dto: ScheduleAlertDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.schedule(t || u, id, dto);
+  }
+
+  @Post(':id/unschedule')
+  @ApiOperation({
+    summary: 'Cancel a scheduled send and return the alert to Draft',
+  })
+  unschedule(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.unschedule(t || u, id);
+  }
+
+  @Post(':id/send-now')
+  @ApiOperation({
+    summary:
+      'Approve and send immediately — real SMTP sends to every real recipient',
+  })
+  sendNow(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.sendNow(t || u, id);
+  }
+
+  @Post(':id/send-test')
+  @ApiOperation({ summary: 'Send a real test email to one address' })
+  sendTest(
+    @Param('id') id: string,
+    @Body() dto: SendTestAlertDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.sendTest(t || u, id, dto);
   }
 }
 
