@@ -721,21 +721,14 @@ export class EmployeeService {
       .select('tenantProfile')
       .lean();
 
-    // ADD THIS TEMPORARILY:
-    const verify = await this.userModel
-      .findById(user._id)
-      .select('+password')
-      .lean();
-    console.log('[resend] stored hash:', verify?.password);
-    console.log('[resend] tempPassword:', tempPassword);
-    console.log(
-      '[resend] bcrypt verify:',
-      await bcrypt.compare(tempPassword, verify?.password ?? ''),
-    );
-
-    // 6. Send the welcome email using the same mailService call
+    // 6. Send the welcome email using the same mailService call — to
+    // the linked User's own email, since that's what login actually
+    // checks against. (employee.email and user.email are normally kept
+    // in sync by updateEmployee, but sending to the login email itself
+    // here is the belt-and-braces version: it's the one address that's
+    // guaranteed to match what AuthService.login() looks up.)
     await this.mailService.sendEmployeeWelcome({
-      to: employee.email,
+      to: user.email,
       firstName: employee.firstName,
       businessName: (tenant as any)?.tenantProfile?.businessName ?? '',
       jobTitle: employee.jobTitle,
@@ -936,12 +929,24 @@ export class EmployeeService {
       {} as Record<string, number>,
     );
 
+    const terminatedCount = statusMap[EmploymentStatus.TERMINATED] ?? 0;
+    const resignedCount = statusMap[EmploymentStatus.RESIGNED] ?? 0;
+
     return {
+      // `total` is kept as-is (every employee record, archived or not) for
+      // backward compatibility — the headcount the UI actually shows is
+      // activeHeadcount below, since a terminated/resigned employee isn't
+      // part of headcount any more (see EmployeeService.getEmployees).
       total,
       active: statusMap[EmploymentStatus.ACTIVE] ?? 0,
       onLeave: statusMap[EmploymentStatus.ON_LEAVE] ?? 0,
       probation: statusMap[EmploymentStatus.PROBATION] ?? 0,
-      terminated: statusMap[EmploymentStatus.TERMINATED] ?? 0,
+      terminated: terminatedCount,
+      resigned: resignedCount,
+      // Everyone currently on the books — active, on leave, on probation,
+      // suspended — i.e. total minus the archived (terminated/resigned).
+      activeHeadcount: total - terminatedCount - resignedCount,
+      archivedCount: terminatedCount + resignedCount,
       teamCount,
       locationCount,
       byTeam,
@@ -967,6 +972,35 @@ export class EmployeeService {
       update.probationEndDate = new Date(dto.probationEndDate);
     if (dto.teamId) update.teamId = new Types.ObjectId(dto.teamId);
     if (dto.locationId) update.locationId = new Types.ObjectId(dto.locationId);
+
+    // Changing an employee's email must also change their login email —
+    // they're the same person logging in with it. Previously only
+    // Employee.email was updated, leaving User.email stale: the welcome
+    // email (and anything else addressed to employee.email) would go to
+    // the new address while the account could still only be found by
+    // the old one, so logging in with the new email as advertised
+    // returned "invalid credentials".
+    if (dto.email) {
+      const newEmail = dto.email.toLowerCase();
+      const current = await this.employeeModel
+        .findOne({ _id: employeeId, tenantId: new Types.ObjectId(tenantId) })
+        .select('email userId')
+        .lean();
+      if (!current) throw new NotFoundException('Employee not found');
+
+      if (newEmail !== (current as any).email?.toLowerCase()) {
+        const emailTaken = await this.userModel.findOne({
+          email: newEmail,
+          _id: { $ne: (current as any).userId },
+        });
+        if (emailTaken) {
+          throw new ConflictException(
+            'This email is already registered on the platform',
+          );
+        }
+      }
+      update.email = newEmail;
+    }
 
     // Every allowance always carries the employee's own salary
     // currency. This PATCH may change allowances without touching
@@ -1124,11 +1158,12 @@ export class EmployeeService {
 
     if (!employee) throw new NotFoundException('Employee not found');
 
-    if (dto.firstName || dto.lastName || dto.phone) {
+    if (dto.firstName || dto.lastName || dto.phone || dto.email) {
       const userUpdate: any = {};
       if (dto.firstName) userUpdate.firstName = dto.firstName;
       if (dto.lastName) userUpdate.lastName = dto.lastName;
       if (dto.phone) userUpdate.phone = dto.phone;
+      if (dto.email) userUpdate.email = dto.email.toLowerCase();
       await this.userModel.findByIdAndUpdate(
         (employee as any).userId,
         userUpdate,
@@ -1505,19 +1540,45 @@ export class EmployeeService {
     employee.endDate = new Date(dto.lastWorkingDay);
     await employee.save();
 
+    const employeeName = `${employee.firstName} ${employee.lastName}`;
+
     this.eventEmitter.emit('employee.terminated', {
       tenantId,
       employeeId: (employee._id as Types.ObjectId).toString(),
     });
 
+    // Lets the tenant know a resignation came in — nothing else in this
+    // flow alerts them, since there was no tenant action that kicked it
+    // off (unlike a termination, which the tenant obviously already
+    // knows about). Sends both an email and an in-app notification.
+    this.eventEmitter.emit('tenant.employee.resignation_submitted', {
+      tenantId,
+      employeeId: (employee._id as Types.ObjectId).toString(),
+      employeeName,
+      lastWorkingDay: new Date(dto.lastWorkingDay),
+    });
+
+    // `reason` is a short plain-text field shown as-is (no HTML
+    // rendering) elsewhere in the offboarding record — e.g. the
+    // detail panel's "Notes" block. The full typed letter, as rich
+    // HTML, belongs in noticeContent instead (rendered properly on
+    // both the tenant's Step 2 and the employee's own Notices page),
+    // so strip tags here rather than dumping raw HTML into a
+    // plain-text field.
+    const plainTextReason = dto.content
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 300);
+
     await this.offboardingService.createFromTermination({
       tenantId,
       employeeId: (employee._id as Types.ObjectId).toString(),
-      employeeName: `${employee.firstName} ${employee.lastName}`,
+      employeeName,
       jobTitle: employee.jobTitle,
       startDate: employee.startDate,
       endDate: new Date(dto.lastWorkingDay),
-      reason: dto.content,
+      reason: plainTextReason || 'Employee-submitted resignation',
       status: 'resigned',
       category: null,
       noticeContent: dto.content,

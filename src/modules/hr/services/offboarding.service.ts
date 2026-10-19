@@ -65,9 +65,9 @@ const DEFAULT_CLEARANCE_CHECKLIST: { key: string; label: string }[] = [
   },
   {
     key: 'rssb_form_3',
-    label: 'RSSB Form 3 (cessation of employment) submitted',
+    label: 'Social security fffboarding submitted',
   },
-  { key: 'paye_reconciliation', label: 'RRA PAYE reconciliation completed' },
+  { key: 'paye_reconciliation', label: 'Tax reconciliation completed' },
   {
     key: 'confidential_materials',
     label: 'Confidential materials returned or destroyed',
@@ -88,8 +88,7 @@ const DEFAULT_FAIRNESS_CHECKLIST: Record<
     {
       cat: 'substantive',
       item: 'Valid ground identified',
-      detail:
-        'Serious or gross misconduct (Art. 28) clearly identified and documented.',
+      detail: 'Serious or gross misconduct clearly identified and documented.',
     },
     {
       cat: 'substantive',
@@ -131,7 +130,7 @@ const DEFAULT_FAIRNESS_CHECKLIST: Record<
       cat: 'substantive',
       item: 'Valid ground identified',
       detail:
-        'Poor performance / incapacity (Art. 29) clearly identified and documented.',
+        'Poor performance / incapacity clearly identified and documented.',
     },
     {
       cat: 'substantive',
@@ -170,7 +169,7 @@ const DEFAULT_FAIRNESS_CHECKLIST: Record<
     {
       cat: 'substantive',
       item: 'Valid ground identified',
-      detail: 'Operational requirements / redundancy (Art. 30) documented.',
+      detail: 'Operational requirements / redundancy documented.',
     },
     {
       cat: 'substantive',
@@ -200,14 +199,14 @@ const DEFAULT_FAIRNESS_CHECKLIST: Record<
     {
       cat: 'procedural',
       item: 'Outcome letter issued',
-      detail: 'Confirmation letter issued; severance per Art. 30 calculated.',
+      detail: 'Confirmation letter issued; severance calculated.',
     },
   ],
   [TerminationCategory.PROBATION]: [
     {
       cat: 'substantive',
       item: 'Valid ground identified',
-      detail: 'Probation failure (Art. 33) — reasons stated in writing.',
+      detail: 'Probation failure — reasons stated in writing.',
     },
     {
       cat: 'substantive',
@@ -227,7 +226,7 @@ const DEFAULT_FAIRNESS_CHECKLIST: Record<
     {
       cat: 'procedural',
       item: 'Disciplinary hearing conducted',
-      detail: 'N/A — 3 days written notice required instead (Art. 33).',
+      detail: 'N/A — 3 days written notice required instead.',
     },
     {
       cat: 'procedural',
@@ -237,7 +236,7 @@ const DEFAULT_FAIRNESS_CHECKLIST: Record<
     {
       cat: 'procedural',
       item: 'Outcome letter issued',
-      detail: 'Issued per Art. 33 notice requirement.',
+      detail: 'Issued notice requirement.',
     },
   ],
   [TerminationCategory.MUTUAL]: [

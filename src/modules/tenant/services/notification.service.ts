@@ -71,6 +71,12 @@ interface ProbationStartedEvent {
   employeeId: string;
   probationEndDate: Date;
 }
+interface EmployeeResignationSubmittedEvent {
+  tenantId: string;
+  employeeId: string;
+  employeeName: string;
+  lastWorkingDay: Date;
+}
 interface AuditDocumentRequestedEvent {
   tenantId: string;
   employeeUserId: string;
@@ -546,6 +552,23 @@ export class TenantNotificationService {
       'Probation period started',
       `${name}'s probation ends ${new Date(e.probationEndDate).toLocaleDateString()}.`,
       '/hr/employees',
+    );
+  }
+
+  // An employee submitting their own resignation starts a real
+  // offboarding record with no tenant action required to kick it off —
+  // unlike a tenant-initiated termination, which the tenant obviously
+  // already knows about. So this is the one offboarding path that
+  // needs its own "something happened" alert.
+  @OnEvent('tenant.employee.resignation_submitted')
+  async onEmployeeResignationSubmitted(e: EmployeeResignationSubmittedEvent) {
+    await this.create(
+      e.tenantId,
+      e.tenantId,
+      TenantNotificationType.HR,
+      'Resignation submitted',
+      `${e.employeeName} has submitted their resignation, with a last working day of ${new Date(e.lastWorkingDay).toLocaleDateString()}.`,
+      '/hr/recruitment?tab=offboarding',
     );
   }
 
