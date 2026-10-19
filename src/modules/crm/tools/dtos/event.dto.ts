@@ -11,6 +11,7 @@ import {
   ArrayMinSize,
   IsEmail,
   ValidateNested,
+  ValidateIf,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -33,7 +34,15 @@ export class CreateEventDto {
   @ApiPropertyOptional() @IsOptional() @IsString() host?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() agenda?: string;
   // External only — ignored for InHouse events (no registration step).
-  @ApiPropertyOptional() @IsOptional() @IsDateString() registrationDeadline?: string;
+  // @IsOptional() alone only skips `null`/`undefined`, not an empty
+  // string — and the InHouse create/edit form always sends "" here
+  // since the deadline field isn't shown at all for that mode. Only
+  // validate the format when a real value was actually provided;
+  // EventService.applyDto already discards it outright for InHouse.
+  @ApiPropertyOptional()
+  @ValidateIf((o) => !!o.registrationDeadline)
+  @IsDateString()
+  registrationDeadline?: string;
 }
 
 // Same real fields as create — editing while Draft or Published is
