@@ -30,6 +30,7 @@ import {
   BoardMember,
   BoardMemberSchema,
 } from 'src/modules/grc/governance/schemas/board-member.schema';
+import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
 import {
   Comment,
   CommentSchema,
@@ -43,6 +44,8 @@ import {
   NewsletterDraftSchema,
   Alert,
   AlertSchema,
+  Event,
+  EventSchema,
   CalendarEvent,
   CalendarEventSchema,
   TenantContractTemplate,
@@ -64,6 +67,7 @@ import {
   CampaignSchedulerService,
   AlertService,
   AlertSchedulerService,
+  EventService,
   TenantContractTemplateService,
   TenantLetterheadService,
   ToolContractPdfService,
@@ -78,6 +82,11 @@ import {
   ClientNewsletterController,
   BoardPortalNewsletterController,
   AlertController,
+  EventController,
+  EventRegistrationController,
+  ClientEventController,
+  BoardPortalEventController,
+  MyEventsController,
   CalendarController,
   TenantContractTemplateController,
   TenantLetterheadController,
@@ -98,6 +107,7 @@ import {
       { name: Campaign.name, schema: CampaignSchema },
       { name: NewsletterDraft.name, schema: NewsletterDraftSchema },
       { name: Alert.name, schema: AlertSchema },
+      { name: Event.name, schema: EventSchema },
       { name: CalendarEvent.name, schema: CalendarEventSchema },
       { name: User.name, schema: UserSchema },
       { name: ClientProfileRecord.name, schema: ClientProfileSchema },
@@ -120,6 +130,10 @@ import {
       // own cross-module registrations (ToolContract, Employee, etc.)
       { name: Contact.name, schema: ContactSchema },
       { name: BoardMember.name, schema: BoardMemberSchema },
+      // Same direct-registration convention — EventService resolves
+      // real Employee invitees/acknowledgements without importing
+      // HrModule's own providers.
+      { name: Employee.name, schema: EmployeeSchema },
     ]),
   ],
   providers: [
@@ -134,6 +148,7 @@ import {
     CampaignSchedulerService,
     AlertService,
     AlertSchedulerService,
+    EventService,
     TenantContractTemplateService,
     TenantLetterheadService,
     ToolContractPdfService,
@@ -149,6 +164,11 @@ import {
     ClientNewsletterController,
     BoardPortalNewsletterController,
     AlertController,
+    EventController,
+    EventRegistrationController,
+    ClientEventController,
+    BoardPortalEventController,
+    MyEventsController,
     CalendarController,
     TenantContractTemplateController,
     TenantLetterheadController,
