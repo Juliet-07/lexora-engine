@@ -1222,6 +1222,11 @@ export class OffboardingService {
       approvedAt: r.finalPay.approvedAt,
       paid: !!r.finalPay.paid,
       paidAt: r.finalPay.paidAt ?? null,
+      // The full frozen breakdown, so the Payroll tab's "View more" can
+      // show exactly what was approved without a second round trip.
+      // `netFinalPay` here is already net of outstanding advances/loans
+      // (the calculator subtracts loan installments before returning it).
+      breakdown: r.finalPay,
     }));
   }
 

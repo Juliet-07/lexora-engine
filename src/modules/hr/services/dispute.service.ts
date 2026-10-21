@@ -87,10 +87,63 @@ export class DisputeService {
     });
   }
 
-  private determineResolverLevel(
+  /**
+   * Walks up the reporting line from an employee and returns every
+   * superior's id (direct manager, their manager, … up to the HoD).
+   * Depth-capped so a bad `reportsToManagerId` loop can't spin forever.
+   */
+  private async getSuperiorIds(employee: EmployeeDocument): Promise<string[]> {
+    const chain: string[] = [];
+    let nextId: any = employee.reportsToManagerId;
+    for (let depth = 0; nextId && depth < 10; depth++) {
+      const id = nextId.toString();
+      if (chain.includes(id)) break;
+      chain.push(id);
+      const boss = await this.employeeModel
+        .findById(id)
+        .select('reportsToManagerId')
+        .lean();
+      nextId = (boss as any)?.reportsToManagerId;
+    }
+    return chain;
+  }
+
+  /**
+   * Everyone who sits below `employee`: direct reports and (for an HoD)
+   * the reports of those reports. Used for read-visibility only.
+   */
+  private async getSubordinateIds(
+    employee: EmployeeDocument,
+    hops = 2,
+  ): Promise<string[]> {
+    const all = new Set<string>();
+    let frontier: any[] = [employee._id];
+    for (let i = 0; i < hops && frontier.length > 0; i++) {
+      const next = await this.employeeModel
+        .find({ reportsToManagerId: { $in: frontier } })
+        .distinct('_id');
+      frontier = next.filter((id) => !all.has(id.toString()));
+      frontier.forEach((id) => all.add(id.toString()));
+    }
+    return [...all];
+  }
+
+  /**
+   * Decides who adjudicates a new case.
+   *
+   *  - Complainant is a manager or HoD, or has nobody above them → HR.
+   *  - Complaint names the complainant's own manager → HR.
+   *  - Complaint names ANYONE further up the complainant's reporting
+   *    line (e.g. the HoD above their manager) → HR. A manager can't
+   *    sit in judgment over their own boss.
+   *  - Complaint names a Head of Department (any department) → HR.
+   *    Same reason: no line manager outranks an HoD.
+   *  - Otherwise the complainant's manager resolves it.
+   */
+  private async determineResolverLevel(
     complainant: EmployeeDocument,
     respondentIds: string[],
-  ): 'manager' | 'tenant' {
+  ): Promise<'manager' | 'tenant'> {
     if (
       complainant.hierarchyRole === 'head_of_department' ||
       complainant.hierarchyRole === 'manager'
@@ -100,9 +153,18 @@ export class DisputeService {
     if (!complainant.reportsToManagerId) {
       return 'tenant';
     }
-    const managerId = complainant.reportsToManagerId.toString();
-    const isAgainstOwnManager = respondentIds.includes(managerId);
-    return isAgainstOwnManager ? 'tenant' : 'manager';
+    if (respondentIds.length === 0) return 'manager';
+
+    const superiors = await this.getSuperiorIds(complainant);
+    if (respondentIds.some((id) => superiors.includes(id.toString()))) {
+      return 'tenant';
+    }
+
+    const namedHod = await this.employeeModel.exists({
+      _id: { $in: respondentIds.map((id) => new Types.ObjectId(id)) },
+      hierarchyRole: 'head_of_department',
+    });
+    return namedHod ? 'tenant' : 'manager';
   }
 
   private async assertIsAssignedManagerForCase(
@@ -132,6 +194,16 @@ export class DisputeService {
     if (!isAssignedManager) {
       throw new ForbiddenException(
         'You are not the assigned manager for this case.',
+      );
+    }
+    // Reporting lines can change after a case is opened. If the assigned
+    // manager is now named on the case, they must not adjudicate it.
+    const managerIdStr = (manager._id as Types.ObjectId).toString();
+    if (
+      (dispute.respondentIds ?? []).some((r) => r.toString() === managerIdStr)
+    ) {
+      throw new ForbiddenException(
+        'You are named on this case, so it must be handled by HR.',
       );
     }
   }
@@ -539,7 +611,10 @@ export class DisputeService {
       if (!complainant) {
         throw new NotFoundException('Employee profile not found.');
       }
-      resolverLevel = this.determineResolverLevel(complainant, respondentIds);
+      resolverLevel = await this.determineResolverLevel(
+        complainant,
+        respondentIds,
+      );
     } else {
       resolverLevel = 'tenant';
     }
@@ -653,12 +728,8 @@ export class DisputeService {
     if (!manager) {
       throw new ForbiddenException('Employee profile not found.');
     }
-
-    const directReportIds = (
-      await this.employeeModel
-        .find({ reportsToManagerId: manager._id })
-        .distinct('_id')
-    ).map((id) => id.toString());
+    const managerId = (manager._id as Types.ObjectId).toString();
+    const isHod = manager.hierarchyRole === 'head_of_department';
 
     const dispute = await this.disputeModel
       .findOne({
@@ -668,18 +739,48 @@ export class DisputeService {
       .lean();
     if (!dispute) throw new NotFoundException('Dispute case not found.');
 
-    // Read access follows the same "involves one of my direct
-    // reports" rule as the team-cases list — deliberately NOT
-    // restricted to resolverLevel === 'manager', so a manager can
-    // still view (but not act on) a case after it's been escalated.
-    const isVisible =
-      directReportIds.includes(dispute.complainantId?.toString()) ||
-      (dispute.respondentIds ?? []).some((r: any) =>
-        directReportIds.includes(r.toString()),
-      );
+    const complainantId = dispute.complainantId?.toString();
+    const respondentIds = (dispute.respondentIds ?? []).map((r: any) =>
+      r.toString(),
+    );
 
-    if (!isVisible) {
+    // A party to the case reads it from "My disputes", not from the
+    // team/department view. This route is for people looking in from above.
+    if (complainantId === managerId || respondentIds.includes(managerId)) {
+      throw new ForbiddenException(
+        'You are a party to this case — open it from My Disputes instead.',
+      );
+    }
+
+    // Read access follows the "involves someone below me" rule as the
+    // team-cases list — deliberately NOT restricted to
+    // resolverLevel === 'manager', so a manager can still view (but not
+    // act on) a case after it's been escalated. An HoD sees their whole
+    // department (two levels down), a manager sees direct reports.
+    const visibleIds = new Set(
+      await this.getSubordinateIds(manager, isHod ? 2 : 1),
+    );
+    const involvesSubordinate =
+      (complainantId && visibleIds.has(complainantId)) ||
+      respondentIds.some((r: string) => visibleIds.has(r));
+    if (!involvesSubordinate) {
       throw new ForbiddenException('You do not have access to this case.');
+    }
+
+    // A case against someone senior to the viewer (typically the HoD
+    // above a manager) stays between the parties and HR.
+    if (!isHod && respondentIds.length > 0) {
+      const seniors = await this.employeeModel.exists({
+        _id: { $in: respondentIds.map((r: string) => new Types.ObjectId(r)) },
+        hierarchyRole: 'head_of_department',
+      });
+      const mySuperiors = await this.getSuperiorIds(manager);
+      if (
+        seniors ||
+        respondentIds.some((r: string) => mySuperiors.includes(r))
+      ) {
+        throw new ForbiddenException('You do not have access to this case.');
+      }
     }
 
     const [enriched] = await this.enrichWithComplainant([dispute]);
@@ -1360,21 +1461,18 @@ export class DisputeService {
     if (!hod || hod.hierarchyRole !== 'head_of_department') return [];
 
     // Two-hop: managers under HoD, then everyone under those managers
-    const managerIds = await this.employeeModel
-      .find({ reportsToManagerId: hod._id })
-      .distinct('_id');
+    const allDepartmentIds = await this.getSubordinateIds(hod, 2);
+    if (allDepartmentIds.length === 0) return [];
 
-    if (managerIds.length === 0) return [];
-
-    const allReportIds = await this.employeeModel
-      .find({ reportsToManagerId: { $in: managerIds } })
-      .distinct('_id');
-
-    const allDepartmentIds = [...managerIds, ...allReportIds];
-
+    // Cases the HoD is personally a party to (filed by them, or against
+    // them) are NOT part of this oversight list — they belong in the
+    // HoD's own "filed by me / filed against me" tabs, and a HoD must not
+    // get a supervisory window onto a complaint about themselves.
     const disputes = await this.disputeModel
       .find({
         tenantId: new Types.ObjectId(tenantId),
+        complainantId: { $ne: hod._id },
+        respondentIds: { $ne: hod._id },
         $or: [
           { complainantId: { $in: allDepartmentIds } },
           { respondentIds: { $in: allDepartmentIds } },
