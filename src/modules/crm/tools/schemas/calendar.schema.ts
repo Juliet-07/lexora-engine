@@ -21,6 +21,7 @@ export enum CalendarLayer {
   LITIGATION = 'Litigation',
   CONTRACT = 'Contract',
   FINANCE = 'Finance',
+  HR = 'HR',
 }
 export enum RecurrenceRule {
   NONE = 'None',

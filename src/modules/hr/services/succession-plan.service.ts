@@ -26,6 +26,7 @@ import {
   SetNextReviewDto,
   SetEmergencyCoverDto,
 } from '../dtos';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PerformanceReviewService } from './performance-review.service';
 
 const READINESS_RANK: Record<string, number> = {
@@ -45,7 +46,16 @@ export class SuccessionPlanService {
     @InjectModel(OffboardingRecord.name)
     private readonly offboardingModel: Model<OffboardingRecordDocument>,
     private readonly performanceReviewService: PerformanceReviewService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  // Tells SuccessionAlertService the tenant's plans changed so it can
+  // re-evaluate alerts and calendar entries. An event rather than a
+  // direct call: the alert service itself reads risk alerts from this
+  // service, so injecting it here would be a circular dependency.
+  private notifyChanged(tenantId: string): void {
+    this.eventEmitter.emit('hr.succession.changed', { tenantId });
+  }
 
   // ═══════════════════════════════════════════════════════════
   // CORE CRUD
@@ -109,7 +119,7 @@ export class SuccessionPlanService {
     if (!incumbent)
       throw new BadRequestException('Incumbent employee not found.');
 
-    return this.planModel.create({
+    const created = await this.planModel.create({
       tenantId: new Types.ObjectId(tenantId),
       criticalRole: dto.criticalRole,
       department: dto.department ?? null,
@@ -121,6 +131,8 @@ export class SuccessionPlanService {
       notes: dto.notes ?? null,
       successors: [],
     });
+    this.notifyChanged(tenantId);
+    return created;
   }
 
   async update(
@@ -138,6 +150,7 @@ export class SuccessionPlanService {
       plan.overallReadiness = dto.overallReadiness as any;
     if (dto.notes !== undefined) plan.notes = dto.notes;
     await plan.save();
+    this.notifyChanged(tenantId);
     return plan;
   }
 
@@ -147,6 +160,12 @@ export class SuccessionPlanService {
       tenantId: new Types.ObjectId(tenantId),
     });
     if (!deleted) throw new NotFoundException('Succession plan not found');
+    // The plan is gone, so its calendar entries must go with it.
+    this.eventEmitter.emit('hr.succession.deleted', {
+      tenantId,
+      planId: String(deleted._id),
+    });
+    this.notifyChanged(tenantId);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -188,6 +207,7 @@ export class SuccessionPlanService {
     } as any);
 
     await plan.save();
+    this.notifyChanged(tenantId);
     return plan;
   }
 
@@ -201,6 +221,7 @@ export class SuccessionPlanService {
       (s) => s.employeeId.toString() !== employeeId,
     );
     await plan.save();
+    this.notifyChanged(tenantId);
     return plan;
   }
 
@@ -243,6 +264,7 @@ export class SuccessionPlanService {
     } as any;
 
     await plan.save();
+    this.notifyChanged(tenantId);
     return plan;
   }
 
@@ -285,6 +307,7 @@ export class SuccessionPlanService {
 
     this.recomputeReadinessPct(successor as any);
     await plan.save();
+    this.notifyChanged(tenantId);
     return plan;
   }
 
@@ -308,6 +331,7 @@ export class SuccessionPlanService {
     } as any);
     this.recomputeReadinessPct(successor as any);
     await plan.save();
+    this.notifyChanged(tenantId);
     return plan;
   }
 
@@ -330,6 +354,7 @@ export class SuccessionPlanService {
     milestone.status = status;
     this.recomputeReadinessPct(successor as any);
     await plan.save();
+    this.notifyChanged(tenantId);
     return plan;
   }
 
@@ -370,6 +395,7 @@ export class SuccessionPlanService {
     }
     successor.devPlan.nextReviewDate = new Date(dto.nextReviewDate);
     await plan.save();
+    this.notifyChanged(tenantId);
     return plan;
   }
 
@@ -401,6 +427,7 @@ export class SuccessionPlanService {
       plan.externalBackupNotes = dto.externalBackupNotes;
     }
     await plan.save();
+    this.notifyChanged(tenantId);
     return plan;
   }
 
@@ -412,6 +439,7 @@ export class SuccessionPlanService {
     const plan = await this.getById(tenantId, planId);
     plan.nextReviewDate = new Date(dto.nextReviewDate);
     await plan.save();
+    this.notifyChanged(tenantId);
     return plan;
   }
 
@@ -426,6 +454,7 @@ export class SuccessionPlanService {
     const alerts: {
       severity: 'high' | 'medium';
       type: string;
+      employeeId?: string;
       planId: string;
       role: string;
       title: string;
@@ -467,6 +496,7 @@ export class SuccessionPlanService {
           alerts.push({
             severity: 'high',
             type: 'successor_behind',
+            employeeId: s.employeeId.toString(),
             planId: p._id.toString(),
             role: p.criticalRole,
             title: `${p.criticalRole}: successor behind schedule`,

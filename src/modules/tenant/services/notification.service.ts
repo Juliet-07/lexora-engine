@@ -536,6 +536,26 @@ export class TenantNotificationService {
     );
   }
 
+  // Succession-planning alerts (no successor, role holder exiting, a
+  // review or milestone coming due…). SuccessionAlertService decides
+  // what is genuinely new; this just delivers it — portal record plus
+  // the standard tenant notification email.
+  @OnEvent('hr.succession.alert')
+  async onSuccessionAlert(e: {
+    tenantId: string;
+    title: string;
+    detail: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.tenantId,
+      TenantNotificationType.HR,
+      e.title,
+      e.detail,
+      '/hr/recruitment?tab=succession',
+    );
+  }
+
   @OnEvent('employee.probation.started')
   async onProbationStarted(e: ProbationStartedEvent) {
     const employee = await this.employeeModel

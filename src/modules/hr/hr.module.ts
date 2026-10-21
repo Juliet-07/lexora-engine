@@ -1,4 +1,8 @@
 import { Module } from '@nestjs/common';
+import {
+  CalendarEvent,
+  CalendarEventSchema,
+} from '../crm/tools/schemas/calendar.schema';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   PlatformContractTemplate,
@@ -34,6 +38,7 @@ import {
   CandidateService,
   OffboardingService,
   SuccessionPlanService,
+  SuccessionAlertService,
   RequisitionTypeService,
   RequisitionService,
   ContractTemplateService,
@@ -198,6 +203,7 @@ import {
       { name: Candidate.name, schema: CandidateSchema },
       { name: OffboardingRecord.name, schema: OffboardingRecordSchema },
       { name: SuccessionPlan.name, schema: SuccessionPlanSchema },
+      { name: CalendarEvent.name, schema: CalendarEventSchema },
       { name: RequisitionType.name, schema: RequisitionTypeSchema },
       { name: Requisition.name, schema: RequisitionSchema },
       { name: ContractTemplate.name, schema: ContractTemplateSchema },
@@ -287,6 +293,7 @@ import {
     CandidateService,
     OffboardingService,
     SuccessionPlanService,
+    SuccessionAlertService,
     RequisitionTypeService,
     RequisitionService,
     ContractTemplateService,

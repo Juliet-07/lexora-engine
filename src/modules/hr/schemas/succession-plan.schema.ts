@@ -152,6 +152,22 @@ export class SuccessionPlan {
 
   @Prop({ default: null })
   notes: string | null;
+
+  // Snapshot of the alerts that are currently active on this plan and
+  // have already been announced (portal + email + calendar). Lets
+  // SuccessionAlertService tell a NEW alert from one it has already
+  // raised, so the tenant is told once — not on every save or every
+  // daily run — and re-told if the same problem comes back after being
+  // cleared. Written only by that service.
+  @Prop({ type: [Object], default: [] })
+  alertState: {
+    key: string;
+    type: string;
+    severity: 'high' | 'medium';
+    title: string;
+    detail: string;
+    raisedAt: Date;
+  }[];
 }
 
 export const SuccessionPlanSchema =

@@ -33,6 +33,7 @@ export * from './review-cycle.service';
 export * from './requisition.service';
 export * from './requisition-type.service';
 export * from './reports.service';
+export * from './succession-alert.service';
 export * from './succession-plan.service';
 export * from './termination-notice-docx.service';
 export * from './termination-notice-pdf.service';
