@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { Policy, PolicySchema } from '../grc/compliance/schemas/policy.schema';
 import {
   CalendarEvent,
   CalendarEventSchema,
@@ -204,6 +205,7 @@ import {
       { name: OffboardingRecord.name, schema: OffboardingRecordSchema },
       { name: SuccessionPlan.name, schema: SuccessionPlanSchema },
       { name: CalendarEvent.name, schema: CalendarEventSchema },
+      { name: Policy.name, schema: PolicySchema },
       { name: RequisitionType.name, schema: RequisitionTypeSchema },
       { name: Requisition.name, schema: RequisitionSchema },
       { name: ContractTemplate.name, schema: ContractTemplateSchema },

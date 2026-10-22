@@ -29,7 +29,10 @@ export enum DisputeStage {
   CASE_REPORTED = 'case_reported',
   ACKNOWLEDGE = 'acknowledge',
   INVESTIGATE = 'investigate',
+  // Disciplinary-only stages (see DisciplinaryProcess below)
+  NOTICE_OF_ALLEGATIONS = 'notice_of_allegations',
   HEARING = 'hearing',
+  FINDING = 'finding',
   OUTCOME = 'outcome',
   APPEAL = 'appeal',
   LABOUR_LOCAL = 'labour_local',
@@ -45,6 +48,62 @@ export enum DisputeOutcomeDecision {
   TERMINATION = 'termination',
   GRIEVANCE_RESOLVED = 'grievance_resolved',
   NO_ACTION = 'no_action',
+  // Disciplinary sanctions (Step 9 of the disciplinary process). The
+  // dismissals deliberately do NOT auto-terminate the employee: an
+  // appeal suspends a dismissal, so HR starts offboarding explicitly.
+  VERBAL_WARNING = 'verbal_warning',
+  WRITTEN_WARNING = 'written_warning',
+  DEMOTION = 'demotion',
+  SUSPENSION_WITHOUT_PAY = 'suspension_without_pay',
+  DISMISSAL_WITH_NOTICE = 'dismissal_with_notice',
+  SUMMARY_DISMISSAL = 'summary_dismissal',
+}
+
+// The sanctions a disciplinary case may end in, and the ones every
+// other dispute type may use. Kept apart so grievance/incident/report
+// behave exactly as before.
+export const DISCIPLINARY_SANCTIONS: string[] = [
+  DisputeOutcomeDecision.NO_ACTION,
+  DisputeOutcomeDecision.VERBAL_WARNING,
+  DisputeOutcomeDecision.WRITTEN_WARNING,
+  DisputeOutcomeDecision.FINAL_WARNING,
+  DisputeOutcomeDecision.DEMOTION,
+  DisputeOutcomeDecision.SUSPENSION_WITHOUT_PAY,
+  DisputeOutcomeDecision.DISMISSAL_WITH_NOTICE,
+  DisputeOutcomeDecision.SUMMARY_DISMISSAL,
+];
+
+export enum ReportedBy {
+  NAMED_EMPLOYEE = 'named_employee',
+  ANONYMOUS = 'anonymous',
+  EXTERNAL_PARTY = 'external_party',
+  WHISTLEBLOWER = 'whistleblower',
+}
+
+export enum ReportUrgency {
+  LOW = 'low',
+  MEDIUM = 'medium',
+  HIGH = 'high',
+  CRITICAL = 'critical',
+}
+
+export enum DisciplinaryFindingDecision {
+  GUILTY = 'guilty',
+  NOT_GUILTY = 'not_guilty',
+  PARTIALLY_GUILTY = 'partially_guilty',
+}
+
+export enum InvestigationRecommendation {
+  PROCEED_TO_HEARING = 'proceed_to_hearing',
+  NO_FURTHER_ACTION = 'no_further_action',
+  INFORMAL_COUNSELLING = 'informal_counselling',
+  MEDIATION = 'mediation',
+}
+
+export enum AppealDecision {
+  DISMISSED = 'dismissed',
+  PARTIALLY_UPHELD = 'partially_upheld',
+  UPHELD = 'upheld',
 }
 
 export enum GrievanceNature {
@@ -104,6 +163,8 @@ class DisputeOutcome {
   @Prop() attachmentUrl: string;
   @Prop({ default: null }) emailSentAt: Date | null;
   @Prop({ default: null }) terminationTriggerError: string | null;
+  // Disciplinary: when a warning lapses (6 months written / 12 months final).
+  @Prop({ default: null }) warningExpiryDate: Date | null;
 }
 
 @Schema({ _id: false })
@@ -115,6 +176,20 @@ class DisputeAppeal {
   @Prop() decision: string;
   @Prop() resolvedAt: Date;
   @Prop() notes: string;
+  // Disciplinary appeals only: the appeal is heard by a chairperson
+  // other than the original one, and may change the sanction.
+  @Prop({ type: Object, default: null })
+  hearing: {
+    scheduledAt: Date;
+    mode: string;
+    venue: string | null;
+    meetingPlatform: string | null;
+    meetingLink: string | null;
+    chairperson: string;
+    scheduledBy: Types.ObjectId;
+    notes: string | null;
+  } | null;
+  @Prop({ default: null }) newSanction: string | null;
 }
 
 @Schema({ _id: false })
@@ -137,6 +212,56 @@ class RespondentResponse {
   @Prop({ required: true, type: Types.ObjectId }) respondentId: Types.ObjectId;
   @Prop({ required: true }) text: string;
   @Prop({ required: true }) respondedAt: Date;
+}
+
+// Plain-object shape stored under DisputeCase.disciplinary. Each key is
+// filled in by exactly one step of the procedure.
+export interface DisciplinaryProcess {
+  // Step 2 — precautionary suspension (not a sanction), or skipped.
+  suspension?: {
+    decision: 'issued' | 'skipped';
+    effectiveDate: Date | null;
+    reason: string | null;
+    conditions: string[];
+    decidedAt: Date;
+    decidedBy: Types.ObjectId;
+    letterSentAt: Date | null;
+  } | null;
+  // Step 3 — investigation.
+  investigation?: {
+    officer: string;
+    startDate: Date | null;
+    findings: string;
+    recommendation: string;
+    submittedAt: Date;
+    submittedBy: Types.ObjectId;
+  } | null;
+  // Step 4 — notice of allegations, served on the employee.
+  notice?: {
+    charges: string;
+    clauseBreached: string;
+    maxSanction: string;
+    responseDeadlineDays: number;
+    responseDueBy: Date;
+    servedAt: Date;
+    servedBy: Types.ObjectId;
+  } | null;
+  // Step 7 — minutes of the hearing (the invitation is `hearing`).
+  hearingRecord?: {
+    minutes: string;
+    checklist: string[];
+    recordedAt: Date;
+    recordedBy: Types.ObjectId;
+  } | null;
+  // Step 8 — finding and mitigation.
+  finding?: {
+    decision: string;
+    reasons: string;
+    mitigatingFactors: string | null;
+    aggravatingFactors: string | null;
+    recordedAt: Date;
+    recordedBy: Types.ObjectId;
+  } | null;
 }
 
 // ── Main schema ───────────────────────────────────────────────────
@@ -222,6 +347,30 @@ export class DisputeCase {
   @Prop({ default: null }) natureOfInjury: string | null;
 
   @Prop({ default: null }) medicalTreatmentProvided: string | null;
+
+  // ── Incident-only additions ────────────────────────────────────
+  @Prop({ type: Date, default: null }) incidentOccurredAt: Date | null;
+  @Prop({ default: null }) immediateActionTaken: string | null;
+
+  // ── Report-only additions ──────────────────────────────────────
+  @Prop({ enum: ReportedBy, default: null }) reportedBy: string | null;
+  @Prop({ enum: ReportUrgency, default: null }) urgency: string | null;
+
+  // ── Disciplinary-only fields ───────────────────────────────────
+  // The policy comes from the GRC policy library; the title is
+  // snapshotted so the case still reads correctly if the policy is
+  // later renamed or removed.
+  @Prop({ type: Types.ObjectId, default: null })
+  policyId: Types.ObjectId | null;
+  @Prop({ default: null }) policyTitle: string | null;
+  @Prop({ default: null }) particularClause: string | null;
+  @Prop({ type: Date, default: null }) dateOfAllegedMisconduct: Date | null;
+
+  // Everything the 10-step disciplinary procedure records beyond what
+  // the shared fields above already hold (the hearing invitation uses
+  // `hearing`; the sanction uses `outcome`; the appeal uses `appeal`).
+  @Prop({ type: Object, default: null })
+  disciplinary: DisciplinaryProcess | null;
 
   // Hearing details
   @Prop({ type: Object, default: null })

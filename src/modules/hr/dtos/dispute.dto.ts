@@ -5,6 +5,9 @@ import {
   IsArray,
   IsDateString,
   IsMongoId,
+  IsInt,
+  Min,
+  Max,
   MinLength,
   ValidateIf,
 } from 'class-validator';
@@ -16,6 +19,12 @@ import {
   InjurySeverity,
   HearingMode,
   MeetingPlatform,
+  ReportedBy,
+  ReportUrgency,
+  DisciplinaryFindingDecision,
+  InvestigationRecommendation,
+  AppealDecision,
+  DISCIPLINARY_SANCTIONS,
 } from '../schemas';
 
 // ── Attachment sub-shape for filing-time uploads ───────────────────
@@ -42,7 +51,8 @@ export class OpenDisputeCaseDto {
 
   @ApiPropertyOptional({
     type: [String],
-    description: 'Employee IDs involved in this case (multi-select)',
+    description:
+      'Employee IDs involved in this case (multi-select). A disciplinary case takes exactly one employee — enforced in DisputeService.openCase.',
   })
   @IsOptional()
   @IsArray()
@@ -137,6 +147,50 @@ export class OpenDisputeCaseDto {
   @IsString()
   @MinLength(3)
   medicalTreatmentProvided?: string;
+
+  @ApiPropertyOptional({ description: 'When the incident happened' })
+  @ValidateIf((o) => o.type === DisputeType.INCIDENT)
+  @IsDateString()
+  incidentOccurredAt?: string;
+
+  @ApiPropertyOptional({
+    description: 'Immediate action taken (first aid, area cordoned off…)',
+  })
+  @IsOptional()
+  @IsString()
+  immediateActionTaken?: string;
+
+  // ── Report-only fields — required when type is "report" ─────────
+  @ApiPropertyOptional({ enum: ReportedBy })
+  @ValidateIf((o) => o.type === DisputeType.REPORT)
+  @IsEnum(ReportedBy)
+  reportedBy?: string;
+
+  @ApiPropertyOptional({ enum: ReportUrgency })
+  @ValidateIf((o) => o.type === DisputeType.REPORT)
+  @IsEnum(ReportUrgency)
+  urgency?: string;
+
+  // ── Disciplinary-only fields — required when type is "disciplinary"
+  @ApiPropertyOptional({
+    description: 'Policy breached — an id from the GRC policy library',
+  })
+  @ValidateIf((o) => o.type === DisputeType.DISCIPLINARY)
+  @IsMongoId()
+  policyId?: string;
+
+  @ApiPropertyOptional({
+    description: 'The particular clause(s) of that policy that were breached',
+  })
+  @ValidateIf((o) => o.type === DisputeType.DISCIPLINARY)
+  @IsString()
+  @MinLength(2)
+  particularClause?: string;
+
+  @ApiPropertyOptional({ description: 'Date of the alleged misconduct' })
+  @ValidateIf((o) => o.type === DisputeType.DISCIPLINARY)
+  @IsDateString()
+  dateOfAllegedMisconduct?: string;
 }
 
 // ── Acknowledge ───────────────────────────────────────────────────
@@ -269,4 +323,155 @@ export class CloseDisputeDto {
   @IsOptional()
   @IsString()
   notes?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DISCIPLINARY PROCESS (HR / tenant side)
+// ═══════════════════════════════════════════════════════════════════
+
+// Step 2 — precautionary suspension (or skip it)
+export class DisciplinarySuspensionDto {
+  @ApiProperty({ enum: ['issued', 'skipped'] })
+  @IsEnum(['issued', 'skipped'])
+  decision: 'issued' | 'skipped';
+
+  @ApiPropertyOptional()
+  @ValidateIf((o) => o.decision === 'issued')
+  @IsDateString()
+  effectiveDate?: string;
+
+  @ApiPropertyOptional({
+    description: 'Required when the suspension is issued',
+  })
+  @ValidateIf((o) => o.decision === 'issued')
+  @IsString()
+  @MinLength(5)
+  reason?: string;
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  conditions?: string[];
+}
+
+// Step 3 — investigation
+export class DisciplinaryInvestigationDto {
+  @ApiProperty({ description: 'Investigating officer (must be impartial)' })
+  @IsString()
+  @MinLength(2)
+  officer: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(10)
+  findings: string;
+
+  @ApiProperty({ enum: InvestigationRecommendation })
+  @IsEnum(InvestigationRecommendation)
+  recommendation: string;
+}
+
+// Step 4 — notice of allegations
+export class ServeNoticeOfAllegationsDto {
+  @ApiProperty({ description: 'Charge(s) / allegation(s)' })
+  @IsString()
+  @MinLength(10)
+  charges: string;
+
+  @ApiProperty({ description: 'Rule, policy or contract clause breached' })
+  @IsString()
+  @MinLength(3)
+  clauseBreached: string;
+
+  @ApiProperty({
+    enum: DISCIPLINARY_SANCTIONS.filter((d) => d !== 'no_action'),
+    description: 'Maximum possible sanction',
+  })
+  @IsEnum(DISCIPLINARY_SANCTIONS.filter((d) => d !== 'no_action'))
+  maxSanction: string;
+
+  @ApiProperty({ description: 'Working days the employee has to respond' })
+  @IsInt()
+  @Min(1)
+  @Max(30)
+  responseDeadlineDays: number;
+}
+
+// Step 7 — hearing minutes
+export class RecordHearingMinutesDto {
+  @ApiProperty()
+  @IsString()
+  @MinLength(10)
+  minutes: string;
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  checklist?: string[];
+}
+
+// Step 8 — finding and mitigation
+export class RecordDisciplinaryFindingDto {
+  @ApiProperty({ enum: DisciplinaryFindingDecision })
+  @IsEnum(DisciplinaryFindingDecision)
+  decision: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(10)
+  reasons: string;
+
+  @ApiPropertyOptional({ description: 'Raised by the employee' })
+  @IsOptional()
+  @IsString()
+  mitigatingFactors?: string;
+
+  @ApiPropertyOptional({ description: 'Raised by the employer' })
+  @IsOptional()
+  @IsString()
+  aggravatingFactors?: string;
+}
+
+// Step 9 — sanction: reuses RecordOutcomeDto (+ optional warning expiry)
+export class RecordSanctionDto extends RecordOutcomeDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  warningExpiryDate?: string;
+}
+
+// Step 10 — appeal hearing and appeal outcome (tenant side; the appeal
+// itself is filed by the employee with FileAppealDto)
+export class ScheduleDisciplinaryAppealHearingDto extends ScheduleHearingDto {
+  @ApiProperty({
+    description: 'Appeal chairperson — must differ from the original chair',
+  })
+  @IsString()
+  @MinLength(2)
+  chairperson: string;
+}
+
+export class RecordDisciplinaryAppealOutcomeDto {
+  @ApiProperty({ enum: AppealDecision })
+  @IsEnum(AppealDecision)
+  decision: string;
+
+  @ApiPropertyOptional({
+    description: 'Required when the appeal is partially upheld',
+  })
+  @ValidateIf((o) => o.decision === AppealDecision.PARTIALLY_UPHELD)
+  @IsEnum(DISCIPLINARY_SANCTIONS)
+  newSanction?: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(10)
+  reasons: string;
 }

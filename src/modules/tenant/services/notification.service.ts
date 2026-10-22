@@ -556,6 +556,24 @@ export class TenantNotificationService {
     );
   }
 
+  // An employee appealed a disciplinary outcome — the appeal hearing and
+  // the appeal outcome are HR's next steps, so HR is told right away.
+  @OnEvent('hr.dispute.appeal_filed')
+  async onDisputeAppealFiled(e: {
+    tenantId: string;
+    caseNumber: string;
+    employeeName: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.tenantId,
+      TenantNotificationType.HR,
+      `Disciplinary appeal filed — ${e.caseNumber}`,
+      `${e.employeeName} has appealed the outcome. Schedule the appeal hearing and record the appeal outcome.`,
+      '/hr/disputes',
+    );
+  }
+
   @OnEvent('employee.probation.started')
   async onProbationStarted(e: ProbationStartedEvent) {
     const employee = await this.employeeModel

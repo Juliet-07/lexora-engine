@@ -145,6 +145,10 @@ import {
   disputeWarningIssuedTemplate,
 } from './templates/dispute-warning-issued.template';
 import {
+  DisciplinaryLetterData,
+  disciplinaryLetterTemplate,
+} from './templates/disciplinary-letter.template';
+import {
   DisputeSuspensionEmailData,
   disputeSuspensionEmailTemplate,
 } from './templates/dispute-suspension-letter.template';
@@ -739,6 +743,16 @@ export class EmailService {
     data: DisputeWarningIssuedData,
   ): Promise<void> {
     const { subject, html } = disputeWarningIssuedTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendDisciplinaryLetter(data: DisciplinaryLetterData): Promise<void> {
+    const { subject, html } = disciplinaryLetterTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

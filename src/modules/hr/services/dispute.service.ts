@@ -17,6 +17,12 @@ import {
   Employee,
   EmployeeDocument,
   EmploymentStatus,
+  DisputeType,
+  DisputeOutcomeDecision,
+  DISCIPLINARY_SANCTIONS,
+  DisciplinaryFindingDecision,
+  InvestigationRecommendation,
+  AppealDecision,
 } from '../schemas';
 import {
   OpenDisputeCaseDto,
@@ -29,11 +35,24 @@ import {
   ResolveAppealDto,
   CloseDisputeDto,
   RespondToDisputeDto,
+  RecordSanctionDto,
+  DisciplinarySuspensionDto,
+  DisciplinaryInvestigationDto,
+  ServeNoticeOfAllegationsDto,
+  RecordHearingMinutesDto,
+  RecordDisciplinaryFindingDto,
+  ScheduleDisciplinaryAppealHearingDto,
+  RecordDisciplinaryAppealOutcomeDto,
 } from '../dtos';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { EmployeeService } from './employee.service';
 import { DisputeLetterPdfService } from './dispute-letter-pdf.service';
 import { User, UserDocument } from 'src/modules/auth/schemas';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  Policy,
+  PolicyDocument,
+} from 'src/modules/grc/compliance/schemas/policy.schema';
 
 @Injectable()
 export class DisputeService {
@@ -44,7 +63,10 @@ export class DisputeService {
     private readonly employeeModel: Model<EmployeeDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    @InjectModel(Policy.name)
+    private readonly policyModel: Model<PolicyDocument>,
     private readonly emailService: EmailService,
+    private readonly eventEmitter: EventEmitter2,
     // See payroll-run.service.ts — EmployeeService sits in a circular
     // import with OffboardingService, which leaves a plain injection
     // of it unresolvable at boot without forwardRef.
@@ -214,6 +236,34 @@ export class DisputeService {
         "This case is currently with the employee's manager. It must be escalated to HR before you can act on it.",
       );
     }
+  }
+
+  // Employee, manager and HoD views of a disciplinary case: HR's working
+  // papers (investigation notes, hearing minutes) and a finding that has
+  // not yet been communicated stay on the tenant side. The employee sees
+  // the notice, the hearing, the finding once a sanction is recorded, the
+  // sanction and the appeal.
+  private async enrichForEmployeeView(disputes: any[]) {
+    const enriched = await this.enrichWithComplainant(disputes);
+    return enriched.map((d: any) => {
+      if (d.type !== DisputeType.DISCIPLINARY) return d;
+      const decided = !!d.outcome;
+      const process = d.disciplinary ? { ...d.disciplinary } : null;
+      if (process) {
+        delete process.investigation;
+        delete process.hearingRecord;
+        if (!decided) delete process.finding;
+      }
+      const stageHistory = (d.stageHistory ?? [])
+        .filter((h: any) => h.stage !== DisputeStage.FINDING || decided)
+        .map((h: any) =>
+          h.stage === DisputeStage.INVESTIGATE ||
+          h.stage === DisputeStage.FINDING
+            ? { ...h, notes: null }
+            : h,
+        );
+      return { ...d, disciplinary: process, stageHistory };
+    });
   }
 
   private async enrichWithComplainant(disputes: any[]) {
@@ -392,6 +442,14 @@ export class DisputeService {
   ): Promise<void> {
     const outcome = (dispute as any).outcome;
     if (!outcome) return;
+
+    // Disciplinary: one formal outcome notification (finding, sanction,
+    // right to appeal). No auto-termination — an appeal suspends a
+    // dismissal, so HR starts offboarding explicitly afterwards.
+    if (dispute.type === DisputeType.DISCIPLINARY) {
+      await this.sendDisciplinaryOutcomeNotice(dispute);
+      return;
+    }
 
     const respondents = await this.employeeModel
       .find({ _id: { $in: dispute.respondentIds ?? [] } })
@@ -603,8 +661,38 @@ export class DisputeService {
   ): Promise<DisputeCaseDocument> {
     const respondentIds = dto.respondentIds ?? [];
     let resolverLevel: 'manager' | 'tenant';
+    const isDisciplinary = dto.type === DisputeType.DISCIPLINARY;
 
-    if (complainantEmployeeId) {
+    // A disciplinary case is about exactly one employee, and cites a
+    // policy from the GRC library (snapshotted so the case still reads
+    // correctly if the policy is later renamed).
+    let policyTitle: string | null = null;
+    if (isDisciplinary) {
+      if (respondentIds.length !== 1) {
+        throw new BadRequestException(
+          'A disciplinary case must be about exactly one employee.',
+        );
+      }
+      const policy = await this.policyModel
+        .findOne({
+          _id: new Types.ObjectId(dto.policyId),
+          tenantId: new Types.ObjectId(tenantId),
+        })
+        .select('title')
+        .lean();
+      if (!policy) {
+        throw new BadRequestException(
+          'The policy breached was not found in your policy library.',
+        );
+      }
+      policyTitle = policy.title;
+    }
+
+    if (isDisciplinary) {
+      // Disciplinary is an employer-run procedure: it always sits with
+      // HR, whoever logged it.
+      resolverLevel = 'tenant';
+    } else if (complainantEmployeeId) {
       const complainant = await this.employeeModel.findById(
         complainantEmployeeId,
       );
@@ -642,6 +730,19 @@ export class DisputeService {
       injurySeverity: dto.injurySeverity ?? null,
       natureOfInjury: dto.natureOfInjury ?? null,
       medicalTreatmentProvided: dto.medicalTreatmentProvided ?? null,
+      incidentOccurredAt: dto.incidentOccurredAt
+        ? new Date(dto.incidentOccurredAt)
+        : null,
+      immediateActionTaken: dto.immediateActionTaken ?? null,
+      reportedBy: dto.reportedBy ?? null,
+      urgency: dto.urgency ?? null,
+      policyId: isDisciplinary ? new Types.ObjectId(dto.policyId) : null,
+      policyTitle,
+      particularClause: dto.particularClause ?? null,
+      dateOfAllegedMisconduct: dto.dateOfAllegedMisconduct
+        ? new Date(dto.dateOfAllegedMisconduct)
+        : null,
+      disciplinary: null,
       supportingDocs: (dto.attachments ?? []).map((a) => ({
         name: a.name,
         url: a.url,
@@ -783,7 +884,7 @@ export class DisputeService {
       }
     }
 
-    const [enriched] = await this.enrichWithComplainant([dispute]);
+    const [enriched] = await this.enrichForEmployeeView([dispute]);
     return enriched;
   }
 
@@ -829,6 +930,12 @@ export class DisputeService {
   ): Promise<DisputeCaseDocument> {
     const dispute = await this.getCase(tenantId, caseId);
 
+    if (dispute.type === DisputeType.DISCIPLINARY) {
+      throw new BadRequestException(
+        'Disciplinary cases have their own investigation step.',
+      );
+    }
+
     const canSkipAcknowledge = !dispute.complainantId;
     const validStage = canSkipAcknowledge
       ? [DisputeStage.CASE_REPORTED, DisputeStage.ACKNOWLEDGE].includes(
@@ -869,7 +976,23 @@ export class DisputeService {
       );
     }
 
-    if (dispute.stage !== DisputeStage.INVESTIGATE) {
+    const isDisciplinary = dispute.type === DisputeType.DISCIPLINARY;
+
+    if (isDisciplinary) {
+      const notice = (dispute as any).disciplinary?.notice;
+      if (dispute.stage !== DisputeStage.NOTICE_OF_ALLEGATIONS || !notice) {
+        throw new BadRequestException(
+          'The notice of allegations must be served before a hearing invitation can be issued.',
+        );
+      }
+      const hoursNotice =
+        (new Date(dto.scheduledAt).getTime() - Date.now()) / 3_600_000;
+      if (hoursNotice < 48) {
+        throw new BadRequestException(
+          'The employee must be given at least 48 hours notice of the hearing.',
+        );
+      }
+    } else if (dispute.stage !== DisputeStage.INVESTIGATE) {
       throw new BadRequestException(
         'Investigation must be completed before a hearing can be scheduled.',
       );
@@ -892,7 +1015,11 @@ export class DisputeService {
     dispute.markModified('hearing');
     const saved = await dispute.save();
 
-    this.notifyPartiesOfHearing(saved).catch(() => {});
+    if (isDisciplinary) {
+      this.sendDisciplinaryHearingInvitation(saved).catch(() => {});
+    } else {
+      this.notifyPartiesOfHearing(saved).catch(() => {});
+    }
 
     return saved;
   }
@@ -905,16 +1032,53 @@ export class DisputeService {
   ): Promise<DisputeCaseDocument> {
     const dispute = await this.getCase(tenantId, caseId);
 
-    const canRecordOutcome =
-      dispute.stage === DisputeStage.HEARING ||
-      (dispute.type === 'incident' &&
-        dispute.stage === DisputeStage.INVESTIGATE);
+    const isDisciplinary = dispute.type === DisputeType.DISCIPLINARY;
+
+    const canRecordOutcome = isDisciplinary
+      ? dispute.stage === DisputeStage.FINDING
+      : dispute.stage === DisputeStage.HEARING ||
+        (dispute.type === 'incident' &&
+          dispute.stage === DisputeStage.INVESTIGATE);
 
     if (!canRecordOutcome) {
       throw new BadRequestException(
-        dispute.type === 'incident'
-          ? 'Investigation must be completed before an outcome can be recorded.'
-          : 'A hearing must be scheduled before an outcome can be recorded.',
+        isDisciplinary
+          ? 'A finding must be recorded before the sanction can be set.'
+          : dispute.type === 'incident'
+            ? 'Investigation must be completed before an outcome can be recorded.'
+            : 'A hearing must be scheduled before an outcome can be recorded.',
+      );
+    }
+
+    // Sanctions belong to disciplinary cases only; every other type keeps
+    // the outcome options it always had.
+    if (isDisciplinary) {
+      if (!DISCIPLINARY_SANCTIONS.includes(dto.decision)) {
+        throw new BadRequestException(
+          'That decision is not a disciplinary sanction.',
+        );
+      }
+      const finding = (dispute as any).disciplinary?.finding;
+      if (
+        finding?.decision === DisciplinaryFindingDecision.NOT_GUILTY &&
+        dto.decision !== DisputeOutcomeDecision.NO_ACTION
+      ) {
+        throw new BadRequestException(
+          'The employee was found not guilty, so no sanction can be imposed.',
+        );
+      }
+    } else if (
+      [
+        DisputeOutcomeDecision.VERBAL_WARNING,
+        DisputeOutcomeDecision.WRITTEN_WARNING,
+        DisputeOutcomeDecision.DEMOTION,
+        DisputeOutcomeDecision.SUSPENSION_WITHOUT_PAY,
+        DisputeOutcomeDecision.DISMISSAL_WITH_NOTICE,
+        DisputeOutcomeDecision.SUMMARY_DISMISSAL,
+      ].includes(dto.decision as DisputeOutcomeDecision)
+    ) {
+      throw new BadRequestException(
+        'That sanction is only available on disciplinary cases.',
       );
     }
 
@@ -930,6 +1094,9 @@ export class DisputeService {
       attachmentUrl: dto.attachmentUrl ?? null,
       emailSentAt: null,
       terminationTriggerError: null,
+      warningExpiryDate: isDisciplinary
+        ? this.warningExpiry(dto.decision, (dto as any).warningExpiryDate)
+        : null,
     };
     dispute.markModified('stageHistory');
     dispute.markModified('outcome');
@@ -950,6 +1117,12 @@ export class DisputeService {
 
     if (dispute.stage !== DisputeStage.APPEAL || !dispute.appeal) {
       throw new BadRequestException('No appeal has been filed on this case.');
+    }
+
+    if (dispute.type === DisputeType.DISCIPLINARY) {
+      throw new BadRequestException(
+        'Disciplinary appeals are heard first — schedule the appeal hearing, then record the appeal outcome.',
+      );
     }
 
     (dispute.appeal as any).reviewedBy = new Types.ObjectId(hrUserId);
@@ -1021,7 +1194,9 @@ export class DisputeService {
       DisputeStage.CASE_REPORTED,
       DisputeStage.ACKNOWLEDGE,
       DisputeStage.INVESTIGATE,
+      DisputeStage.NOTICE_OF_ALLEGATIONS,
       DisputeStage.HEARING,
+      DisputeStage.FINDING,
     ];
     const targetStage = stagesBeforeOutcome.includes(
       dispute.stage as DisputeStage,
@@ -1258,7 +1433,7 @@ export class DisputeService {
       throw new ForbiddenException('You do not have access to this case.');
     }
 
-    const [enriched] = await this.enrichWithComplainant([dispute]);
+    const [enriched] = await this.enrichForEmployeeView([dispute]);
     return enriched;
   }
 
@@ -1296,7 +1471,7 @@ export class DisputeService {
       .sort({ filedAt: -1 })
       .lean();
 
-    return this.enrichWithComplainant(disputes);
+    return this.enrichForEmployeeView(disputes);
   }
 
   async getCasesAgainstMe(tenantId: string, userId: string) {
@@ -1313,7 +1488,7 @@ export class DisputeService {
       .sort({ filedAt: -1 })
       .lean();
 
-    return this.enrichWithComplainant(disputes);
+    return this.enrichForEmployeeView(disputes);
   }
 
   async respondToDispute(
@@ -1406,6 +1581,15 @@ export class DisputeService {
       }
     }
 
+    if (
+      dispute.type === DisputeType.DISCIPLINARY &&
+      (dispute.outcome as any)?.decision === DisputeOutcomeDecision.NO_ACTION
+    ) {
+      throw new BadRequestException(
+        'No sanction was imposed, so there is nothing to appeal.',
+      );
+    }
+
     this.pushStageHistory(dispute, DisputeStage.APPEAL, dto.grounds);
 
     dispute.stage = DisputeStage.APPEAL;
@@ -1422,7 +1606,18 @@ export class DisputeService {
     };
     dispute.markModified('stageHistory');
     dispute.markModified('appeal');
-    return dispute.save();
+    const saved = await dispute.save();
+
+    if (saved.type === DisputeType.DISCIPLINARY) {
+      // HR needs to know straight away: the next steps (appeal hearing,
+      // appeal outcome) are theirs.
+      this.eventEmitter.emit('hr.dispute.appeal_filed', {
+        tenantId,
+        caseNumber: saved.caseNumber,
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+      });
+    }
+    return saved;
   }
 
   async getCasesForManager(tenantId: string, managerUserId: string) {
@@ -1451,7 +1646,7 @@ export class DisputeService {
       })
       .sort({ filedAt: -1 })
       .lean();
-    return this.enrichWithComplainant(disputes);
+    return this.enrichForEmployeeView(disputes);
   }
 
   async getCasesForHod(tenantId: string, hodUserId: string) {
@@ -1481,6 +1676,619 @@ export class DisputeService {
       .sort({ filedAt: -1 })
       .lean();
 
-    return this.enrichWithComplainant(disputes);
+    return this.enrichForEmployeeView(disputes);
   }
+
+  // ═══════════════════════════════════════════════════════════════
+  // DISCIPLINARY PROCEDURE (HR / tenant side)
+  //
+  // 1 Case logged · 2 Precautionary suspension · 3 Investigation ·
+  // 4 Notice of allegations · 5 Employee response · 6 Hearing
+  // invitation · 7 Hearing · 8 Finding & mitigation · 9 Sanction &
+  // outcome notification · 10 Appeal (filed by the employee; HR
+  // schedules the appeal hearing and records its outcome).
+  //
+  // Steps 1, 5, 6, 9 and the employee's appeal reuse the shared
+  // openCase / respondToDispute / scheduleHearing / recordOutcome /
+  // fileAppeal paths (branching on type); the rest live here. Nothing
+  // below is reachable for grievance, incident or report cases.
+  // ═══════════════════════════════════════════════════════════════
+
+  private async getDisciplinaryCase(
+    tenantId: string,
+    caseId: string,
+  ): Promise<DisputeCaseDocument> {
+    const dispute = await this.getCase(tenantId, caseId);
+    if (dispute.type !== DisputeType.DISCIPLINARY) {
+      throw new BadRequestException('This is not a disciplinary case.');
+    }
+    this.assertResolverIsTenant(dispute);
+    if (
+      [DisputeStatus.CLOSED, DisputeStatus.ESCALATED_EXTERNAL].includes(
+        dispute.status as DisputeStatus,
+      )
+    ) {
+      throw new BadRequestException('This case is closed.');
+    }
+    return dispute;
+  }
+
+  private disciplinaryState(dispute: DisputeCaseDocument): any {
+    if (!(dispute as any).disciplinary) (dispute as any).disciplinary = {};
+    return (dispute as any).disciplinary;
+  }
+
+  private sanctionLabel(decision: string): string {
+    const labels: Record<string, string> = {
+      no_action: 'No action',
+      verbal_warning: 'Verbal warning',
+      written_warning: 'Written warning',
+      first_warning: 'First warning',
+      second_warning: 'Second warning',
+      final_warning: 'Final written warning',
+      demotion: 'Demotion',
+      suspension: 'Suspension without pay',
+      suspension_without_pay: 'Suspension without pay',
+      dismissal_with_notice: 'Dismissal with notice',
+      summary_dismissal: 'Summary dismissal (gross misconduct)',
+      termination: 'Termination',
+    };
+    return labels[decision] ?? decision;
+  }
+
+  private warningExpiry(decision: string, explicit?: string): Date | null {
+    if (explicit) return new Date(explicit);
+    const months =
+      decision === DisputeOutcomeDecision.WRITTEN_WARNING
+        ? 6
+        : decision === DisputeOutcomeDecision.FINAL_WARNING
+          ? 12
+          : 0;
+    if (!months) return null;
+    const d = new Date();
+    d.setMonth(d.getMonth() + months);
+    return d;
+  }
+
+  private addWorkingDays(from: Date, days: number): Date {
+    const d = new Date(from);
+    let added = 0;
+    while (added < days) {
+      d.setDate(d.getDate() + 1);
+      const dow = d.getDay();
+      if (dow !== 0 && dow !== 6) added++;
+    }
+    return d;
+  }
+
+  private formatDateTime(d: Date | string): string {
+    return new Date(d).toLocaleString('en-GB', {
+      dateStyle: 'long',
+      timeStyle: 'short',
+    });
+  }
+
+  private formatDate(d: Date | string): string {
+    return new Date(d).toLocaleDateString('en-GB', { dateStyle: 'long' });
+  }
+
+  // Sends one formal letter to every respondent on the case (a
+  // disciplinary case has exactly one). Email trouble never blocks the
+  // procedural step it announces.
+  private async sendLetterToRespondents(
+    dispute: DisputeCaseDocument,
+    letter: {
+      subject: string;
+      heading: string;
+      paragraphs: string[];
+      details?: { label: string; value: string }[];
+      listTitle?: string;
+      listItems?: string[];
+    },
+  ): Promise<boolean> {
+    const respondents = await this.employeeModel
+      .find({ _id: { $in: dispute.respondentIds ?? [] } })
+      .select('firstName lastName email')
+      .lean();
+
+    let sent = false;
+    await Promise.all(
+      respondents
+        .filter((r) => !!r.email)
+        .map(async (r) => {
+          await this.emailService
+            .sendDisciplinaryLetter({
+              to: r.email as string,
+              recipientName: `${r.firstName} ${r.lastName}`,
+              caseNumber: dispute.caseNumber,
+              dashboardUrl: `${process.env.TENANT_APP_URL}/my/disputes`,
+              ...letter,
+            })
+            .then(() => {
+              sent = true;
+            })
+            .catch(() => {});
+        }),
+    );
+    return sent;
+  }
+
+  private caseDetails(dispute: DisputeCaseDocument) {
+    return [
+      { label: 'Policy', value: dispute.policyTitle ?? '—' },
+      { label: 'Clause(s)', value: dispute.particularClause ?? '—' },
+    ];
+  }
+
+  // ── Step 2 — precautionary suspension ───────────────────────────
+  async recordDisciplinarySuspension(
+    tenantId: string,
+    caseId: string,
+    hrUserId: string,
+    dto: DisciplinarySuspensionDto,
+  ): Promise<DisputeCaseDocument> {
+    const dispute = await this.getDisciplinaryCase(tenantId, caseId);
+    if (
+      ![
+        DisputeStage.CASE_REPORTED,
+        DisputeStage.INVESTIGATE,
+        DisputeStage.NOTICE_OF_ALLEGATIONS,
+      ].includes(dispute.stage as DisputeStage)
+    ) {
+      throw new BadRequestException(
+        'A precautionary suspension can only be decided before the hearing.',
+      );
+    }
+    const state = this.disciplinaryState(dispute);
+    if (state.suspension?.decision === 'issued') {
+      throw new BadRequestException(
+        'A precautionary suspension has already been issued on this case.',
+      );
+    }
+
+    const issued = dto.decision === 'issued';
+    state.suspension = {
+      decision: dto.decision,
+      effectiveDate:
+        issued && dto.effectiveDate ? new Date(dto.effectiveDate) : null,
+      reason: issued ? (dto.reason ?? null) : null,
+      conditions: issued ? (dto.conditions ?? []) : [],
+      decidedAt: new Date(),
+      decidedBy: new Types.ObjectId(hrUserId),
+      letterSentAt: null,
+    };
+    dispute.markModified('disciplinary');
+    let saved = await dispute.save();
+
+    if (issued) {
+      const sent = await this.sendLetterToRespondents(saved, {
+        subject: `Precautionary suspension — Case ${saved.caseNumber}`,
+        heading: 'Precautionary suspension',
+        paragraphs: [
+          `Following the allegations brought to our attention, you are suspended from duty with effect from ${this.formatDate(state.suspension.effectiveDate ?? new Date())}, pending the outcome of an investigation.`,
+          `Reason: ${dto.reason}`,
+          'This suspension is precautionary and is NOT a disciplinary sanction. You will continue to receive your full salary and benefits. If you wish to make representations against the suspension, please do so in writing within 48 hours.',
+        ],
+        listTitle: 'Conditions during the suspension',
+        listItems: dto.conditions?.length
+          ? dto.conditions
+          : ['Full pay continues'],
+      });
+      if (sent) {
+        (saved as any).disciplinary.suspension.letterSentAt = new Date();
+        saved.markModified('disciplinary');
+        saved = await saved.save();
+      }
+    }
+    return saved;
+  }
+
+  // ── Step 3 — investigation ──────────────────────────────────────
+  async recordDisciplinaryInvestigation(
+    tenantId: string,
+    caseId: string,
+    hrUserId: string,
+    dto: DisciplinaryInvestigationDto,
+  ): Promise<DisputeCaseDocument> {
+    const dispute = await this.getDisciplinaryCase(tenantId, caseId);
+    if (dispute.stage !== DisputeStage.CASE_REPORTED) {
+      throw new BadRequestException(
+        'The investigation can only be opened on a case that has just been logged.',
+      );
+    }
+    const state = this.disciplinaryState(dispute);
+    if (!state.suspension) {
+      throw new BadRequestException(
+        'Decide on a precautionary suspension (issue it, or skip it) before the investigation.',
+      );
+    }
+
+    state.investigation = {
+      officer: dto.officer,
+      startDate: dto.startDate ? new Date(dto.startDate) : null,
+      findings: dto.findings,
+      recommendation: dto.recommendation,
+      submittedAt: new Date(),
+      submittedBy: new Types.ObjectId(hrUserId),
+    };
+    this.pushStageHistory(
+      dispute,
+      DisputeStage.INVESTIGATE,
+      dto.findings,
+      hrUserId,
+    );
+    dispute.stage = DisputeStage.INVESTIGATE;
+    dispute.status = DisputeStatus.UNDER_INVESTIGATION;
+    dispute.markModified('disciplinary');
+    dispute.markModified('stageHistory');
+    return dispute.save();
+  }
+
+  // ── Step 4 — notice of allegations (drafted and served in one go) ─
+  async serveNoticeOfAllegations(
+    tenantId: string,
+    caseId: string,
+    hrUserId: string,
+    dto: ServeNoticeOfAllegationsDto,
+  ): Promise<DisputeCaseDocument> {
+    const dispute = await this.getDisciplinaryCase(tenantId, caseId);
+    const state = this.disciplinaryState(dispute);
+    if (dispute.stage !== DisputeStage.INVESTIGATE || !state.investigation) {
+      throw new BadRequestException(
+        'The investigation must be completed before a notice of allegations is served.',
+      );
+    }
+    if (
+      state.investigation.recommendation !==
+      InvestigationRecommendation.PROCEED_TO_HEARING
+    ) {
+      throw new BadRequestException(
+        'The investigation did not recommend proceeding to a hearing. Close the case, or record a new investigation outcome.',
+      );
+    }
+
+    const servedAt = new Date();
+    const responseDueBy = this.addWorkingDays(
+      servedAt,
+      dto.responseDeadlineDays,
+    );
+    state.notice = {
+      charges: dto.charges,
+      clauseBreached: dto.clauseBreached,
+      maxSanction: dto.maxSanction,
+      responseDeadlineDays: dto.responseDeadlineDays,
+      responseDueBy,
+      servedAt,
+      servedBy: new Types.ObjectId(hrUserId),
+    };
+    this.pushStageHistory(
+      dispute,
+      DisputeStage.NOTICE_OF_ALLEGATIONS,
+      dto.charges,
+      hrUserId,
+    );
+    dispute.stage = DisputeStage.NOTICE_OF_ALLEGATIONS;
+    dispute.status = DisputeStatus.UNDER_INVESTIGATION;
+    dispute.markModified('disciplinary');
+    dispute.markModified('stageHistory');
+    const saved = await dispute.save();
+
+    const dismissalPossible = [
+      DisputeOutcomeDecision.DISMISSAL_WITH_NOTICE,
+      DisputeOutcomeDecision.SUMMARY_DISMISSAL,
+    ].includes(dto.maxSanction as DisputeOutcomeDecision);
+
+    this.sendLetterToRespondents(saved, {
+      subject: `Notice of allegations — Case ${saved.caseNumber}`,
+      heading: 'Notice of allegations',
+      paragraphs: [
+        'We write to formally notify you that the following allegation(s) have been made against you.',
+        dismissalPossible
+          ? 'You are advised that dismissal is a possible outcome of these proceedings, should the allegations be proven.'
+          : `The maximum sanction that can follow these proceedings is: ${this.sanctionLabel(dto.maxSanction)}.`,
+        `Please respond in writing through your dashboard by ${this.formatDate(responseDueBy)} (${dto.responseDeadlineDays} working days). A hearing will be scheduled to decide the matter and you will receive a separate invitation.`,
+      ],
+      details: [
+        { label: 'Allegation(s)', value: dto.charges },
+        { label: 'Rule / clause breached', value: dto.clauseBreached },
+        ...this.caseDetails(saved),
+        {
+          label: 'Maximum sanction',
+          value: this.sanctionLabel(dto.maxSanction),
+        },
+      ],
+      listTitle: 'Your rights',
+      listItems: [
+        'Respond to these allegations in writing within the response deadline',
+        'Be represented at any hearing by a fellow employee or trade union representative',
+        'Call witnesses and present evidence in your defence',
+        'Cross-examine any witnesses called against you',
+        'Receive copies of all evidence before any hearing',
+      ],
+    }).catch(() => {});
+
+    return saved;
+  }
+
+  // Step 6 (hearing invitation) is ScheduleHearingDto through the
+  // shared scheduleHearing(); this is the formal letter it sends.
+  private async sendDisciplinaryHearingInvitation(
+    dispute: DisputeCaseDocument,
+  ): Promise<void> {
+    const hearing = (dispute as any).hearing;
+    const notice = (dispute as any).disciplinary?.notice;
+    if (!hearing) return;
+
+    await this.sendLetterToRespondents(dispute, {
+      subject: `Disciplinary hearing invitation — Case ${dispute.caseNumber}`,
+      heading: 'Invitation to a disciplinary hearing',
+      paragraphs: [
+        `You are invited to attend a disciplinary hearing on ${this.formatDateTime(hearing.scheduledAt)}.`,
+        'An impartial chairperson will preside. The employer will present its case, you will have the opportunity to respond, and witnesses may be called and cross-examined. The hearing may proceed in your absence if you do not attend without good cause.',
+      ],
+      details: [
+        {
+          label: 'Format',
+          value:
+            hearing.mode === 'online'
+              ? `Online (${String(hearing.meetingPlatform ?? '').replace('_', ' ')})`
+              : 'In person',
+        },
+        hearing.mode === 'online'
+          ? { label: 'Meeting link', value: hearing.meetingLink ?? '—' }
+          : { label: 'Venue', value: hearing.venue ?? '—' },
+        ...(notice
+          ? [{ label: 'Allegation(s)', value: notice.charges as string }]
+          : []),
+        ...this.caseDetails(dispute),
+        ...(hearing.notes ? [{ label: 'Notes', value: hearing.notes }] : []),
+      ],
+      listTitle: 'Your rights',
+      listItems: [
+        'Be represented by a fellow employee or trade union representative',
+        'Call witnesses and present evidence in your defence',
+        'Cross-examine any witnesses called against you',
+      ],
+    });
+  }
+
+  // ── Step 7 — hearing minutes ────────────────────────────────────
+  async recordHearingMinutes(
+    tenantId: string,
+    caseId: string,
+    hrUserId: string,
+    dto: RecordHearingMinutesDto,
+  ): Promise<DisputeCaseDocument> {
+    const dispute = await this.getDisciplinaryCase(tenantId, caseId);
+    if (dispute.stage !== DisputeStage.HEARING) {
+      throw new BadRequestException(
+        'Minutes can only be recorded once a hearing has been scheduled.',
+      );
+    }
+    this.disciplinaryState(dispute).hearingRecord = {
+      minutes: dto.minutes,
+      checklist: dto.checklist ?? [],
+      recordedAt: new Date(),
+      recordedBy: new Types.ObjectId(hrUserId),
+    };
+    dispute.markModified('disciplinary');
+    return dispute.save();
+  }
+
+  // ── Step 8 — finding & mitigation ───────────────────────────────
+  async recordDisciplinaryFinding(
+    tenantId: string,
+    caseId: string,
+    hrUserId: string,
+    dto: RecordDisciplinaryFindingDto,
+  ): Promise<DisputeCaseDocument> {
+    const dispute = await this.getDisciplinaryCase(tenantId, caseId);
+    const state = this.disciplinaryState(dispute);
+    if (dispute.stage !== DisputeStage.HEARING || !state.hearingRecord) {
+      throw new BadRequestException(
+        'Record the hearing minutes before the finding.',
+      );
+    }
+    state.finding = {
+      decision: dto.decision,
+      reasons: dto.reasons,
+      mitigatingFactors: dto.mitigatingFactors ?? null,
+      aggravatingFactors: dto.aggravatingFactors ?? null,
+      recordedAt: new Date(),
+      recordedBy: new Types.ObjectId(hrUserId),
+    };
+    this.pushStageHistory(
+      dispute,
+      DisputeStage.FINDING,
+      `${dto.decision.replace('_', ' ')} — ${dto.reasons}`,
+      hrUserId,
+    );
+    dispute.stage = DisputeStage.FINDING;
+    dispute.markModified('disciplinary');
+    dispute.markModified('stageHistory');
+    return dispute.save();
+  }
+
+  // Step 9's letter — finding, sanction, right to appeal.
+  private async sendDisciplinaryOutcomeNotice(
+    dispute: DisputeCaseDocument,
+  ): Promise<void> {
+    const outcome = (dispute as any).outcome;
+    const finding = (dispute as any).disciplinary?.finding;
+    if (!outcome) return;
+
+    const appealable = outcome.decision !== DisputeOutcomeDecision.NO_ACTION;
+    const appealBy = this.addWorkingDays(new Date(), 5);
+
+    const sent = await this.sendLetterToRespondents(dispute, {
+      subject: `Outcome of disciplinary hearing — Case ${dispute.caseNumber}`,
+      heading: 'Outcome of your disciplinary hearing',
+      paragraphs: [
+        'Further to the hearing held in your matter, we write to inform you of the outcome.',
+        appealable
+          ? `You have the right to appeal this decision. Your appeal must be made in writing through your dashboard, stating your grounds, by ${this.formatDate(appealBy)} (5 working days). It will be heard by a different and more senior person than the original chairperson.${
+              [
+                DisputeOutcomeDecision.DISMISSAL_WITH_NOTICE,
+                DisputeOutcomeDecision.SUMMARY_DISMISSAL,
+              ].includes(outcome.decision)
+                ? ' If you appeal, the dismissal is suspended until the appeal outcome is determined, unless there are compelling reasons otherwise.'
+                : ''
+            }`
+          : 'No sanction has been imposed.',
+      ],
+      details: [
+        ...this.caseDetails(dispute),
+        ...(finding
+          ? [
+              {
+                label: 'Finding',
+                value: `${String(finding.decision).replace('_', ' ')} — ${finding.reasons}`,
+              },
+            ]
+          : []),
+        {
+          label: 'Sanction',
+          value: this.sanctionLabel(outcome.decision),
+        },
+        ...(outcome.notes
+          ? [{ label: 'Reasons for sanction', value: outcome.notes }]
+          : []),
+        ...(outcome.warningExpiryDate
+          ? [
+              {
+                label: 'Warning valid until',
+                value: this.formatDate(outcome.warningExpiryDate),
+              },
+            ]
+          : []),
+      ],
+    });
+
+    if (sent) {
+      outcome.emailSentAt = new Date();
+      dispute.markModified('outcome');
+      await dispute.save();
+    }
+  }
+
+  // ── Step 10 — appeal hearing & appeal outcome (HR side) ─────────
+  async scheduleDisciplinaryAppealHearing(
+    tenantId: string,
+    caseId: string,
+    hrUserId: string,
+    dto: ScheduleDisciplinaryAppealHearingDto,
+  ): Promise<DisputeCaseDocument> {
+    const dispute = await this.getDisciplinaryCase(tenantId, caseId);
+    const appeal = dispute.appeal as any;
+    if (dispute.stage !== DisputeStage.APPEAL || !appeal || appeal.resolvedAt) {
+      throw new BadRequestException(
+        'There is no open appeal on this case. The employee must file one first.',
+      );
+    }
+
+    appeal.hearing = {
+      scheduledAt: new Date(dto.scheduledAt),
+      mode: dto.mode,
+      venue: dto.mode === 'physical' ? (dto.venue ?? null) : null,
+      meetingPlatform:
+        dto.mode === 'online' ? (dto.meetingPlatform ?? null) : null,
+      meetingLink: dto.mode === 'online' ? (dto.meetingLink ?? null) : null,
+      chairperson: dto.chairperson,
+      scheduledBy: new Types.ObjectId(hrUserId),
+      notes: dto.notes ?? null,
+    };
+    dispute.markModified('appeal');
+    const saved = await dispute.save();
+
+    const h = appeal.hearing;
+    this.sendLetterToRespondents(saved, {
+      subject: `Appeal hearing — Case ${saved.caseNumber}`,
+      heading: 'Your appeal hearing',
+      paragraphs: [
+        `Your appeal will be heard on ${this.formatDateTime(h.scheduledAt)} by ${h.chairperson}, who was not part of the original hearing.`,
+      ],
+      details: [
+        {
+          label: 'Format',
+          value:
+            h.mode === 'online'
+              ? `Online (${String(h.meetingPlatform ?? '').replace('_', ' ')})`
+              : 'In person',
+        },
+        h.mode === 'online'
+          ? { label: 'Meeting link', value: h.meetingLink ?? '—' }
+          : { label: 'Venue', value: h.venue ?? '—' },
+        { label: 'Your grounds', value: appeal.grounds },
+        ...(h.notes ? [{ label: 'Notes', value: h.notes }] : []),
+      ],
+    }).catch(() => {});
+
+    return saved;
+  }
+
+  async recordDisciplinaryAppealOutcome(
+    tenantId: string,
+    caseId: string,
+    hrUserId: string,
+    dto: RecordDisciplinaryAppealOutcomeDto,
+  ): Promise<DisputeCaseDocument> {
+    const dispute = await this.getDisciplinaryCase(tenantId, caseId);
+    const appeal = dispute.appeal as any;
+    if (dispute.stage !== DisputeStage.APPEAL || !appeal || appeal.resolvedAt) {
+      throw new BadRequestException('There is no open appeal on this case.');
+    }
+    if (!appeal.hearing) {
+      throw new BadRequestException(
+        'Schedule the appeal hearing before recording its outcome.',
+      );
+    }
+    if (
+      dto.decision === AppealDecision.PARTIALLY_UPHELD &&
+      (!dto.newSanction || !DISCIPLINARY_SANCTIONS.includes(dto.newSanction))
+    ) {
+      throw new BadRequestException(
+        'Choose the reduced sanction for a partially upheld appeal.',
+      );
+    }
+
+    appeal.reviewedBy = new Types.ObjectId(hrUserId);
+    appeal.decision = dto.decision;
+    appeal.resolvedAt = new Date();
+    appeal.notes = dto.reasons;
+    appeal.newSanction =
+      dto.decision === AppealDecision.PARTIALLY_UPHELD
+        ? (dto.newSanction ?? null)
+        : null;
+
+    this.pushStageHistory(dispute, DisputeStage.APPEAL, dto.reasons, hrUserId);
+    // The appeal outcome is final within the internal process. The case
+    // stays "outcome recorded" so HR can still record it on file, start
+    // offboarding, escalate externally or close it.
+    dispute.status = DisputeStatus.OUTCOME_RECORDED;
+    dispute.markModified('appeal');
+    dispute.markModified('stageHistory');
+    const saved = await dispute.save();
+
+    const decisionText: Record<string, string> = {
+      dismissed: 'Your appeal was dismissed — the original sanction is upheld.',
+      partially_upheld: `Your appeal was partially upheld — the sanction is reduced to: ${this.sanctionLabel(appeal.newSanction ?? '')}.`,
+      upheld:
+        'Your appeal was upheld — the finding and sanction are overturned.',
+    };
+    this.sendLetterToRespondents(saved, {
+      subject: `Appeal outcome — Case ${saved.caseNumber}`,
+      heading: 'Outcome of your appeal',
+      paragraphs: [
+        decisionText[dto.decision],
+        `Reasons: ${dto.reasons}`,
+        'This outcome is final within the internal process. If you remain dissatisfied you may take the matter to the labour authority or labour court.',
+      ],
+    }).catch(() => {});
+
+    return saved;
+  }
+
+  // ── Tenant-facing wrappers for the steps above are the methods
+  // themselves: getDisciplinaryCase() already requires the case to be
+  // with HR, and a disciplinary case always is.
 }

@@ -26,10 +26,17 @@ import {
   AcknowledgeDisputeDto,
   InvestigateDisputeDto,
   ScheduleHearingDto,
-  RecordOutcomeDto,
+  RecordSanctionDto,
   EscalateExternalDto,
   ResolveAppealDto,
   CloseDisputeDto,
+  DisciplinarySuspensionDto,
+  DisciplinaryInvestigationDto,
+  ServeNoticeOfAllegationsDto,
+  RecordHearingMinutesDto,
+  RecordDisciplinaryFindingDto,
+  ScheduleDisciplinaryAppealHearingDto,
+  RecordDisciplinaryAppealOutcomeDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import { UserType } from 'src/common/interfaces/user-role.enum';
@@ -182,14 +189,124 @@ export class DisputeTenantController {
   }
 
   @Patch(':caseId/outcome')
-  @ApiOperation({ summary: 'Record the outcome decision' })
+  @ApiOperation({
+    summary:
+      'Record the outcome decision (for a disciplinary case: the sanction)',
+  })
   recordOutcome(
     @Param('caseId') caseId: string,
-    @Body() dto: RecordOutcomeDto,
+    @Body() dto: RecordSanctionDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
     return this.disputeService.recordOutcomeAsTenant(t || u, caseId, u, dto);
+  }
+
+  // ── Disciplinary procedure (steps 2, 3, 4, 7, 8, 10) ─────────────
+  @Patch(':caseId/disciplinary/suspension')
+  @ApiOperation({
+    summary: 'Step 2 — issue or skip a precautionary suspension',
+  })
+  disciplinarySuspension(
+    @Param('caseId') caseId: string,
+    @Body() dto: DisciplinarySuspensionDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.recordDisciplinarySuspension(
+      t || u,
+      caseId,
+      u,
+      dto,
+    );
+  }
+
+  @Patch(':caseId/disciplinary/investigation')
+  @ApiOperation({ summary: 'Step 3 — record the investigation' })
+  disciplinaryInvestigation(
+    @Param('caseId') caseId: string,
+    @Body() dto: DisciplinaryInvestigationDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.recordDisciplinaryInvestigation(
+      t || u,
+      caseId,
+      u,
+      dto,
+    );
+  }
+
+  @Patch(':caseId/disciplinary/notice-of-allegations')
+  @ApiOperation({ summary: 'Step 4 — serve the notice of allegations' })
+  disciplinaryNotice(
+    @Param('caseId') caseId: string,
+    @Body() dto: ServeNoticeOfAllegationsDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.serveNoticeOfAllegations(t || u, caseId, u, dto);
+  }
+
+  @Patch(':caseId/disciplinary/hearing-minutes')
+  @ApiOperation({ summary: 'Step 7 — record the hearing minutes' })
+  disciplinaryMinutes(
+    @Param('caseId') caseId: string,
+    @Body() dto: RecordHearingMinutesDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.recordHearingMinutes(t || u, caseId, u, dto);
+  }
+
+  @Patch(':caseId/disciplinary/finding')
+  @ApiOperation({ summary: 'Step 8 — record the finding and mitigation' })
+  disciplinaryFinding(
+    @Param('caseId') caseId: string,
+    @Body() dto: RecordDisciplinaryFindingDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.recordDisciplinaryFinding(
+      t || u,
+      caseId,
+      u,
+      dto,
+    );
+  }
+
+  @Patch(':caseId/disciplinary/appeal-hearing')
+  @ApiOperation({
+    summary: "Step 10 — schedule the hearing of the employee's appeal",
+  })
+  disciplinaryAppealHearing(
+    @Param('caseId') caseId: string,
+    @Body() dto: ScheduleDisciplinaryAppealHearingDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.scheduleDisciplinaryAppealHearing(
+      t || u,
+      caseId,
+      u,
+      dto,
+    );
+  }
+
+  @Patch(':caseId/disciplinary/appeal-outcome')
+  @ApiOperation({ summary: 'Step 10 — record the appeal outcome' })
+  disciplinaryAppealOutcome(
+    @Param('caseId') caseId: string,
+    @Body() dto: RecordDisciplinaryAppealOutcomeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.disputeService.recordDisciplinaryAppealOutcome(
+      t || u,
+      caseId,
+      u,
+      dto,
+    );
   }
 
   @Patch(':caseId/resolve-appeal')
