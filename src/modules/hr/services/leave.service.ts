@@ -120,6 +120,73 @@ export class LeaveService {
       .lean() as any;
   }
 
+  // Renames a custom leave type. The key is what policies and requests
+  // store, so it stays put — only the label the tenant sees changes.
+  async updateCustomLeaveType(
+    tenantId: string,
+    id: string,
+    label: string,
+  ): Promise<CustomLeaveTypeDocument> {
+    const tId = new Types.ObjectId(tenantId);
+    const trimmed = (label ?? '').trim();
+    if (!trimmed) throw new BadRequestException('A name is required.');
+
+    const type = await this.customLeaveTypeModel.findOne({
+      _id: new Types.ObjectId(id),
+      tenantId: tId,
+    });
+    if (!type) throw new NotFoundException('Leave type not found.');
+
+    const clash = await this.customLeaveTypeModel.exists({
+      tenantId: tId,
+      _id: { $ne: type._id },
+      label: new RegExp(
+        `^${trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+        'i',
+      ),
+    });
+    if (clash) {
+      throw new BadRequestException(
+        'You already have a leave type with that name.',
+      );
+    }
+
+    type.label = trimmed;
+    return type.save();
+  }
+
+  // Deletes a custom leave type. Refused once any leave request has been
+  // made with it, so the leave history never points at a type that no
+  // longer exists. Otherwise it is also removed from every location policy.
+  async deleteCustomLeaveType(
+    tenantId: string,
+    id: string,
+  ): Promise<{ deleted: true }> {
+    const tId = new Types.ObjectId(tenantId);
+    const type = await this.customLeaveTypeModel.findOne({
+      _id: new Types.ObjectId(id),
+      tenantId: tId,
+    });
+    if (!type) throw new NotFoundException('Leave type not found.');
+
+    const used = await this.leaveModel.countDocuments({
+      tenantId: tId,
+      type: type.key,
+    });
+    if (used > 0) {
+      throw new BadRequestException(
+        `${used} leave request${used === 1 ? ' has' : 's have'} already been made with "${type.label}", so it can't be deleted. You can rename it instead.`,
+      );
+    }
+
+    await this.policyModel.updateMany(
+      { tenantId: tId },
+      { $pull: { policies: { type: type.key } } },
+    );
+    await type.deleteOne();
+    return { deleted: true };
+  }
+
   // Resolves whether `type` is usable for this tenant — a built-in
   // LeaveType member, or the key of one of their own custom types.
   private async isKnownLeaveType(

@@ -43,6 +43,7 @@ import {
   LeaveFilterDto,
   ReviewLeaveRequestDto,
   CreateCustomLeaveTypeDto,
+  UpdateCustomLeaveTypeDto,
   UploadEmployeeDocumentDto,
   PromoteToHeadOfDepartmentDto,
   AddEmployeeRecordDto,
@@ -651,6 +652,30 @@ export class HrTenantController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.leaveService.createCustomLeaveType(t || u, dto.label);
+  }
+
+  @Patch('leave/custom-types/:id')
+  @ApiOperation({ summary: 'Rename a tenant-defined custom leave type' })
+  updateCustomLeaveType(
+    @Param('id') id: string,
+    @Body() dto: UpdateCustomLeaveTypeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.leaveService.updateCustomLeaveType(t || u, id, dto.label);
+  }
+
+  @Delete('leave/custom-types/:id')
+  @ApiOperation({
+    summary:
+      'Delete a custom leave type (refused once leave has been requested with it)',
+  })
+  deleteCustomLeaveType(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.leaveService.deleteCustomLeaveType(t || u, id);
   }
 
   @Get('leave/custom-types')

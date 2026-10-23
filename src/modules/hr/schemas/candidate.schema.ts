@@ -53,6 +53,10 @@ export class Candidate {
   @Prop({ enum: CandidateSource, default: CandidateSource.OTHER })
   source: CandidateSource;
 
+  // What the tenant typed when they chose "other".
+  @Prop({ default: null, trim: true })
+  sourceOther: string | null;
+
   @Prop({ enum: CandidateStage, default: CandidateStage.SOURCED, index: true })
   stage: CandidateStage;
 

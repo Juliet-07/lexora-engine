@@ -62,6 +62,13 @@ export enum DisputeOutcomeDecision {
 // The sanctions a disciplinary case may end in, and the ones every
 // other dispute type may use. Kept apart so grievance/incident/report
 // behave exactly as before.
+export const SANCTION_DURATION_UNITS: string[] = [
+  'days',
+  'weeks',
+  'months',
+  'years',
+];
+
 export const DISCIPLINARY_SANCTIONS: string[] = [
   DisputeOutcomeDecision.NO_ACTION,
   DisputeOutcomeDecision.VERBAL_WARNING,
@@ -163,8 +170,13 @@ class DisputeOutcome {
   @Prop() attachmentUrl: string;
   @Prop({ default: null }) emailSentAt: Date | null;
   @Prop({ default: null }) terminationTriggerError: string | null;
-  // Disciplinary: when a warning lapses (6 months written / 12 months final).
+  // Legacy: older disciplinary records had a system-calculated lapse date.
+  // New sanctions never set it — the tenant states the duration instead.
   @Prop({ default: null }) warningExpiryDate: Date | null;
+  // Disciplinary: how long the sanction lasts, as stated by the tenant
+  // (e.g. { value: 6, unit: 'months' }). The system never decides this.
+  @Prop({ type: Object, default: null })
+  duration: { value: number; unit: string } | null;
 }
 
 @Schema({ _id: false })
@@ -190,6 +202,9 @@ class DisputeAppeal {
     notes: string | null;
   } | null;
   @Prop({ default: null }) newSanction: string | null;
+  // Tenant-stated duration of the reduced sanction, when it has one.
+  @Prop({ type: Object, default: null })
+  newSanctionDuration: { value: number; unit: string } | null;
 }
 
 @Schema({ _id: false })
@@ -328,6 +343,10 @@ export class DisputeCase {
   // ── Grievance-only fields ──────────────────────────────────────
   @Prop({ enum: GrievanceNature, default: null })
   natureOfGrievance: string | null;
+
+  // What the tenant/employee typed when they chose "others".
+  @Prop({ default: null })
+  natureOfGrievanceOther: string | null;
 
   @Prop({ default: null }) adverseEffect: string | null;
 

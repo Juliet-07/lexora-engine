@@ -103,6 +103,12 @@ export class CreateCustomLeaveTypeDto {
   label: string;
 }
 
+export class UpdateCustomLeaveTypeDto {
+  @ApiProperty({ example: 'Bereavement (Extended)' })
+  @IsString()
+  label: string;
+}
+
 export class UpsertLeavePolicyDto {
   @ApiProperty({ description: 'Location ID - null for default tenant policy' })
   @IsOptional()

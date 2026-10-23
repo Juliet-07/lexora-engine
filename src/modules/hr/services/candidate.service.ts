@@ -70,6 +70,10 @@ export class CandidateService {
       phone: dto.phone ?? null,
       roleAppliedFor: dto.roleAppliedFor,
       source: dto.source ?? 'other',
+      sourceOther:
+        (dto.source ?? 'other') === 'other'
+          ? dto.sourceOther?.trim() || null
+          : null,
       workerCategory: dto.workerCategory ?? 'employee',
       notes: dto.notes ?? null,
       stage: CandidateStage.SOURCED,
@@ -88,7 +92,13 @@ export class CandidateService {
     if (dto.phone !== undefined) candidate.phone = dto.phone;
     if (dto.roleAppliedFor !== undefined)
       candidate.roleAppliedFor = dto.roleAppliedFor;
-    if (dto.source !== undefined) candidate.source = dto.source as any;
+    if (dto.source !== undefined) {
+      candidate.source = dto.source as any;
+      if (dto.source !== 'other') candidate.sourceOther = null;
+    }
+    if (dto.sourceOther !== undefined && candidate.source === 'other') {
+      candidate.sourceOther = dto.sourceOther.trim() || null;
+    }
     if (dto.rating !== undefined) candidate.rating = dto.rating;
     if (dto.notes !== undefined) candidate.notes = dto.notes;
     await candidate.save();

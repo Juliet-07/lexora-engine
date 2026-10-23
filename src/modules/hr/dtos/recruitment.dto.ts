@@ -11,6 +11,7 @@ import {
   IsEmail,
   IsIn,
   IsBoolean,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -23,6 +24,13 @@ export class CreateCandidateDto {
   @IsOptional()
   @IsIn(['referral', 'linkedin', 'job_board', 'agency', 'website', 'other'])
   source?: string;
+  @ApiPropertyOptional({
+    description: 'Where the candidate came from, when source is "other"',
+  })
+  @ValidateIf((o) => o.source === 'other')
+  @IsOptional()
+  @IsString()
+  sourceOther?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
   @ApiPropertyOptional({
     enum: ['employee', 'consultant'],
@@ -42,6 +50,13 @@ export class UpdateCandidateDto {
   @IsOptional()
   @IsIn(['referral', 'linkedin', 'job_board', 'agency', 'website', 'other'])
   source?: string;
+  @ApiPropertyOptional({
+    description: 'Where the candidate came from, when source is "other"',
+  })
+  @ValidateIf((o) => o.source === 'other')
+  @IsOptional()
+  @IsString()
+  sourceOther?: string;
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()

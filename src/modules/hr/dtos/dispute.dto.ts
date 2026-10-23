@@ -10,7 +10,9 @@ import {
   Max,
   MinLength,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   DisputeType,
@@ -25,6 +27,7 @@ import {
   InvestigationRecommendation,
   AppealDecision,
   DISCIPLINARY_SANCTIONS,
+  SANCTION_DURATION_UNITS,
 } from '../schemas';
 
 // ── Attachment sub-shape for filing-time uploads ───────────────────
@@ -83,6 +86,18 @@ export class OpenDisputeCaseDto {
   @ValidateIf((o) => o.type === DisputeType.GRIEVANCE)
   @IsEnum(GrievanceNature)
   natureOfGrievance?: string;
+
+  @ApiPropertyOptional({
+    description: 'What the nature is, when "others" is chosen',
+  })
+  @ValidateIf(
+    (o) =>
+      o.type === DisputeType.GRIEVANCE &&
+      o.natureOfGrievance === GrievanceNature.OTHERS,
+  )
+  @IsString()
+  @MinLength(3)
+  natureOfGrievanceOther?: string;
 
   @ApiPropertyOptional({
     description: 'How has this adversely affected you?',
@@ -439,12 +454,26 @@ export class RecordDisciplinaryFindingDto {
   aggravatingFactors?: string;
 }
 
-// Step 9 — sanction: reuses RecordOutcomeDto (+ optional warning expiry)
+// How long a sanction lasts. Always entered by the tenant.
+export class SanctionDurationDto {
+  @ApiProperty({ example: 6 })
+  @IsInt()
+  @Min(1)
+  @Max(999)
+  value: number;
+
+  @ApiProperty({ enum: SANCTION_DURATION_UNITS })
+  @IsEnum(SANCTION_DURATION_UNITS)
+  unit: string;
+}
+
+// Step 9 — sanction: reuses RecordOutcomeDto (+ tenant-stated duration)
 export class RecordSanctionDto extends RecordOutcomeDto {
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: SanctionDurationDto })
   @IsOptional()
-  @IsDateString()
-  warningExpiryDate?: string;
+  @ValidateNested()
+  @Type(() => SanctionDurationDto)
+  duration?: SanctionDurationDto;
 }
 
 // Step 10 — appeal hearing and appeal outcome (tenant side; the appeal
@@ -469,6 +498,12 @@ export class RecordDisciplinaryAppealOutcomeDto {
   @ValidateIf((o) => o.decision === AppealDecision.PARTIALLY_UPHELD)
   @IsEnum(DISCIPLINARY_SANCTIONS)
   newSanction?: string;
+
+  @ApiPropertyOptional({ type: SanctionDurationDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SanctionDurationDto)
+  newSanctionDuration?: SanctionDurationDto;
 
   @ApiProperty()
   @IsString()

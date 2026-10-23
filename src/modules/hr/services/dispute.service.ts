@@ -723,6 +723,10 @@ export class DisputeService {
       description: dto.description,
       witnesses: dto.witnesses ?? [],
       natureOfGrievance: dto.natureOfGrievance ?? null,
+      natureOfGrievanceOther:
+        dto.natureOfGrievance === 'others'
+          ? (dto.natureOfGrievanceOther?.trim() ?? null)
+          : null,
       adverseEffect: dto.adverseEffect ?? null,
       informalResolutionSteps: dto.informalResolutionSteps ?? null,
       desiredOutcome: dto.desiredOutcome ?? null,
@@ -1094,8 +1098,9 @@ export class DisputeService {
       attachmentUrl: dto.attachmentUrl ?? null,
       emailSentAt: null,
       terminationTriggerError: null,
-      warningExpiryDate: isDisciplinary
-        ? this.warningExpiry(dto.decision, (dto as any).warningExpiryDate)
+      warningExpiryDate: null,
+      duration: isDisciplinary
+        ? this.sanctionDuration(dto.decision, (dto as any).duration)
         : null,
     };
     dispute.markModified('stageHistory');
@@ -1736,18 +1741,37 @@ export class DisputeService {
     return labels[decision] ?? decision;
   }
 
-  private warningExpiry(decision: string, explicit?: string): Date | null {
-    if (explicit) return new Date(explicit);
-    const months =
-      decision === DisputeOutcomeDecision.WRITTEN_WARNING
-        ? 6
-        : decision === DisputeOutcomeDecision.FINAL_WARNING
-          ? 12
-          : 0;
-    if (!months) return null;
-    const d = new Date();
-    d.setMonth(d.getMonth() + months);
-    return d;
+  // The tenant states how long a sanction lasts — the system never works
+  // it out. A duration makes no sense for "no action" or a dismissal, so
+  // it is dropped there; an unpaid suspension must say how long it is for.
+  private sanctionDuration(
+    decision: string,
+    duration?: { value: number; unit: string } | null,
+  ): { value: number; unit: string } | null {
+    const hasNoDuration = [
+      DisputeOutcomeDecision.NO_ACTION,
+      DisputeOutcomeDecision.DISMISSAL_WITH_NOTICE,
+      DisputeOutcomeDecision.SUMMARY_DISMISSAL,
+    ].includes(decision as DisputeOutcomeDecision);
+    if (hasNoDuration) return null;
+
+    if (!duration?.value || !duration?.unit) {
+      if (decision === DisputeOutcomeDecision.SUSPENSION_WITHOUT_PAY) {
+        throw new BadRequestException(
+          'State how long the suspension without pay lasts.',
+        );
+      }
+      return null;
+    }
+    return { value: duration.value, unit: duration.unit };
+  }
+
+  private formatDuration(
+    d?: { value: number; unit: string } | null,
+  ): string | null {
+    if (!d?.value || !d?.unit) return null;
+    const unit = d.value === 1 ? d.unit.replace(/s$/, '') : d.unit;
+    return `${d.value} ${unit}`;
   }
 
   private addWorkingDays(from: Date, days: number): Date {
@@ -2153,14 +2177,21 @@ export class DisputeService {
         ...(outcome.notes
           ? [{ label: 'Reasons for sanction', value: outcome.notes }]
           : []),
-        ...(outcome.warningExpiryDate
+        ...(this.formatDuration(outcome.duration)
           ? [
               {
-                label: 'Warning valid until',
-                value: this.formatDate(outcome.warningExpiryDate),
+                label: 'Duration',
+                value: this.formatDuration(outcome.duration) as string,
               },
             ]
-          : []),
+          : outcome.warningExpiryDate
+            ? [
+                {
+                  label: 'Warning valid until',
+                  value: this.formatDate(outcome.warningExpiryDate),
+                },
+              ]
+            : []),
       ],
     });
 
@@ -2259,6 +2290,10 @@ export class DisputeService {
       dto.decision === AppealDecision.PARTIALLY_UPHELD
         ? (dto.newSanction ?? null)
         : null;
+    appeal.newSanctionDuration =
+      dto.decision === AppealDecision.PARTIALLY_UPHELD && dto.newSanction
+        ? this.sanctionDuration(dto.newSanction, dto.newSanctionDuration)
+        : null;
 
     this.pushStageHistory(dispute, DisputeStage.APPEAL, dto.reasons, hrUserId);
     // The appeal outcome is final within the internal process. The case
@@ -2271,7 +2306,7 @@ export class DisputeService {
 
     const decisionText: Record<string, string> = {
       dismissed: 'Your appeal was dismissed — the original sanction is upheld.',
-      partially_upheld: `Your appeal was partially upheld — the sanction is reduced to: ${this.sanctionLabel(appeal.newSanction ?? '')}.`,
+      partially_upheld: `Your appeal was partially upheld — the sanction is reduced to: ${this.sanctionLabel(appeal.newSanction ?? '')}${this.formatDuration(appeal.newSanctionDuration) ? ` (${this.formatDuration(appeal.newSanctionDuration)})` : ''}.`,
       upheld:
         'Your appeal was upheld — the finding and sanction are overturned.',
     };
