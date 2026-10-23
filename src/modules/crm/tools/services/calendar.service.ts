@@ -9,6 +9,7 @@ import {
 import { CreateCalendarEventDto, UpdateCalendarEventDto } from '../dtos';
 import { ContractService } from './contract.service';
 import { ComplianceObligationService } from 'src/modules/grc/compliance/services/obligation.service';
+import { PolicyService } from 'src/modules/grc/compliance/services/policy.service';
 import { AdrCaseService } from 'src/modules/crm/projects/services/adr-case.service';
 import { LitigationCaseService } from 'src/modules/crm/projects/services/litigation-case.service';
 
@@ -86,6 +87,7 @@ export class CalendarAggregationService {
     private readonly eventService: CalendarEventService,
     private readonly contractService: ContractService,
     private readonly complianceObligationService: ComplianceObligationService,
+    private readonly policyService: PolicyService,
     private readonly adrCaseService: AdrCaseService,
     private readonly litigationCaseService: LitigationCaseService,
   ) {}
@@ -134,8 +136,11 @@ export class CalendarAggregationService {
   }
 
   private async getComplianceEvents(tenantId: string) {
-    const obligations = await this.complianceObligationService.getAll(tenantId);
-    return (obligations as any[]).map((o) => {
+    const [obligations, policies] = await Promise.all([
+      this.complianceObligationService.getAll(tenantId),
+      this.policyService.getReviewDates(tenantId),
+    ]);
+    const obligationEvents = (obligations as any[]).map((o) => {
       const { date, time } = this.splitDateTime(o.nextDueDate);
       return {
         id: `compliance-${o._id}`,
@@ -148,6 +153,23 @@ export class CalendarAggregationService {
         editable: false,
       };
     });
+    // A published policy's next review date, computed live from the
+    // policy itself so it can never drift from what the policy says.
+    const policyEvents = (policies as any[]).map((p) => {
+      const { date, time } = this.splitDateTime(p.nextReviewDue);
+      return {
+        id: `policy-review-${p._id}`,
+        title: `Policy review due — ${p.title}`,
+        date,
+        time,
+        layer: CalendarLayer.COMPLIANCE,
+        // version is already stored as "v1", "v2", …
+        source: p.documentReference || `Policy ${p.version}`,
+        location: '—',
+        editable: false,
+      };
+    });
+    return [...obligationEvents, ...policyEvents];
   }
 
   private async getAdrEvents(tenantId: string) {

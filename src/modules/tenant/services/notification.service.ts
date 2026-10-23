@@ -556,6 +556,38 @@ export class TenantNotificationService {
     );
   }
 
+  // A published policy is coming due for review (or is overdue). The
+  // branded reminder email is already sent by PolicyReviewReminderService,
+  // so this only creates the in-app record — skipEmail avoids a duplicate.
+  @OnEvent('grc.policy.review_due')
+  async onPolicyReviewDue(e: {
+    tenantId: string;
+    policyId: string;
+    title: string;
+    dueDate: Date;
+    daysRemaining: number;
+    overdue: boolean;
+  }) {
+    const due = new Date(e.dueDate).toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+    await this.create(
+      e.tenantId,
+      e.tenantId,
+      TenantNotificationType.COMPLIANCE,
+      e.overdue
+        ? `Policy review overdue — ${e.title}`
+        : `Policy review due in ${e.daysRemaining} day${e.daysRemaining === 1 ? '' : 's'} — ${e.title}`,
+      e.overdue
+        ? `The review was due ${due} (${e.daysRemaining} day${e.daysRemaining === 1 ? '' : 's'} ago).`
+        : `Review due ${due}.`,
+      `/grc/compliance/policies/${e.policyId}`,
+      true,
+    );
+  }
+
   // An employee appealed a disciplinary outcome — the appeal hearing and
   // the appeal outcome are HR's next steps, so HR is told right away.
   @OnEvent('hr.dispute.appeal_filed')

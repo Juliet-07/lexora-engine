@@ -3,8 +3,15 @@ import { Document, Types } from 'mongoose';
 
 export type PolicyDocument = Policy & Document;
 
+// Who a policy is for — and so who can see and must acknowledge it.
+//   organisation          employees + consultants + the board
+//   employees             employees only (not consultants, not the board)
+//   employees_consultants employees and consultants (not the board)
+//   board                 the board only
 export enum PolicyType {
   ORGANISATION = 'organisation',
+  EMPLOYEES = 'employees',
+  EMPLOYEES_CONSULTANTS = 'employees_consultants',
   BOARD = 'board',
 }
 
@@ -28,7 +35,6 @@ export enum ReviewFrequency {
   SEMI_ANNUAL = 'Semi-annual',
   QUARTERLY = 'Quarterly',
   BIENNIAL = 'Biennial',
-  AD_HOC = 'Ad hoc',
 }
 
 export enum AckRequirement {
@@ -134,11 +140,12 @@ export class Policy {
 
   @Prop({ required: true, trim: true }) title: string;
   @Prop({ default: '' }) category: string;
-  // The acknowledgement audience: ORGANISATION means the whole
-  // tenant (employees roster in-app + board via emailed link) can
-  // see and must acknowledge it; BOARD restricts both visibility and
-  // acknowledgement to the board only. Separate axis from `status`,
-  // which tracks the document's own lifecycle.
+  // The acknowledgement audience (see PolicyType): ORGANISATION means
+  // the whole tenant (employees + consultants in-app, board via
+  // emailed link); EMPLOYEES / EMPLOYEES_CONSULTANTS leave the board
+  // out; BOARD restricts both visibility and acknowledgement to the
+  // board only. Separate axis from `status`, which tracks the
+  // document's own lifecycle.
   @Prop({ enum: PolicyType, default: PolicyType.ORGANISATION })
   type: PolicyType;
 

@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -20,6 +21,7 @@ import {
   Employee,
   EmployeeDocument,
   EmploymentStatus,
+  WorkerCategory,
 } from 'src/modules/hr/schemas/employee.schema';
 import {
   PolicyTemplate,
@@ -56,7 +58,7 @@ interface RosterEntry {
 }
 
 @Injectable()
-export class PolicyService {
+export class PolicyService implements OnModuleInit {
   constructor(
     @InjectModel(Policy.name) private readonly model: Model<PolicyDocument>,
     @InjectModel(Employee.name)
@@ -69,6 +71,20 @@ export class PolicyService {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
+  // "Ad hoc" is no longer a review frequency (it has no time-frame to
+  // schedule a review from). Any policy still carrying it moves to
+  // Annual — its existing nextReviewDue is left exactly as it was, so
+  // nothing already scheduled shifts. Safe on every boot: it only
+  // touches documents that still hold the retired value.
+  async onModuleInit() {
+    await this.model
+      .updateMany(
+        { reviewFrequency: 'Ad hoc' },
+        { $set: { reviewFrequency: ReviewFrequency.ANNUAL } },
+      )
+      .catch(() => {});
+  }
+
   // ── helpers ──────────────────────────────────────────────────
 
   private nextDueAfter(from: Date, freq: ReviewFrequency): Date {
@@ -77,8 +93,6 @@ export class PolicyService {
     else if (freq === ReviewFrequency.SEMI_ANNUAL) d.setMonth(d.getMonth() + 6);
     else if (freq === ReviewFrequency.BIENNIAL)
       d.setFullYear(d.getFullYear() + 2);
-    else if (freq === ReviewFrequency.AD_HOC)
-      d.setFullYear(d.getFullYear() + 1);
     else d.setFullYear(d.getFullYear() + 1); // Annual
     return d;
   }
@@ -92,42 +106,54 @@ export class PolicyService {
     return d.getTime() < now.getTime();
   }
 
-  // The acknowledgement audience: ORGANISATION reaches active
-  // employees (per acknowledgementRequirement) *and* the whole
-  // board; BOARD reaches only the board. "No acknowledgement
-  // required" empties the roster regardless of type.
-  private async roster(
+  // Who a policy is for, by type:
+  //   ORGANISATION           employees + consultants + the whole board
+  //   EMPLOYEES              employees only
+  //   EMPLOYEES_CONSULTANTS  employees and consultants, no board
+  //   BOARD                  the board only
+  // Consultants are employee records with workerCategory "consultant".
+  private async audience(
     tenantId: string,
     type: PolicyType,
-    requirement: AckRequirement,
   ): Promise<RosterEntry[]> {
-    if (requirement === AckRequirement.NONE) return [];
+    const wantsBoard =
+      type === PolicyType.BOARD || type === PolicyType.ORGANISATION;
+    const wantsStaff = type !== PolicyType.BOARD;
+    const wantsConsultants =
+      type === PolicyType.ORGANISATION ||
+      type === PolicyType.EMPLOYEES_CONSULTANTS;
 
-    const boardMembers = await this.boardMemberService.getAll(tenantId);
-    const boardEntries: RosterEntry[] = (boardMembers as any[])
-      .filter((b) => b.isActive)
-      .map((b) => ({
-        name: b.name,
-        role: b.role,
-        email: String(b.email).toLowerCase(),
-        channel: 'board',
-        boardMemberId: b._id,
-      }));
-
-    if (type === PolicyType.BOARD) return boardEntries;
+    let boardEntries: RosterEntry[] = [];
+    if (wantsBoard) {
+      const boardMembers = await this.boardMemberService.getAll(tenantId);
+      boardEntries = (boardMembers as any[])
+        .filter((b) => b.isActive)
+        .map((b) => ({
+          name: b.name,
+          role: b.role,
+          email: String(b.email).toLowerCase(),
+          channel: 'board' as const,
+          boardMemberId: b._id,
+        }));
+    }
+    if (!wantsStaff) return boardEntries;
 
     // "Department heads only" / "Specific roles" are tracked as a
     // scoping choice on the policy, but assignment still resolves to
     // the tenant's active employee roster — a tenant this size
     // manages that distinction by who they publish to, not a
     // separate org chart query here.
+    const query: Record<string, any> = {
+      tenantId: new Types.ObjectId(tenantId),
+      employmentStatus: {
+        $nin: [EmploymentStatus.TERMINATED, EmploymentStatus.RESIGNED],
+      },
+    };
+    if (!wantsConsultants) {
+      query.workerCategory = { $ne: WorkerCategory.CONSULTANT };
+    }
     const employees = await this.employeeModel
-      .find({
-        tenantId: new Types.ObjectId(tenantId),
-        employmentStatus: {
-          $nin: [EmploymentStatus.TERMINATED, EmploymentStatus.RESIGNED],
-        },
-      })
+      .find(query)
       .select('firstName lastName email jobTitle')
       .sort({ firstName: 1 })
       .lean();
@@ -135,18 +161,27 @@ export class PolicyService {
       name: `${e.firstName} ${e.lastName}`,
       role: e.jobTitle || '',
       email: String(e.email).toLowerCase(),
-      channel: 'employee',
+      channel: 'employee' as const,
     }));
 
     return [...employeeEntries, ...boardEntries];
   }
 
+  // The audience who must acknowledge: "No acknowledgement required"
+  // empties it regardless of type.
+  private async roster(
+    tenantId: string,
+    type: PolicyType,
+    requirement: AckRequirement,
+  ): Promise<RosterEntry[]> {
+    if (requirement === AckRequirement.NONE) return [];
+    return this.audience(tenantId, type);
+  }
+
   private async withComputedFields(tenantId: string, p: any) {
-    const roster = await this.roster(
-      tenantId,
-      p.type,
-      p.acknowledgementRequirement,
-    );
+    const audience = await this.audience(tenantId, p.type);
+    const roster =
+      p.acknowledgementRequirement === AckRequirement.NONE ? [] : audience;
     const ackByEmail = new Map(
       (p.acknowledgments ?? []).map((a: any) => [a.email, a]),
     );
@@ -204,6 +239,12 @@ export class PolicyService {
         ? Math.round((acknowledgedCount / assignedCount) * 100)
         : null,
       rosterStatus,
+      // Staff the policy is addressed to, whether or not it needs an
+      // acknowledgement — lets the employee portal list exactly the
+      // policies meant for the signed-in person.
+      audienceEmails: audience
+        .filter((a) => a.channel === 'employee')
+        .map((a) => a.email),
       boardApprovalSummary,
     };
   }
@@ -280,6 +321,19 @@ export class PolicyService {
     return Promise.all(
       policies.map((p) => this.withComputedFields(tenantId, p)),
     );
+  }
+
+  // Light read for the CRM calendar's Compliance layer: just the
+  // published policies that have a review date, no roster maths.
+  async getReviewDates(tenantId: string) {
+    return this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        status: PolicyStatus.PUBLISHED,
+        nextReviewDue: { $ne: null },
+      })
+      .select('title documentReference category version nextReviewDue')
+      .lean();
   }
 
   async getStats(tenantId: string) {
@@ -1030,12 +1084,21 @@ export class PolicyService {
     signature: string,
   ) {
     const policy = await this.getRawDoc(tenantId, policyId);
-    if (policy.type !== PolicyType.ORGANISATION) {
+    if (policy.type === PolicyType.BOARD) {
       throw new BadRequestException(
-        'Only organisation policies are acknowledged this way.',
+        'Board policies are acknowledged from the board portal.',
       );
     }
     const normalizedEmail = email.toLowerCase();
+    // The audience-specific types only reach part of the workforce, so
+    // check the signed-in person is actually in it (organisation-wide
+    // policies keep their original open behaviour).
+    if (policy.type !== PolicyType.ORGANISATION) {
+      const audience = await this.audience(tenantId, policy.type);
+      if (!audience.some((a) => a.email === normalizedEmail)) {
+        throw new BadRequestException('This policy is not assigned to you.');
+      }
+    }
     if (
       policy.acknowledgments.some(
         (a) => a.email === normalizedEmail && a.version === policy.version,
