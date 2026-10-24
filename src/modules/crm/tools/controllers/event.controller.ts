@@ -19,6 +19,7 @@ import {
   RecordEventOutcomeDto,
   CancelEventDto,
   SubmitEventFeedbackDto,
+  SetOpenRegistrationDto,
 } from '../dtos';
 import { CurrentUser, UserTypes, Public } from 'src/common/decorators';
 import {
@@ -111,6 +112,33 @@ export class EventController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.removeInvite(t || u, id, inviteId);
+  }
+
+  @Post(':id/open-link')
+  @ApiOperation({
+    summary:
+      'The shareable public registration link of an external event (created on first use) — for people who are not CRM contacts',
+  })
+  openLink(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getOpenLink(t || u, id);
+  }
+
+  @Patch(':id/open-registration')
+  @ApiOperation({
+    summary:
+      'Switch the public registration link on or off, or replace it with a new one',
+  })
+  setOpenRegistration(
+    @Param('id') id: string,
+    @Body() dto: SetOpenRegistrationDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.setOpenRegistration(t || u, id, dto ?? {});
   }
 
   @Post(':id/publish')
@@ -230,6 +258,31 @@ export class EventRegistrationController {
   })
   register(@Param('token') token: string, @Body() dto: RegisterForEventDto) {
     return this.service.registerForEvent(token, dto);
+  }
+}
+
+// ── Public open registration — the one shareable link per external
+// event. Anyone with the link can register; they're added to the
+// invitee list. ──────────────────────────────────────────────────
+@ApiTags('CRM — Tools — Events — Public Open Registration (no auth)')
+@Public()
+@Controller('tools/events/join')
+export class EventOpenRegistrationController {
+  constructor(private readonly service: EventService) {}
+
+  @Get(':token')
+  @ApiOperation({ summary: 'View an event via its public registration link' })
+  getByToken(@Param('token') token: string) {
+    return this.service.getPublicEventByOpenToken(token);
+  }
+
+  @Post(':token')
+  @ApiOperation({
+    summary:
+      'Register through the public link — adds the registrant to the invitee list',
+  })
+  register(@Param('token') token: string, @Body() dto: RegisterForEventDto) {
+    return this.service.registerViaOpenLink(token, dto);
   }
 }
 

@@ -21,6 +21,7 @@ import {
   UpdateEventDto,
   InviteToEventDto,
   RegisterForEventDto,
+  SetOpenRegistrationDto,
   UpdateEventAutomationDto,
   MarkAttendanceDto,
   RecordEventOutcomeDto,
@@ -41,7 +42,10 @@ import {
   resolveAutomation,
   scheduleFor,
 } from './event-lifecycle.util';
-import { eventCancelledTemplate } from 'src/common/utils/mailing/templates/event-lifecycle.template';
+import {
+  eventCancelledTemplate,
+  eventRegistrationConfirmationTemplate,
+} from 'src/common/utils/mailing/templates/event-lifecycle.template';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import {
   ClientProfileRecord,
@@ -202,6 +206,13 @@ export class EventService {
     return {
       ...o,
       timezone: o.timezone || DEFAULT_TIMEZONE,
+      openRegistration: {
+        enabled:
+          o.mode === EventMode.EXTERNAL &&
+          !!o.openRegistration &&
+          !!o.openToken,
+        token: o.mode === EventMode.EXTERNAL ? (o.openToken ?? null) : null,
+      },
       automation: resolveAutomation(o.automation),
       outcome: o.outcome ?? {},
       activity: [...(o.activity ?? [])].sort(
@@ -295,6 +306,11 @@ export class EventService {
       // and follow-ups are part of running an event properly, and the
       // organiser can switch any of them off from the Automation tab.
       automation: { ...DEFAULT_AUTOMATION },
+      // External events get a shareable registration link from the
+      // start (the tenant can switch it off or rotate it).
+      ...(dto.mode === EventMode.EXTERNAL
+        ? { openToken: newToken(), openRegistration: true }
+        : {}),
     });
     this.applyDto(created, dto);
     this.log(
@@ -545,7 +561,9 @@ export class EventService {
     if (wasPublished && dto.notifyInvitees !== false) {
       const businessName = await resolveBusinessName(this.userModel, tenantId);
       const base = this.emailBase(e, businessName);
-      for (const inv of e.invites.filter((i) => !!i.sentAt)) {
+      for (const inv of e.invites.filter(
+        (i) => !!i.sentAt || hasResponded(i.status),
+      )) {
         try {
           const { subject, html } = eventCancelledTemplate({
             ...base,
@@ -631,6 +649,238 @@ export class EventService {
         status: invite.status,
       },
     };
+  }
+
+  // ── Open registration link (External events) ──────────────────
+  // One shareable public link per event, for people who aren't in the
+  // tenant's CRM contacts. Whoever registers through it is added to
+  // the invitee list (source 'OpenLink') and — so the post-event CRM
+  // sync, reminders and follow-ups treat them like any other
+  // attendee — to the tenant's contacts (matched by email first, so
+  // nobody is duplicated).
+
+  private static readonly MAX_OPEN_REGISTRATIONS = 3000;
+
+  // Returns the link details, generating the token the first time
+  // (events created before this feature have none).
+  async getOpenLink(tenantId: string, id: string) {
+    const e = await this.getDoc(tenantId, id);
+    if (e.mode !== EventMode.EXTERNAL) {
+      throw new BadRequestException(
+        'Only external events have a public registration link — in-house guests acknowledge from their own portal',
+      );
+    }
+    if (!e.openToken) {
+      e.openToken = newToken();
+      e.openRegistration = true;
+      this.log(e, 'updated', 'Public registration link created');
+      await e.save();
+    }
+    return this.present(e);
+  }
+
+  async setOpenRegistration(
+    tenantId: string,
+    id: string,
+    dto: SetOpenRegistrationDto,
+  ) {
+    const e = await this.getDoc(tenantId, id);
+    if (e.mode !== EventMode.EXTERNAL) {
+      throw new BadRequestException(
+        'Only external events have a public registration link',
+      );
+    }
+    if (
+      e.status === EventStatus.COMPLETED ||
+      e.status === EventStatus.CANCELLED
+    ) {
+      throw new BadRequestException(
+        'This event is completed or cancelled — registration is closed',
+      );
+    }
+    if (!e.openToken || dto.regenerate) {
+      e.openToken = newToken();
+      this.log(
+        e,
+        'updated',
+        dto.regenerate
+          ? 'Public registration link replaced — the previous link no longer works'
+          : 'Public registration link created',
+      );
+      if (dto.enabled === undefined) e.openRegistration = true;
+    }
+    if (dto.enabled !== undefined && dto.enabled !== e.openRegistration) {
+      e.openRegistration = dto.enabled;
+      this.log(
+        e,
+        'updated',
+        dto.enabled
+          ? 'Public registration link switched on'
+          : 'Public registration link switched off',
+      );
+    }
+    await e.save();
+    return this.present(e);
+  }
+
+  private async findByOpenToken(token: string) {
+    if (!token) return null;
+    const e = await this.model.findOne({ openToken: token });
+    if (!e || e.mode !== EventMode.EXTERNAL || !e.openRegistration) return null;
+    return e;
+  }
+
+  // Same sanitized shape as the personal-link page, with a blank
+  // invite — nothing about anyone else on the list is exposed.
+  async getPublicEventByOpenToken(token: string) {
+    const e = await this.findByOpenToken(token);
+    if (!e) throw new NotFoundException('This link is not valid');
+    return {
+      title: e.title,
+      type: e.type,
+      description: e.description,
+      date: e.date,
+      startTime: e.startTime,
+      endTime: e.endTime,
+      location: e.location,
+      virtual: e.virtual,
+      meetingLink: e.meetingLink,
+      agenda: e.agenda,
+      host: e.host,
+      capacity: e.capacity,
+      registrationDeadline: e.registrationDeadline,
+      status: e.status,
+      registeredCount: e.invites.filter(
+        (i) => i.status === EventInviteStatus.REGISTERED,
+      ).length,
+      invite: { name: '', email: '', organisation: '', status: 'Invited' },
+    };
+  }
+
+  async registerViaOpenLink(token: string, dto: RegisterForEventDto) {
+    const e = await this.findByOpenToken(token);
+    if (!e) throw new NotFoundException('This link is not valid');
+    if (e.status !== EventStatus.PUBLISHED) {
+      throw new BadRequestException('Registration is not open for this event');
+    }
+    if (
+      e.registrationDeadline &&
+      e.registrationDeadline.getTime() < Date.now()
+    ) {
+      throw new BadRequestException('The registration deadline has passed');
+    }
+    const name = dto.name.trim();
+    const email = dto.email.trim().toLowerCase();
+    if (!name) throw new BadRequestException('Please provide your name');
+
+    const registeredCount = e.invites.filter(
+      (i) => i.status === EventInviteStatus.REGISTERED,
+    ).length;
+
+    // Already on the list under this email? Then this is the same
+    // person — complete that entry instead of adding a second one.
+    const existing = e.invites.find((i) => i.email === email);
+    if (existing?.status === EventInviteStatus.REGISTERED) {
+      throw new BadRequestException(
+        'This email address is already registered for the event',
+      );
+    }
+    if (e.capacity > 0 && registeredCount >= e.capacity) {
+      throw new BadRequestException('This event has reached full capacity');
+    }
+    if (
+      !existing &&
+      e.invites.filter((i) => i.source === 'OpenLink').length >=
+        EventService.MAX_OPEN_REGISTRATIONS
+    ) {
+      throw new BadRequestException('Registration for this event is closed');
+    }
+
+    const now = new Date();
+    let invite = existing;
+    if (invite) {
+      invite.name = name;
+      invite.organisation = dto.organisation?.trim() || invite.organisation;
+      invite.phone = dto.phone?.trim() ?? '';
+      invite.notes = dto.notes?.trim() ?? '';
+      invite.status = EventInviteStatus.REGISTERED;
+      invite.respondedAt = now;
+    } else {
+      const contactId = await this.contactForRegistrant(e, {
+        name,
+        email,
+        organisation: dto.organisation?.trim() ?? '',
+        phone: dto.phone?.trim() ?? '',
+      });
+      e.invites.push({
+        id: newToken().slice(0, 24),
+        audienceType: EventAudienceType.CONTACT,
+        sourceId: contactId,
+        name,
+        email,
+        organisation: dto.organisation?.trim() ?? '',
+        status: EventInviteStatus.REGISTERED,
+        token: newToken(),
+        // They signed up themselves, so the "invitation" is the
+        // registration itself — stamped now so the invitation counts
+        // and cancellation notices include them.
+        sentAt: now,
+        deliveryError: null,
+        respondedAt: now,
+        phone: dto.phone?.trim() ?? '',
+        notes: dto.notes?.trim() ?? '',
+        source: 'OpenLink',
+      } as any);
+      invite = e.invites[e.invites.length - 1];
+    }
+    this.log(e, 'registered', `${name} registered through the public link`);
+    await e.save();
+
+    // Confirmation email — best effort; the registration stands even
+    // if the mail server is down.
+    try {
+      const businessName = await resolveBusinessName(
+        this.userModel,
+        String(e.tenantId),
+      );
+      const { subject, html } = eventRegistrationConfirmationTemplate({
+        ...this.emailBase(e, businessName),
+        recipientName: name,
+        meetingLink: e.virtual ? e.meetingLink || null : null,
+      });
+      await this.emailService.sendCampaign(email, subject, html);
+    } catch {
+      /* logged nowhere on purpose: the page already told them they're in */
+    }
+    return { ok: true };
+  }
+
+  // The CRM contact behind an open-link registrant: an existing one
+  // with the same email, otherwise a new one sourced "Event".
+  private async contactForRegistrant(
+    e: EventDocument,
+    p: { name: string; email: string; organisation: string; phone: string },
+  ): Promise<Types.ObjectId> {
+    const escaped = p.email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const found = await this.contactModel
+      .findOne({
+        tenantId: e.tenantId,
+        email: { $regex: `^${escaped}$`, $options: 'i' },
+      })
+      .select('_id')
+      .lean();
+    if (found) return (found as any)._id;
+    const created = await this.contactModel.create({
+      tenantId: e.tenantId,
+      name: p.name,
+      organisation: p.organisation,
+      email: p.email,
+      phone: p.phone,
+      source: 'Event',
+      tags: [],
+      notes: `Registered for "${e.title}" through the public registration link.`,
+    } as any);
+    return created._id as Types.ObjectId;
   }
 
   async registerForEvent(token: string, dto: RegisterForEventDto) {

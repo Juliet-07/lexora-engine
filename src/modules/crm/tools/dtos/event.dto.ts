@@ -15,6 +15,7 @@ import {
   Min,
   Max,
   IsInt,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { EventMode, EventAudienceType } from '../schemas';
@@ -76,11 +77,30 @@ export class InviteToEventDto {
 // but editable, since the invite's own name/email came from the CRM
 // contact record, not necessarily who actually shows up to register.
 export class RegisterForEventDto {
-  @ApiProperty() @IsString() name: string;
-  @ApiProperty() @IsEmail() email: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() organisation?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() phone?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+  @ApiProperty() @IsString() @MaxLength(200) name: string;
+  @ApiProperty() @IsEmail() @MaxLength(254) email: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  organisation?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  phone?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  notes?: string;
+}
+
+// Switch the shareable open-registration link on/off, or rotate it
+// (issues a new link; the old one stops working).
+export class SetOpenRegistrationDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() regenerate?: boolean;
 }
 
 // ── Lifecycle (added Oct 2026) ───────────────────────────────────

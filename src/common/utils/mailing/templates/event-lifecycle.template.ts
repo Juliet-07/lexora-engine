@@ -272,3 +272,26 @@ export function eventCancelledTemplate(
     }),
   };
 }
+
+// ── Registration confirmation (open-link sign-ups) ───────────────
+
+export function eventRegistrationConfirmationTemplate(
+  d: EventEmailBase & { meetingLink?: string | null },
+) {
+  return {
+    subject: `You're registered: ${d.title}`,
+    html: shell({
+      businessName: d.businessName,
+      heading: "You're registered",
+      recipientName: d.recipientName,
+      paragraphs: [
+        `Thank you for registering for <strong>${esc(d.title)}</strong>. Your place is confirmed — we'll send you a reminder as the date approaches.`,
+      ],
+      card: eventCard(d),
+      buttons: d.meetingLink
+        ? [{ label: 'Join online', url: d.meetingLink }]
+        : [],
+      footnote: 'Keep this email — it has everything you need for the day.',
+    }),
+  };
+}

@@ -124,6 +124,11 @@ export class EventInvite {
   @Prop({ type: Number, default: null }) feedbackRating: number | null;
   @Prop({ default: '' }) feedbackComment: string;
   @Prop({ default: null }) feedbackAt: Date | null;
+
+  // How this person got on the list: 'Invited' (the tenant added them)
+  // or 'OpenLink' (they registered themselves through the event's
+  // shareable public link — see Event.openToken).
+  @Prop({ default: 'Invited' }) source: string;
 }
 export const EventInviteSchema = SchemaFactory.createForClass(EventInvite);
 
@@ -256,6 +261,17 @@ export class Event {
   invites: EventInvite[];
 
   @Prop({ default: null }) publishedAt: Date | null;
+
+  // ── Open registration link (External events) ───────────────────
+  // One shareable public link for the whole event, so the tenant can
+  // send it to people who are not in their CRM contacts — anyone who
+  // opens it can register, and lands on the invitee list (source
+  // 'OpenLink'). Not stored until generated (sparse unique index);
+  // `openRegistration` lets the tenant switch the link off without
+  // losing it, and the token can be rotated to kill a leaked link.
+  @Prop({ type: String, index: { unique: true, sparse: true } })
+  openToken?: string;
+  @Prop({ default: false }) openRegistration: boolean;
 
   // ── Lifecycle (added Oct 2026) ─────────────────────────────────
   // IANA zone the start/end times are in. Needed so "1 hour before"
