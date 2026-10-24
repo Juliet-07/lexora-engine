@@ -8,6 +8,7 @@ import {
   IsArray,
   ArrayMinSize,
   IsEmail,
+  IsObject,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -19,6 +20,7 @@ import {
   AlertCategory,
   AlertPriority,
 } from '../schemas';
+import { NewsletterTemplate } from 'src/common/utils/newsletter/newsletter-template';
 
 export class SegmentRuleDto {
   @ApiProperty({ enum: SegmentRuleField })
@@ -60,6 +62,30 @@ export class CreateCampaignDto {
   segmentIds: string[];
   @ApiPropertyOptional() @IsOptional() @IsString() subject?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() body?: string;
+  // Template newsletter (the same four designs the SuperAdmin
+  // newsletter uses). When `template` is set, `body` is ignored and
+  // regenerated from `templateData`.
+  @ApiPropertyOptional({ enum: NewsletterTemplate })
+  @IsOptional()
+  @IsEnum(NewsletterTemplate)
+  template?: NewsletterTemplate | null;
+  @ApiPropertyOptional({ type: Object })
+  @IsOptional()
+  @IsObject()
+  templateData?: Record<string, any>;
+  @ApiPropertyOptional() @IsOptional() @IsString() previewText?: string;
+}
+
+// Live preview of a template newsletter in the composer — renders
+// exactly what recipients will receive, without saving anything.
+export class PreviewNewsletterDto {
+  @ApiProperty({ enum: NewsletterTemplate })
+  @IsEnum(NewsletterTemplate)
+  template: NewsletterTemplate;
+  @ApiProperty({ type: Object })
+  @IsObject()
+  templateData: Record<string, any>;
+  @ApiPropertyOptional() @IsOptional() @IsString() previewText?: string;
 }
 
 // Same real fields as create — editing a draft or still-scheduled

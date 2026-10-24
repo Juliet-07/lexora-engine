@@ -10,6 +10,7 @@ import { CreateCalendarEventDto, UpdateCalendarEventDto } from '../dtos';
 import { ContractService } from './contract.service';
 import { ComplianceObligationService } from 'src/modules/grc/compliance/services/obligation.service';
 import { PolicyService } from 'src/modules/grc/compliance/services/policy.service';
+import { EventService } from './event.service';
 import { AdrCaseService } from 'src/modules/crm/projects/services/adr-case.service';
 import { LitigationCaseService } from 'src/modules/crm/projects/services/litigation-case.service';
 
@@ -88,6 +89,7 @@ export class CalendarAggregationService {
     private readonly contractService: ContractService,
     private readonly complianceObligationService: ComplianceObligationService,
     private readonly policyService: PolicyService,
+    private readonly eventManagementService: EventService,
     private readonly adrCaseService: AdrCaseService,
     private readonly litigationCaseService: LitigationCaseService,
   ) {}
@@ -221,12 +223,16 @@ export class CalendarAggregationService {
       complianceEvents,
       adrEvents,
       litigationEvents,
+      managedEvents,
     ] = await Promise.all([
       this.eventService.getAll(tenantId),
       this.getContractEvents(tenantId),
       this.getComplianceEvents(tenantId),
       this.getAdrEvents(tenantId),
       this.getLitigationEvents(tenantId),
+      // Event Management events — on the calendar from the moment
+      // they're created.
+      this.eventManagementService.getCalendarEntries(tenantId),
     ]);
 
     const manualEvents = (manual as any[]).map((e) => ({
@@ -249,6 +255,7 @@ export class CalendarAggregationService {
       ...complianceEvents,
       ...adrEvents,
       ...litigationEvents,
+      ...managedEvents,
     ].sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
   }
 }

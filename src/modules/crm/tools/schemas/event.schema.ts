@@ -104,8 +104,125 @@ export class EventInvite {
   // time on the public form.
   @Prop({ default: '' }) phone: string;
   @Prop({ default: '' }) notes: string;
+
+  // ── Post-event record (added Oct 2026) ─────────────────────────
+  // Whether this person actually turned up. null = the organiser
+  // hasn't said either way, in which case the original rule still
+  // applies — a submitted registration / portal acknowledgement
+  // counts as attendance (see EventLifecycle.attendanceOf). An
+  // explicit true/false recorded after the event overrides that:
+  // true = attended (even without a prior response, e.g. someone who
+  // simply arrived), false = responded but did not come (a no-show).
+  @Prop({ type: Boolean, default: null }) attended: boolean | null;
+  @Prop({ default: null }) attendanceRecordedAt: Date | null;
+  // Set once this attendee has been written to the CRM contact's tags
+  // and activity timeline (External events only) — makes the sync
+  // safe to re-run without duplicating entries.
+  @Prop({ default: false }) syncedToContact: boolean;
+  // Submitted through the personal feedback link in the follow-up
+  // email (public /event-feedback/:token page).
+  @Prop({ type: Number, default: null }) feedbackRating: number | null;
+  @Prop({ default: '' }) feedbackComment: string;
+  @Prop({ default: null }) feedbackAt: Date | null;
 }
 export const EventInviteSchema = SchemaFactory.createForClass(EventInvite);
+
+// ── Automation (added Oct 2026) ────────────────────────────────
+// What the system does on the organiser's behalf around the event.
+// Stored flat on purpose (no nested toggles) so partial legacy
+// documents resolve cleanly — see EventLifecycle.resolveAutomation.
+// An event created BEFORE this existed has no `automation` at all
+// and is treated as "everything off", so nothing starts emailing a
+// tenant's clients or board about an event they never set up
+// automation for.
+@Schema({ _id: false })
+export class EventAutomation {
+  // Pre-event reminders, emailed to invitees who haven't declined.
+  @Prop({ default: true }) reminderWeek: boolean;
+  @Prop({ default: true }) reminderDay: boolean;
+  @Prop({ default: true }) reminderHour: boolean;
+  // Extra reminder N hours before the start (1–720); null = none.
+  @Prop({ type: Number, default: null }) customReminderHours: number | null;
+
+  // Post-event follow-ups. Delays count from the event's end.
+  @Prop({ default: true }) thankYouEnabled: boolean;
+  @Prop({ default: 2 }) thankYouDelayHours: number;
+  @Prop({ default: true }) feedbackEnabled: boolean;
+  @Prop({ default: 24 }) feedbackDelayHours: number;
+  @Prop({ default: false }) recordingEnabled: boolean;
+  @Prop({ default: 48 }) recordingDelayHours: number;
+  @Prop({ default: false }) noShowEnabled: boolean;
+  @Prop({ default: 24 }) noShowDelayHours: number;
+
+  // External events only — tag attendees' CRM contact records with
+  // the event and log their attendance on the contact's timeline.
+  @Prop({ default: true }) syncContacts: boolean;
+  // In-app + email notices to the organiser (the tenant): the day
+  // before, and a nudge to record attendance once it's over.
+  @Prop({ default: true }) notifyOrganiser: boolean;
+}
+export const EventAutomationSchema =
+  SchemaFactory.createForClass(EventAutomation);
+
+export enum EventAutomationStatus {
+  SENDING = 'Sending',
+  SENT = 'Sent',
+  SKIPPED = 'Skipped',
+  FAILED = 'Failed',
+}
+
+// One entry per automation step that has actually run (or been
+// deliberately skipped) — the key doubles as the claim that stops a
+// step from ever firing twice.
+@Schema({ _id: false })
+export class EventAutomationRun {
+  @Prop({ required: true }) key: string;
+  @Prop({ enum: EventAutomationStatus, required: true })
+  status: EventAutomationStatus;
+  @Prop({ default: () => new Date() }) ranAt: Date;
+  @Prop({ default: 'auto' }) trigger: string; // 'auto' | 'manual'
+  @Prop({ default: 0 }) recipients: number;
+  @Prop({ default: 0 }) delivered: number;
+  @Prop({ default: 0 }) failed: number;
+  @Prop({ default: '' }) note: string;
+}
+export const EventAutomationRunSchema =
+  SchemaFactory.createForClass(EventAutomationRun);
+
+// What actually happened, recorded by the organiser after the event.
+// Attendance headcount, feedback score and survey responses are NOT
+// stored here — they're derived from the invites (attended flags and
+// submitted feedback), so they can never disagree with the guest list.
+@Schema({ _id: false })
+export class EventOutcome {
+  // People who attended but were never on the guest list (walk-ins,
+  // colleagues who joined the call, …).
+  @Prop({ default: 0 }) walkIns: number;
+  @Prop({ default: '' }) avgSessionDuration: string;
+  @Prop({ default: 0 }) leadsGenerated: number;
+  @Prop({ default: 0 }) followUpCallsBooked: number;
+  @Prop({ default: 0 }) newContacts: number;
+  @Prop({ default: '' }) recordingUrl: string;
+  @Prop({ default: '' }) materialsUrl: string;
+  @Prop({ default: '' }) notes: string;
+  @Prop({ default: null }) recordedAt: Date | null;
+  // Stamped when the organiser saves attendance (marks people
+  // present/absent) — distinct from saving the rest of the results.
+  @Prop({ default: null }) attendanceRecordedAt: Date | null;
+}
+export const EventOutcomeSchema = SchemaFactory.createForClass(EventOutcome);
+
+// The running record of everything that has happened to the event.
+@Schema({ _id: false })
+export class EventActivity {
+  @Prop({ default: () => new Date() }) at: Date;
+  // created | updated | published | invited | invite_removed |
+  // registered | acknowledged | reminder | followup | attendance |
+  // feedback | results | completed | cancelled | note
+  @Prop({ required: true }) kind: string;
+  @Prop({ required: true }) message: string;
+}
+export const EventActivitySchema = SchemaFactory.createForClass(EventActivity);
 
 export type EventDocument = Event & Document;
 
@@ -139,5 +256,30 @@ export class Event {
   invites: EventInvite[];
 
   @Prop({ default: null }) publishedAt: Date | null;
+
+  // ── Lifecycle (added Oct 2026) ─────────────────────────────────
+  // IANA zone the start/end times are in. Needed so "1 hour before"
+  // really is one hour before, whatever zone the server runs in —
+  // same approach as governance meetings. Events from before this
+  // existed were all entered in Kigali time.
+  @Prop({ default: 'Africa/Kigali' }) timezone: string;
+
+  // Undefined on legacy events (= automation off); always set on
+  // events created from now on.
+  @Prop({ type: EventAutomationSchema, default: undefined })
+  automation?: EventAutomation;
+  @Prop({ type: [EventAutomationRunSchema], default: [] })
+  automationLog: EventAutomationRun[];
+
+  @Prop({ type: EventOutcomeSchema, default: () => ({}) })
+  outcome: EventOutcome;
+
+  @Prop({ type: [EventActivitySchema], default: [] })
+  activity: EventActivity[];
+
+  @Prop({ default: null }) completedAt: Date | null;
+  // True when the system closed the event itself (24h after it
+  // ended) rather than the organiser clicking "Mark completed".
+  @Prop({ default: false }) autoCompleted: boolean;
 }
 export const EventSchema = SchemaFactory.createForClass(Event);

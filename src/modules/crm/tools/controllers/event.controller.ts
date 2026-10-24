@@ -8,12 +8,17 @@ import {
   Param,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { EventService } from '../services';
+import { EventService, EventAutomationService } from '../services';
 import {
   CreateEventDto,
   UpdateEventDto,
   InviteToEventDto,
   RegisterForEventDto,
+  UpdateEventAutomationDto,
+  MarkAttendanceDto,
+  RecordEventOutcomeDto,
+  CancelEventDto,
+  SubmitEventFeedbackDto,
 } from '../dtos';
 import { CurrentUser, UserTypes, Public } from 'src/common/decorators';
 import {
@@ -28,7 +33,10 @@ import { RequiresModule } from 'src/common/decorators/requires-module.decorator'
 @RequiresModule(PlatformModuleKey.CRM)
 @Controller('tools/events')
 export class EventController {
-  constructor(private readonly service: EventService) {}
+  constructor(
+    private readonly service: EventService,
+    private readonly automation: EventAutomationService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'All events' })
@@ -119,13 +127,73 @@ export class EventController {
   }
 
   @Post(':id/cancel')
-  @ApiOperation({ summary: 'Cancel an event' })
+  @ApiOperation({
+    summary:
+      'Cancel an event — everyone already invited is emailed unless notifyInvitees is false',
+  })
   cancel(
     @Param('id') id: string,
+    @Body() dto: CancelEventDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.cancel(t || u, id);
+    return this.service.cancel(t || u, id, dto ?? {});
+  }
+
+  @Patch(':id/automation')
+  @ApiOperation({
+    summary:
+      'Change which reminders and follow-ups run around the event (send only what changed)',
+  })
+  updateAutomation(
+    @Param('id') id: string,
+    @Body() dto: UpdateEventAutomationDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateAutomation(t || u, id, dto);
+  }
+
+  @Post(':id/automation/:key/send')
+  @ApiOperation({
+    summary:
+      'Send one reminder / follow-up now instead of waiting for its scheduled time',
+  })
+  sendAutomationStep(
+    @Param('id') id: string,
+    @Param('key') key: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.automation.runNow(t || u, id, key);
+  }
+
+  @Post(':id/attendance')
+  @ApiOperation({
+    summary:
+      'Record who actually attended (once the event has started) — overrides the registration / acknowledgement signal',
+  })
+  markAttendance(
+    @Param('id') id: string,
+    @Body() dto: MarkAttendanceDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.markAttendance(t || u, id, dto);
+  }
+
+  @Patch(':id/outcome')
+  @ApiOperation({
+    summary:
+      'Record the post-event results: walk-ins, leads, follow-up calls, recording & materials, notes',
+  })
+  recordOutcome(
+    @Param('id') id: string,
+    @Body() dto: RecordEventOutcomeDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.recordOutcome(t || u, id, dto);
   }
 
   @Post(':id/complete')
@@ -165,6 +233,28 @@ export class EventRegistrationController {
   }
 }
 
+// ── Public, token-gated feedback — the link in the post-event
+// feedback email. The same personal token as registration, so there's
+// nothing for the invitee to log in to. ──────────────────────────
+@ApiTags('CRM — Tools — Events — Public Feedback (no auth)')
+@Public()
+@Controller('tools/events/feedback')
+export class EventFeedbackController {
+  constructor(private readonly service: EventService) {}
+
+  @Get(':token')
+  @ApiOperation({ summary: 'The event a feedback link belongs to' })
+  getByToken(@Param('token') token: string) {
+    return this.service.getFeedbackByToken(token);
+  }
+
+  @Post(':token')
+  @ApiOperation({ summary: 'Submit a 1–5 rating and an optional comment' })
+  submit(@Param('token') token: string, @Body() dto: SubmitEventFeedbackDto) {
+    return this.service.submitFeedback(token, dto);
+  }
+}
+
 // ── Client portal — same crm/client-* URL convention client-
 // newsletters/client-invoices/client-projects already use. ───────
 @ApiTags('CRM — Tools — Events — Client Portal')
@@ -176,7 +266,10 @@ export class ClientEventController {
 
   @Get()
   @ApiOperation({ summary: 'In-house events I am invited to' })
-  getMyEvents(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
+  getMyEvents(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
     return this.service.getMyClientEvents(t || u, u);
   }
 
@@ -204,12 +297,18 @@ export class BoardPortalEventController {
   @ApiOperation({ summary: 'In-house events I am invited to' })
   async getMyEvents(@CurrentUser('sub') userId: string) {
     const member = await this.service.resolveBoardMemberId(userId);
-    return this.service.getMyBoardEvents(String(member.tenantId), String(member._id));
+    return this.service.getMyBoardEvents(
+      String(member.tenantId),
+      String(member._id),
+    );
   }
 
   @Post(':id/acknowledge')
   @ApiOperation({ summary: 'Acknowledge my attendance' })
-  async acknowledge(@Param('id') id: string, @CurrentUser('sub') userId: string) {
+  async acknowledge(
+    @Param('id') id: string,
+    @CurrentUser('sub') userId: string,
+  ) {
     const member = await this.service.resolveBoardMemberId(userId);
     return this.service.acknowledgeAsBoardMember(
       String(member.tenantId),

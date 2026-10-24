@@ -6,8 +6,21 @@ import {
   Delete,
   Body,
   Param,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { randomUUID } from 'crypto';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiConsumes,
+} from '@nestjs/swagger';
 import {
   SegmentService,
   CampaignService,
@@ -19,6 +32,7 @@ import {
   CreateSegmentDto,
   UpdateSegmentDto,
   CreateCampaignDto,
+  PreviewNewsletterDto,
   UpdateCampaignDto,
   ScheduleCampaignDto,
   SendTestDto,
@@ -93,6 +107,30 @@ export class SegmentController {
   }
 }
 
+// Images / GIFs for template newsletters. Stored per tenant and
+// returned as an absolute URL (APP_URL-prefixed) because the image
+// has to resolve inside a recipient's inbox, not just inside this app.
+const NEWSLETTER_IMAGE_EXT: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/jpg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+};
+const newsletterImageConfig = {
+  storage: memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 }, // 8MB — GIFs run large
+  fileFilter: (_req: any, file: Express.Multer.File, cb: any) =>
+    NEWSLETTER_IMAGE_EXT[file.mimetype]
+      ? cb(null, true)
+      : cb(
+          new BadRequestException(
+            'Only PNG, JPG, GIF, or WEBP images are accepted.',
+          ),
+          false,
+        ),
+};
+
 @ApiTags('CRM — Tools — Newsletters')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT)
@@ -115,6 +153,42 @@ export class CampaignController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.getById(t || u, id);
+  }
+
+  @Post('media')
+  @UseInterceptors(FileInterceptor('file', newsletterImageConfig))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary:
+      'Upload an image / GIF for a template newsletter — returns an absolute URL',
+  })
+  uploadImage(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    if (!file) throw new BadRequestException('No file was uploaded.');
+    const tenant = String(t || u);
+    const dir = join(process.cwd(), 'uploads', 'newsletters', tenant);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const filename = `${randomUUID()}${NEWSLETTER_IMAGE_EXT[file.mimetype]}`;
+    writeFileSync(join(dir, filename), file.buffer);
+    const base =
+      process.env.APP_URL || `http://localhost:${process.env.PORT || 3001}`;
+    return { url: `${base}/uploads/newsletters/${tenant}/${filename}` };
+  }
+
+  @Post('preview')
+  @ApiOperation({
+    summary:
+      'Render a template newsletter exactly as recipients will receive it — nothing is saved or sent',
+  })
+  preview(
+    @Body() dto: PreviewNewsletterDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.previewTemplate(t || u, dto);
   }
 
   @Post()

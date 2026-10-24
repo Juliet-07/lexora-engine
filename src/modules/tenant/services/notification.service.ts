@@ -590,6 +590,27 @@ export class TenantNotificationService {
 
   // An employee appealed a disciplinary outcome — the appeal hearing and
   // the appeal outcome are HR's next steps, so HR is told right away.
+  // Event Management's reminders to the organiser (the tenant): the
+  // day before an event, and a nudge to record attendance once it's
+  // over. Unlike the policy-review reminder there is no separate
+  // branded email, so this sends the standard notification email too.
+  @OnEvent('crm.event.organiser_notice')
+  async onEventOrganiserNotice(e: {
+    tenantId: string;
+    eventId: string;
+    title: string;
+    description: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.tenantId,
+      TenantNotificationType.GENERAL,
+      e.title,
+      e.description,
+      '/crm/events',
+    );
+  }
+
   @OnEvent('hr.dispute.appeal_filed')
   async onDisputeAppealFiled(e: {
     tenantId: string;

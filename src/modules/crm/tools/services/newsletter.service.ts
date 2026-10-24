@@ -29,6 +29,7 @@ import {
   UpdateSegmentDto,
   CreateCampaignDto,
   UpdateCampaignDto,
+  PreviewNewsletterDto,
   ScheduleCampaignDto,
   SendTestDto,
   CreateAlertDto,
@@ -58,6 +59,12 @@ import {
   type CrmNewsletterRecipientRole,
 } from 'src/common/utils/mailing/templates/crm-newsletter-campaign.template';
 import { crmAlertTemplate } from 'src/common/utils/mailing/templates/crm-alert.template';
+import {
+  NewsletterTemplate,
+  missingTemplateFields,
+  renderNewsletter,
+  validateTemplateData,
+} from 'src/common/utils/newsletter/newsletter-template';
 
 // Maps the polymorphic recipient's sourceType to the plain-English
 // role shown in the email footer ("...because you are a X of...").
@@ -377,6 +384,131 @@ export class CampaignService {
     };
   }
 
+  // ── Template newsletters ─────────────────────────────────────
+  // The tenant's own business name brands the header and footer —
+  // the same templates the SuperAdmin newsletter uses, but this is
+  // the tenant writing to its own clients / contacts / board.
+  private fragmentBrand(businessName: string) {
+    return {
+      headerText: businessName,
+      footerLines: [
+        businessName,
+        'This is a confidential system-generated message.',
+      ],
+    };
+  }
+
+  private emailBrand(
+    businessName: string,
+    role: CrmNewsletterRecipientRole | null,
+  ) {
+    return {
+      headerText: businessName,
+      footerLines: [
+        businessName,
+        role
+          ? `You are receiving this because you are a ${role} of ${businessName}.`
+          : 'This is a test send — recipients receive a personalised footer.',
+        'Please do not reply directly to this email.',
+      ],
+    };
+  }
+
+  // Resolves the stored content for a create/update. A template
+  // newsletter's `body` is the rendered fragment (what the portals
+  // show); a custom one keeps the tenant's rich text untouched.
+  private async composeContent(
+    tenantId: string,
+    dto: {
+      template?: NewsletterTemplate | null;
+      templateData?: Record<string, any>;
+      previewText?: string;
+      body?: string;
+    },
+  ) {
+    if (!dto.template) {
+      return {
+        template: null as string | null,
+        templateData: {} as Record<string, any>,
+        previewText: dto.previewText ?? '',
+        body: dto.body ?? '',
+      };
+    }
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const templateData = dto.templateData ?? {};
+    return {
+      template: dto.template as string,
+      templateData,
+      previewText: dto.previewText ?? '',
+      body: renderNewsletter({
+        template: dto.template,
+        data: templateData,
+        previewText: dto.previewText ?? '',
+        brand: this.fragmentBrand(businessName),
+        mode: 'fragment',
+      }),
+    };
+  }
+
+  // Exactly what recipients will receive, for the composer's live
+  // preview. Nothing is saved or sent.
+  async previewTemplate(tenantId: string, dto: PreviewNewsletterDto) {
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    return {
+      html: renderNewsletter({
+        template: dto.template,
+        data: dto.templateData,
+        previewText: dto.previewText ?? '',
+        brand: this.emailBrand(businessName, 'client'),
+        mode: 'email',
+      }),
+      missingFields: missingTemplateFields(dto.template, dto.templateData),
+    };
+  }
+
+  // The per-recipient email for a campaign — template newsletters
+  // render their design with the recipient's own footer; custom ones
+  // go through the existing branded rich-text wrapper.
+  private renderEmailFor(
+    c: any,
+    businessName: string,
+    recipient: { name?: string; role: CrmNewsletterRecipientRole } | null,
+  ): { subject: string; html: string } {
+    if (c.template) {
+      const subject = c.subject || c.name;
+      return {
+        subject: recipient ? subject : `[TEST] ${subject}`,
+        html: renderNewsletter({
+          template: c.template as NewsletterTemplate,
+          data: c.templateData ?? {},
+          previewText: c.previewText ?? '',
+          brand: this.emailBrand(businessName, recipient?.role ?? null),
+          mode: 'email',
+        }),
+      };
+    }
+    return crmNewsletterCampaignTemplate({
+      businessName,
+      recipientName: recipient?.name,
+      recipientRole: recipient?.role,
+      subject: c.subject || c.name,
+      bodyHtml: c.body,
+      // Event invite retired Oct 2026 — CampaignType no longer
+      // offers it, so no campaign sent from here on is one. A
+      // genuinely old document (from before the retirement) that
+      // still carries event data is rendered as a plain newsletter.
+      isEventInvite: false,
+      event: c.event ?? null,
+      isTest: !recipient,
+    });
+  }
+
+  private assertSendable(c: { template?: string | null; templateData?: any }) {
+    if (c.template) {
+      validateTemplateData(c.template as NewsletterTemplate, c.templateData);
+    }
+  }
+
   private toRecipientDocs(members: ResolvedMember[]) {
     return members.map((m) => ({
       sourceType: m.sourceType,
@@ -417,6 +549,7 @@ export class CampaignService {
       dto.segmentIds,
     );
 
+    const content = await this.composeContent(tenantId, dto);
     const created = await this.model.create({
       tenantId: tId,
       name: dto.name,
@@ -424,7 +557,10 @@ export class CampaignService {
       segmentIds: dto.segmentIds.map((id) => new Types.ObjectId(id)),
       segmentNames,
       subject: dto.subject ?? '',
-      body: dto.body ?? '',
+      previewText: content.previewText,
+      template: content.template,
+      templateData: content.templateData,
+      body: content.body,
       // Event invite retired Oct 2026 — every new campaign is a
       // Newsletter, so there's no longer a create-time source for
       // event details.
@@ -447,6 +583,9 @@ export class CampaignService {
       segmentIds: original.segmentIds,
       segmentNames: original.segmentNames,
       subject: original.subject,
+      previewText: original.previewText,
+      template: original.template,
+      templateData: original.templateData,
       body: original.body,
       event: original.event,
       status: CampaignStatus.DRAFT,
@@ -484,6 +623,7 @@ export class CampaignService {
     if (c.status !== CampaignStatus.DRAFT) {
       throw new BadRequestException('Only a draft campaign can be scheduled');
     }
+    this.assertSendable(c);
     c.status = CampaignStatus.SCHEDULED;
     c.scheduledAt = new Date(dto.scheduledAt);
     await c.save();
@@ -550,8 +690,12 @@ export class CampaignService {
 
     c.name = dto.name;
     c.type = dto.type;
+    const content = await this.composeContent(tenantId, dto);
     c.subject = dto.subject ?? '';
-    c.body = dto.body ?? '';
+    c.previewText = content.previewText;
+    c.template = content.template;
+    c.templateData = content.templateData;
+    c.body = content.body;
     // Event invite retired Oct 2026 — see create() above.
     c.event = null;
     await c.save();
@@ -577,36 +721,31 @@ export class CampaignService {
       throw new BadRequestException('This campaign has already been sent');
     }
 
+    this.assertSendable(c);
     c.status = CampaignStatus.SENDING;
     await c.save();
 
     const businessName = await resolveBusinessName(this.userModel, tenantId);
     for (const r of c.recipients as any[]) {
       try {
-        const { subject, html } = crmNewsletterCampaignTemplate({
-          businessName,
-          recipientName: r.clientName,
-          recipientRole: recipientRoleLabel(
-            r.sourceType ?? SegmentAudience.CLIENT,
-          ),
-          subject: c.subject || c.name,
-          bodyHtml: c.body,
-          // Event invite retired Oct 2026 — CampaignType no longer
-          // offers it, so no campaign sent from here on is one. A
-          // genuinely old document (from before the retirement) that
-          // still carries event data is rendered as a plain newsletter.
-          isEventInvite: false,
-          event: c.event ?? null,
+        const { subject, html } = this.renderEmailFor(c, businessName, {
+          name: r.clientName,
+          role: recipientRoleLabel(r.sourceType ?? SegmentAudience.CLIENT),
         });
         await this.emailService.sendCampaign(r.email, subject, html);
         r.delivered = true;
         r.deliveryError = null;
-        this.eventEmitter.emit('client.newsletter.sent', {
-          tenantId,
-          clientUserId: String(r.clientId),
-          campaignId: String(c._id),
-          subject: c.subject || c.name,
-        });
+        // Only a client has a client-portal notification feed; board
+        // members see theirs on the board portal's Newsletters page
+        // and contacts have no portal at all.
+        if (r.clientId) {
+          this.eventEmitter.emit('client.newsletter.sent', {
+            tenantId,
+            clientUserId: String(r.clientId),
+            campaignId: String(c._id),
+            subject: c.subject || c.name,
+          });
+        }
       } catch (err: any) {
         r.delivered = false;
         r.deliveryError = err?.message ?? 'Send failed';
@@ -625,15 +764,9 @@ export class CampaignService {
       tenantId: new Types.ObjectId(tenantId),
     });
     if (!c) throw new NotFoundException('Campaign not found');
+    this.assertSendable(c);
     const businessName = await resolveBusinessName(this.userModel, tenantId);
-    const { subject, html } = crmNewsletterCampaignTemplate({
-      businessName,
-      subject: c.subject || c.name,
-      bodyHtml: c.body,
-      isEventInvite: false,
-      event: c.event ?? null,
-      isTest: true,
-    });
+    const { subject, html } = this.renderEmailFor(c, businessName, null);
     await this.emailService.sendCampaign(dto.to, subject, html);
     return { sent: true };
   }
@@ -697,6 +830,8 @@ export class CampaignService {
       name: c.name,
       type: c.type,
       subject: c.subject,
+      previewText: c.previewText ?? '',
+      template: c.template ?? null,
       body: c.body,
       event: c.event,
       sentAt: c.sentAt,
@@ -851,6 +986,8 @@ export class ClientNewsletterService {
       name: c.name,
       type: c.type,
       subject: c.subject,
+      previewText: c.previewText ?? '',
+      template: c.template ?? null,
       body: c.body,
       event: c.event,
       sentAt: c.sentAt,

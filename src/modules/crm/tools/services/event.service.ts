@@ -14,13 +14,34 @@ import {
   EventStatus,
   EventAudienceType,
   EventInviteStatus,
+  CalendarLayer,
 } from '../schemas';
 import {
   CreateEventDto,
   UpdateEventDto,
   InviteToEventDto,
   RegisterForEventDto,
+  UpdateEventAutomationDto,
+  MarkAttendanceDto,
+  RecordEventOutcomeDto,
+  CancelEventDto,
+  SubmitEventFeedbackDto,
 } from '../dtos';
+import {
+  DEFAULT_AUTOMATION,
+  DEFAULT_TIMEZONE,
+  attendanceOf,
+  buildPipeline,
+  buildSteps,
+  computeStats,
+  eventInstants,
+  hasResponded,
+  isValidTimeZone,
+  phaseOf,
+  resolveAutomation,
+  scheduleFor,
+} from './event-lifecycle.util';
+import { eventCancelledTemplate } from 'src/common/utils/mailing/templates/event-lifecycle.template';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import {
   ClientProfileRecord,
@@ -147,7 +168,9 @@ export class EventService {
     }
 
     // CLIENT
-    const u = await this.userModel.findOne({ _id: sourceId, tenantId: tId }).lean();
+    const u = await this.userModel
+      .findOne({ _id: sourceId, tenantId: tId })
+      .lean();
     if (!u || !u.email) return null;
     const profile = (await this.profileModel
       .findOne({ userId: u._id })
@@ -161,11 +184,73 @@ export class EventService {
     };
   }
 
+  // ── Lifecycle presentation ─────────────────────────────────────
+  // Every event the tenant sees carries a computed `lifecycle`: which
+  // phase it's in, the real attendance numbers, the automation
+  // schedule with what has/hasn't gone out, and the six-stage
+  // pipeline. Computed from the stored record every time, never
+  // stored, so it can't drift from the guest list.
+  private present(raw: any) {
+    const o = typeof raw.toObject === 'function' ? raw.toObject() : raw;
+    const { startsAt, endsAt } = eventInstants(o);
+    const phase = phaseOf(o, startsAt, endsAt);
+    const stats = computeStats({ ...o, outcome: o.outcome ?? {} });
+    const steps = buildSteps(o, startsAt, endsAt, o.completedAt);
+    const schedule = scheduleFor(steps, o.automationLog, o.status);
+    const attendanceRecorded = !!o.outcome?.attendanceRecordedAt;
+    const resultsRecorded = !!o.outcome?.recordedAt;
+    return {
+      ...o,
+      timezone: o.timezone || DEFAULT_TIMEZONE,
+      automation: resolveAutomation(o.automation),
+      outcome: o.outcome ?? {},
+      activity: [...(o.activity ?? [])].sort(
+        (a: any, b: any) => +new Date(b.at) - +new Date(a.at),
+      ),
+      lifecycle: {
+        phase,
+        startsAt,
+        endsAt,
+        stats,
+        schedule,
+        attendanceRecorded,
+        resultsRecorded,
+        pipeline: buildPipeline({
+          status: o.status,
+          mode: o.mode,
+          phase,
+          stats,
+          schedule,
+          attendanceRecorded,
+          resultsRecorded,
+        }),
+      },
+    };
+  }
+
+  // The running record of everything that happens to the event.
+  private log(e: EventDocument, kind: string, message: string) {
+    e.activity.push({ at: new Date(), kind, message } as any);
+    if (e.activity.length > 500) {
+      e.activity.splice(0, e.activity.length - 500);
+    }
+  }
+
+  private async getDoc(tenantId: string, id: string) {
+    const e = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!e) throw new NotFoundException('Event not found');
+    return e;
+  }
+
   async getAll(tenantId: string) {
-    return this.model
+    const events = await this.model
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
+    return events.map((e) => this.present(e));
   }
 
   async getById(tenantId: string, id: string) {
@@ -173,7 +258,7 @@ export class EventService {
       .findOne({ _id: id, tenantId: new Types.ObjectId(tenantId) })
       .lean();
     if (!e) throw new NotFoundException('Event not found');
-    return e;
+    return this.present(e);
   }
 
   private applyDto(doc: EventDocument, dto: CreateEventDto | UpdateEventDto) {
@@ -189,6 +274,12 @@ export class EventService {
     doc.capacity = dto.capacity ?? 0;
     doc.host = dto.host ?? '';
     doc.agenda = dto.agenda ?? '';
+    if (dto.timezone) {
+      if (!isValidTimeZone(dto.timezone)) {
+        throw new BadRequestException('Unknown time zone');
+      }
+      doc.timezone = dto.timezone;
+    }
     doc.registrationDeadline =
       doc.mode === EventMode.EXTERNAL && dto.registrationDeadline
         ? new Date(dto.registrationDeadline)
@@ -200,10 +291,19 @@ export class EventService {
       tenantId: new Types.ObjectId(tenantId),
       mode: dto.mode,
       invites: [],
+      // Automation is on by default for every new event — reminders
+      // and follow-ups are part of running an event properly, and the
+      // organiser can switch any of them off from the Automation tab.
+      automation: { ...DEFAULT_AUTOMATION },
     });
     this.applyDto(created, dto);
+    this.log(
+      created,
+      'created',
+      `Event created as a ${created.mode === EventMode.EXTERNAL ? 'external' : 'in-house'} ${created.type.toLowerCase()} — added to your calendar`,
+    );
     await created.save();
-    return created.toObject();
+    return this.present(created);
   }
 
   // Real content editing — allowed while Draft or Published (the
@@ -219,14 +319,18 @@ export class EventService {
       tenantId: new Types.ObjectId(tenantId),
     });
     if (!e) throw new NotFoundException('Event not found');
-    if (e.status === EventStatus.COMPLETED || e.status === EventStatus.CANCELLED) {
+    if (
+      e.status === EventStatus.COMPLETED ||
+      e.status === EventStatus.CANCELLED
+    ) {
       throw new BadRequestException(
         'This event is completed or cancelled — it can no longer be edited',
       );
     }
     this.applyDto(e, dto);
+    this.log(e, 'updated', 'Event details updated');
     await e.save();
-    return e.toObject();
+    return this.present(e);
   }
 
   async delete(tenantId: string, id: string) {
@@ -298,7 +402,10 @@ export class EventService {
       tenantId: new Types.ObjectId(tenantId),
     });
     if (!e) throw new NotFoundException('Event not found');
-    if (e.status === EventStatus.COMPLETED || e.status === EventStatus.CANCELLED) {
+    if (
+      e.status === EventStatus.COMPLETED ||
+      e.status === EventStatus.CANCELLED
+    ) {
       throw new BadRequestException(
         'This event is completed or cancelled — no further invitations can go out',
       );
@@ -354,8 +461,15 @@ export class EventService {
     if (e.status === EventStatus.PUBLISHED) {
       await this.dispatch(tenantId, e, fresh);
     }
+    this.log(
+      e,
+      'invited',
+      e.status === EventStatus.PUBLISHED
+        ? `${fresh.length} ${fresh.length === 1 ? 'person' : 'people'} invited and emailed`
+        : `${fresh.length} ${fresh.length === 1 ? 'person' : 'people'} added to the guest list (emailed on publish)`,
+    );
     await e.save();
-    return e.toObject();
+    return this.present(e);
   }
 
   async removeInvite(tenantId: string, id: string, inviteId: string) {
@@ -375,8 +489,9 @@ export class EventService {
       );
     }
     e.invites = e.invites.filter((i) => i.id !== inviteId) as any;
+    this.log(e, 'invite_removed', `${invite.name} removed from the guest list`);
     await e.save();
-    return e.toObject();
+    return this.present(e);
   }
 
   // Publishing is the real trigger: every invite that hasn't been
@@ -393,13 +508,22 @@ export class EventService {
     }
     e.status = EventStatus.PUBLISHED;
     e.publishedAt = new Date();
+    // A draft from before automation existed gets the standard setup
+    // now, as a new event would.
+    if (!e.automation) e.automation = { ...DEFAULT_AUTOMATION } as any;
     const unsent = e.invites.filter((i) => !i.sentAt);
     await this.dispatch(tenantId, e, unsent);
+    const failed = unsent.filter((i) => !i.sentAt).length;
+    this.log(
+      e,
+      'published',
+      `Published — ${unsent.length - failed} of ${unsent.length} invitations sent${failed ? `, ${failed} failed` : ''}`,
+    );
     await e.save();
-    return e.toObject();
+    return this.present(e);
   }
 
-  async cancel(tenantId: string, id: string) {
+  async cancel(tenantId: string, id: string, dto: CancelEventDto = {}) {
     const e = await this.model.findOne({
       _id: id,
       tenantId: new Types.ObjectId(tenantId),
@@ -408,9 +532,40 @@ export class EventService {
     if (e.status === EventStatus.COMPLETED) {
       throw new BadRequestException('A completed event cannot be cancelled');
     }
+    if (e.status === EventStatus.CANCELLED) {
+      throw new BadRequestException('This event is already cancelled');
+    }
+    const wasPublished = e.status === EventStatus.PUBLISHED;
     e.status = EventStatus.CANCELLED;
+
+    // Everyone who already received the invitation is told — a
+    // silently cancelled event leaves invitees turning up.
+    let told = 0;
+    let failed = 0;
+    if (wasPublished && dto.notifyInvitees !== false) {
+      const businessName = await resolveBusinessName(this.userModel, tenantId);
+      const base = this.emailBase(e, businessName);
+      for (const inv of e.invites.filter((i) => !!i.sentAt)) {
+        try {
+          const { subject, html } = eventCancelledTemplate({
+            ...base,
+            recipientName: inv.name,
+            reason: dto.reason?.trim() || undefined,
+          });
+          await this.emailService.sendCampaign(inv.email, subject, html);
+          told++;
+        } catch {
+          failed++;
+        }
+      }
+    }
+    this.log(
+      e,
+      'cancelled',
+      `Event cancelled${told ? ` — ${told} invitee${told === 1 ? '' : 's'} notified` : ''}${failed ? `, ${failed} notice(s) failed` : ''}${dto.reason?.trim() ? `. Reason: ${dto.reason.trim()}` : ''}`,
+    );
     await e.save();
-    return e.toObject();
+    return this.present(e);
   }
 
   async complete(tenantId: string, id: string) {
@@ -420,11 +575,15 @@ export class EventService {
     });
     if (!e) throw new NotFoundException('Event not found');
     if (e.status !== EventStatus.PUBLISHED) {
-      throw new BadRequestException('Only a published event can be marked completed');
+      throw new BadRequestException(
+        'Only a published event can be marked completed',
+      );
     }
     e.status = EventStatus.COMPLETED;
+    e.completedAt = new Date();
+    this.log(e, 'completed', 'Event marked completed');
     await e.save();
-    return e.toObject();
+    return this.present(e);
   }
 
   // ── Public, token-gated registration — the one real path an
@@ -489,7 +648,9 @@ export class EventService {
       throw new BadRequestException('The registration deadline has passed');
     }
     if (invite.status === EventInviteStatus.REGISTERED) {
-      throw new BadRequestException('This invitation has already been used to register');
+      throw new BadRequestException(
+        'This invitation has already been used to register',
+      );
     }
     if (invite.status === EventInviteStatus.DECLINED) {
       throw new BadRequestException('This invitation was declined');
@@ -512,6 +673,7 @@ export class EventService {
     invite.notes = dto.notes?.trim() ?? '';
     invite.status = EventInviteStatus.REGISTERED;
     invite.respondedAt = new Date();
+    this.log(e, 'registered', `${invite.name} registered`);
     await e.save();
     return { ok: true };
   }
@@ -542,12 +704,17 @@ export class EventService {
     if (invite.status !== EventInviteStatus.ACKNOWLEDGED) {
       invite.status = EventInviteStatus.ACKNOWLEDGED;
       invite.respondedAt = new Date();
+      this.log(e, 'acknowledged', `${invite.name} confirmed attendance`);
       await e.save();
     }
     return { acknowledged: true };
   }
 
-  private sanitizeForPortal(e: any, audienceType: EventAudienceType, sourceId: string) {
+  private sanitizeForPortal(
+    e: any,
+    audienceType: EventAudienceType,
+    sourceId: string,
+  ) {
     const mine = (e.invites as any[]).find(
       (i) => i.audienceType === audienceType && String(i.sourceId) === sourceId,
     );
@@ -590,18 +757,39 @@ export class EventService {
 
   // Client portal
   async getMyClientEvents(tenantId: string, clientUserId: string) {
-    return this.getPortalEvents(tenantId, EventAudienceType.CLIENT, clientUserId);
+    return this.getPortalEvents(
+      tenantId,
+      EventAudienceType.CLIENT,
+      clientUserId,
+    );
   }
-  async acknowledgeAsClient(tenantId: string, clientUserId: string, eventId: string) {
-    return this.acknowledge(tenantId, EventAudienceType.CLIENT, clientUserId, eventId);
+  async acknowledgeAsClient(
+    tenantId: string,
+    clientUserId: string,
+    eventId: string,
+  ) {
+    return this.acknowledge(
+      tenantId,
+      EventAudienceType.CLIENT,
+      clientUserId,
+      eventId,
+    );
   }
 
   // Board portal — sourceId is the real BoardMember._id, resolved by
   // the controller the same way BoardPortalNewsletterController does.
   async getMyBoardEvents(tenantId: string, boardMemberId: string) {
-    return this.getPortalEvents(tenantId, EventAudienceType.BOARD_MEMBER, boardMemberId);
+    return this.getPortalEvents(
+      tenantId,
+      EventAudienceType.BOARD_MEMBER,
+      boardMemberId,
+    );
   }
-  async acknowledgeAsBoardMember(tenantId: string, boardMemberId: string, eventId: string) {
+  async acknowledgeAsBoardMember(
+    tenantId: string,
+    boardMemberId: string,
+    eventId: string,
+  ) {
     return this.acknowledge(
       tenantId,
       EventAudienceType.BOARD_MEMBER,
@@ -613,15 +801,306 @@ export class EventService {
   // Employee self-service — sourceId is the real Employee._id,
   // resolved by the controller from the caller's own userId.
   async getMyEmployeeEvents(tenantId: string, employeeId: string) {
-    return this.getPortalEvents(tenantId, EventAudienceType.EMPLOYEE, employeeId);
+    return this.getPortalEvents(
+      tenantId,
+      EventAudienceType.EMPLOYEE,
+      employeeId,
+    );
   }
-  async acknowledgeAsEmployee(tenantId: string, employeeId: string, eventId: string) {
+  async acknowledgeAsEmployee(
+    tenantId: string,
+    employeeId: string,
+    eventId: string,
+  ) {
     return this.acknowledge(
       tenantId,
       EventAudienceType.EMPLOYEE,
       employeeId,
       eventId,
     );
+  }
+
+  // ── Lifecycle: shared email context ───────────────────────────
+
+  private fmtWhen(e: {
+    date: Date;
+    startTime?: string;
+    endTime?: string;
+    timezone?: string;
+  }) {
+    const tz = e.timezone || DEFAULT_TIMEZONE;
+    const day = new Intl.DateTimeFormat('en-GB', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'UTC', // `date` is the calendar day itself, stored at UTC midnight
+    }).format(new Date(e.date));
+    const time = e.startTime
+      ? `, ${e.startTime}${e.endTime ? ` – ${e.endTime}` : ''}`
+      : '';
+    return `${day}${time} (${tz})`;
+  }
+
+  emailBase(e: EventDocument | any, businessName: string) {
+    return {
+      businessName,
+      recipientName: '',
+      title: e.title,
+      type: e.type,
+      whenLabel: this.fmtWhen(e),
+      where: e.virtual ? 'Virtual' : e.location || '',
+    };
+  }
+
+  // The link an invitee uses to act on the event — same destinations
+  // as the invitation email (personal registration page for external,
+  // their own portal for in-house).
+  ctaLinkFor(
+    e: { mode: EventMode | string },
+    invite: { audienceType: EventAudienceType; token: string },
+  ) {
+    return e.mode === EventMode.EXTERNAL
+      ? `${process.env.TENANT_APP_URL}/event-register/${invite.token}`
+      : invite.audienceType === EventAudienceType.CLIENT
+        ? `${process.env.CLIENT_APP_URL}/events`
+        : invite.audienceType === EventAudienceType.BOARD_MEMBER
+          ? `${process.env.BOARD_APP_URL}/events`
+          : `${process.env.TENANT_APP_URL}/my/events`;
+  }
+
+  // ── Lifecycle: automation settings ────────────────────────────
+
+  async updateAutomation(
+    tenantId: string,
+    id: string,
+    dto: UpdateEventAutomationDto,
+  ) {
+    const e = await this.getDoc(tenantId, id);
+    if (e.status === EventStatus.CANCELLED) {
+      throw new BadRequestException('A cancelled event has no automation');
+    }
+    const current = resolveAutomation(e.automation as any);
+    const { configured: _configured, ...currentFields } = current;
+    // A legacy event being configured for the first time starts from
+    // the standard setup, then takes the changes on top.
+    const base = e.automation ? currentFields : { ...DEFAULT_AUTOMATION };
+    e.automation = { ...base, ...dto } as any;
+    e.markModified('automation');
+    this.log(e, 'updated', 'Automation settings updated');
+    await e.save();
+    return this.present(e);
+  }
+
+  // ── Lifecycle: attendance ─────────────────────────────────────
+
+  private assertStarted(e: EventDocument, what: string) {
+    if (
+      e.status !== EventStatus.PUBLISHED &&
+      e.status !== EventStatus.COMPLETED
+    ) {
+      throw new BadRequestException(`${what} once the event is published`);
+    }
+    const { startsAt } = eventInstants(e);
+    if (e.status === EventStatus.PUBLISHED && Date.now() < startsAt.getTime()) {
+      throw new BadRequestException(`${what} once the event has started`);
+    }
+  }
+
+  // Writes attendees (External events) onto their CRM contact: a tag
+  // with the event's name and an entry on the contact's activity
+  // timeline. Idempotent per invite via syncedToContact.
+  async syncAttendeesToContacts(e: EventDocument): Promise<number> {
+    if (e.mode !== EventMode.EXTERNAL) return 0;
+    let n = 0;
+    const tag = `Event: ${e.title}`.slice(0, 60);
+    const when = new Date(e.date).toISOString().slice(0, 10);
+    for (const inv of e.invites) {
+      if (
+        inv.audienceType !== EventAudienceType.CONTACT ||
+        inv.syncedToContact ||
+        !attendanceOf(inv)
+      )
+        continue;
+      const res = await this.contactModel.updateOne(
+        { _id: inv.sourceId, tenantId: e.tenantId },
+        {
+          $addToSet: { tags: tag },
+          $push: {
+            activity: {
+              type: 'Meeting',
+              summary: `Attended ${e.title} (${when})`,
+              by: 'Event Management',
+              at: new Date(),
+            },
+          },
+        },
+      );
+      if (res.matchedCount) {
+        inv.syncedToContact = true;
+        n++;
+      }
+    }
+    return n;
+  }
+
+  async markAttendance(tenantId: string, id: string, dto: MarkAttendanceDto) {
+    const e = await this.getDoc(tenantId, id);
+    this.assertStarted(e, 'Attendance can be recorded');
+    const now = new Date();
+    let changed = 0;
+
+    for (const entry of dto.entries ?? []) {
+      const inv = e.invites.find((i) => i.id === entry.inviteId);
+      if (!inv) throw new NotFoundException('Invite not found');
+      inv.attended = entry.attended;
+      inv.attendanceRecordedAt = entry.attended === null ? null : now;
+      changed++;
+    }
+    if (dto.markAllRespondedAttended) {
+      for (const inv of e.invites) {
+        if (hasResponded(inv.status) && inv.attended == null) {
+          inv.attended = true;
+          inv.attendanceRecordedAt = now;
+          changed++;
+        }
+      }
+    }
+    if (!changed) {
+      throw new BadRequestException('Nothing to record');
+    }
+
+    e.outcome = e.outcome ?? ({} as any);
+    e.outcome.attendanceRecordedAt = now;
+    e.markModified('outcome');
+
+    // Contact timeline stays in step with the corrected list once
+    // the event is over (and the sync is switched on).
+    const { endsAt } = eventInstants(e);
+    const a = resolveAutomation(e.automation as any);
+    let synced = 0;
+    if (
+      a.syncContacts &&
+      (e.status === EventStatus.COMPLETED || now.getTime() >= endsAt.getTime())
+    ) {
+      synced = await this.syncAttendeesToContacts(e);
+    }
+
+    const stats = computeStats(e);
+    this.log(
+      e,
+      'attendance',
+      `Attendance recorded — ${stats.attendedInvites} of ${stats.responded || stats.invited} attended${stats.noShows ? `, ${stats.noShows} no-show${stats.noShows === 1 ? '' : 's'}` : ''}${synced ? `; ${synced} contact${synced === 1 ? '' : 's'} updated` : ''}`,
+    );
+    await e.save();
+    return this.present(e);
+  }
+
+  async recordOutcome(
+    tenantId: string,
+    id: string,
+    dto: RecordEventOutcomeDto,
+  ) {
+    const e = await this.getDoc(tenantId, id);
+    this.assertStarted(e, 'Results can be recorded');
+    const o: any = e.outcome ?? {};
+    const set = <K extends keyof RecordEventOutcomeDto>(k: K) => {
+      if (dto[k] !== undefined)
+        o[k] = typeof dto[k] === 'string' ? (dto[k] as string).trim() : dto[k];
+    };
+    (
+      [
+        'walkIns',
+        'avgSessionDuration',
+        'leadsGenerated',
+        'followUpCallsBooked',
+        'newContacts',
+        'recordingUrl',
+        'materialsUrl',
+        'notes',
+      ] as const
+    ).forEach(set);
+    o.recordedAt = new Date();
+    e.outcome = o;
+    e.markModified('outcome');
+    this.log(e, 'results', 'Post-event results saved');
+    await e.save();
+    return this.present(e);
+  }
+
+  // ── Lifecycle: public feedback (token-gated, like registration) ─
+
+  async getFeedbackByToken(token: string) {
+    const found = await this.findByToken(token);
+    if (!found) throw new NotFoundException('This link is not valid');
+    const { event: e, invite } = found;
+    return {
+      title: e.title,
+      type: e.type,
+      when: this.fmtWhen(e),
+      host: e.host,
+      open: this.feedbackOpen(e, invite),
+      alreadySubmitted: invite.feedbackRating != null,
+      invite: { name: invite.name },
+    };
+  }
+
+  private feedbackOpen(
+    e: EventDocument,
+    invite: { attended?: boolean | null },
+  ) {
+    if (
+      e.status !== EventStatus.PUBLISHED &&
+      e.status !== EventStatus.COMPLETED
+    )
+      return false;
+    if (invite.attended === false) return false;
+    return Date.now() >= eventInstants(e).startsAt.getTime();
+  }
+
+  async submitFeedback(token: string, dto: SubmitEventFeedbackDto) {
+    const found = await this.findByToken(token);
+    if (!found) throw new NotFoundException('This link is not valid');
+    const { event: e, invite } = found;
+    if (!this.feedbackOpen(e, invite)) {
+      throw new BadRequestException('Feedback is not open for this event');
+    }
+    if (invite.feedbackRating != null) {
+      throw new BadRequestException(
+        'Feedback has already been submitted — thank you',
+      );
+    }
+    invite.feedbackRating = dto.rating;
+    invite.feedbackComment = dto.comment?.trim() ?? '';
+    invite.feedbackAt = new Date();
+    this.log(e, 'feedback', `${invite.name} rated the event ${dto.rating}/5`);
+    await e.save();
+    return { ok: true };
+  }
+
+  // ── Calendar ──────────────────────────────────────────────────
+  // Every event that exists (drafts included — it's on the calendar
+  // the moment it's created) except cancelled ones, as calendar
+  // entries. Computed live so a rescheduled or cancelled event can
+  // never leave a stale entry behind.
+  async getCalendarEntries(tenantId: string) {
+    const events = await this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        status: { $ne: EventStatus.CANCELLED },
+      })
+      .select('title type mode status date startTime location virtual')
+      .lean();
+    return events.map((e: any) => ({
+      id: `event-${e._id}`,
+      title: `${e.title}${e.status === EventStatus.DRAFT ? ' (draft)' : ''}`,
+      date: new Date(e.date).toISOString().slice(0, 10),
+      time: e.startTime || '09:00',
+      layer: CalendarLayer.EVENT,
+      source: `${e.mode === EventMode.EXTERNAL ? 'External' : 'In-house'} ${String(e.type).toLowerCase()}`,
+      location: e.virtual ? 'Virtual' : e.location || '—',
+      editable: false,
+    }));
   }
 
   async resolveBoardMemberId(userId: string) {
@@ -637,11 +1116,16 @@ export class EventService {
 
   async resolveEmployeeId(tenantId: string, userId: string) {
     const employee = await this.employeeModel
-      .findOne({ tenantId: new Types.ObjectId(tenantId), userId: new Types.ObjectId(userId) })
+      .findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        userId: new Types.ObjectId(userId),
+      })
       .select('_id')
       .lean();
     if (!employee) {
-      throw new NotFoundException('No employee record is linked to this account');
+      throw new NotFoundException(
+        'No employee record is linked to this account',
+      );
     }
     return employee;
   }

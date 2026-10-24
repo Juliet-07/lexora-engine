@@ -1,19 +1,15 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
+import { NewsletterTemplate } from 'src/common/utils/newsletter/newsletter-template';
 
 export type NewsletterCampaignDocument = NewsletterCampaign & Document;
 
-// One of the 4 "Lexora Africa"-branded designs supplied for this
-// platform-level newsletter (see NewsletterTemplateService for the
-// email-safe, table-based HTML each one renders to — the supplied
-// reference used CSS flexbox throughout, which most email clients,
-// Outlook especially, don't render reliably).
-export enum NewsletterTemplate {
-  REGULATORY_ALERT = 'RegulatoryAlert',
-  QUARTERLY_ROUNDUP = 'QuarterlyRoundup',
-  ARTICLE_SPOTLIGHT = 'ArticleSpotlight',
-  EVENT_INVITE = 'EventInvite',
-}
+// One of the 4 "Lexora Africa"-branded designs. The enum and the
+// email-safe, table-based renderer now live in
+// common/utils/newsletter/newsletter-templates.ts, shared with each
+// tenant's own CRM newsletter — re-exported here so existing imports
+// keep working.
+export { NewsletterTemplate };
 
 export enum NewsletterCampaignStatus {
   DRAFT = 'Draft',
@@ -33,7 +29,8 @@ export class NewsletterCampaign {
 
   @Prop({ default: '' }) previewText: string;
 
-  @Prop({ enum: NewsletterTemplate, required: true }) template: NewsletterTemplate;
+  @Prop({ enum: NewsletterTemplate, required: true })
+  template: NewsletterTemplate;
 
   // Structured fields for whichever template is selected — shape
   // varies by template, validated in the service rather than at the
@@ -58,6 +55,5 @@ export class NewsletterCampaign {
   @Prop({ default: 0 }) recipientCount: number;
   @Prop({ default: 0 }) failedCount: number;
 }
-export const NewsletterCampaignSchema = SchemaFactory.createForClass(
-  NewsletterCampaign,
-);
+export const NewsletterCampaignSchema =
+  SchemaFactory.createForClass(NewsletterCampaign);

@@ -22,6 +22,11 @@ export enum CalendarLayer {
   CONTRACT = 'Contract',
   FINANCE = 'Finance',
   HR = 'HR',
+  // Event Management events — computed live from the events
+  // themselves (see CalendarAggregationService.getEventEvents), never
+  // stored here, so a rescheduled or cancelled event can't leave a
+  // stale calendar entry behind.
+  EVENT = 'Event',
 }
 export enum RecurrenceRule {
   NONE = 'None',

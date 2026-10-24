@@ -152,7 +152,20 @@ export class Campaign {
   @Prop({ type: [String], default: [] }) segmentNames: string[];
 
   @Prop({ default: '' }) subject: string;
+  // Inbox preview line — only meaningful for template newsletters.
+  @Prop({ default: '' }) previewText: string;
+  // Rendered content. For a rich-text ("custom") newsletter this is
+  // what the tenant typed; for a TEMPLATE newsletter it is the
+  // rendered design (a self-contained, table-based HTML fragment),
+  // regenerated from template + templateData on every save — this is
+  // what the client and board portals show, so a templated
+  // newsletter looks the same there as it did in the inbox.
   @Prop({ default: '' }) body: string;
+  // Same four designs the SuperAdmin newsletter uses (shared
+  // renderer — common/utils/newsletter). null = a plain rich-text
+  // newsletter, exactly as before.
+  @Prop({ type: String, default: null }) template: string | null;
+  @Prop({ type: Object, default: {} }) templateData: Record<string, any>;
   @Prop({ type: CampaignEventDetailsSchema, default: null })
   event: CampaignEventDetails | null;
 
