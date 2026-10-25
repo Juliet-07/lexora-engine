@@ -41,6 +41,8 @@ import {
   hasResponded,
   isValidTimeZone,
   parseAgenda,
+  agendaOf,
+  agendaText,
   phaseOf,
   resolveAutomation,
   scheduleFor,
@@ -212,6 +214,7 @@ export class EventService {
     return {
       ...o,
       timezone: o.timezone || DEFAULT_TIMEZONE,
+      agendaItems: agendaOf(o),
       openRegistration: {
         enabled:
           o.mode === EventMode.EXTERNAL &&
@@ -290,7 +293,19 @@ export class EventService {
     doc.meetingLink = dto.meetingLink ?? '';
     doc.capacity = dto.capacity ?? 0;
     doc.host = dto.host ?? '';
-    doc.agenda = dto.agenda ?? '';
+    // Rows win; an older client sending only text is parsed into rows,
+    // so the stored agenda is always structured.
+    const rows = (
+      dto.agendaItems ??
+      (dto.agenda !== undefined ? parseAgenda(dto.agenda) : [])
+    )
+      .map((r) => ({
+        time: String(r.time ?? '').trim(),
+        label: String(r.label ?? '').trim(),
+      }))
+      .filter((r) => r.label);
+    doc.agendaItems = rows as any;
+    doc.agenda = agendaText(rows);
     doc.inviteMessage = (dto.inviteMessage ?? '').trim();
     doc.inviteCtaLabel = (dto.inviteCtaLabel ?? '').trim();
     const img = (dto.inviteImageUrl ?? '').trim();
@@ -719,6 +734,7 @@ export class EventService {
       virtual: e.virtual,
       meetingLink: e.meetingLink,
       agenda: e.agenda,
+      agendaItems: agendaOf(e),
       host: e.host,
       capacity: e.capacity,
       registrationDeadline: e.registrationDeadline,
@@ -828,6 +844,7 @@ export class EventService {
       virtual: e.virtual,
       meetingLink: e.meetingLink,
       agenda: e.agenda,
+      agendaItems: agendaOf(e),
       host: e.host,
       capacity: e.capacity,
       registrationDeadline: e.registrationDeadline,
@@ -1067,9 +1084,15 @@ export class EventService {
       virtual: e.virtual,
       meetingLink: e.meetingLink,
       agenda: e.agenda,
+      agendaItems: agendaOf(e),
       host: e.host,
+      timezone: e.timezone || DEFAULT_TIMEZONE,
+      // Extras the portal popup shows, same as the invitation email.
+      inviteMessage: e.inviteMessage || '',
+      inviteImageUrl: e.inviteImageUrl || '',
       status: e.status,
       myStatus: mine?.status ?? null,
+      myRespondedAt: mine?.respondedAt ?? null,
     };
   }
 
@@ -1220,7 +1243,7 @@ export class EventService {
       timeLabel: time || undefined,
       host: e.host || undefined,
       badge: eventBadge(e.date),
-      agenda: parseAgenda(e.agenda),
+      agenda: agendaOf(e),
       calendarUrl: googleCalendarUrl({
         ...(e.toObject?.() ?? e),
         meetingLink: opts.meetingLinkInCalendar ? e.meetingLink : '',

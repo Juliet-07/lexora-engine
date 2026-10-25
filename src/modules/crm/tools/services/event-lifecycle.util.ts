@@ -650,3 +650,26 @@ export function googleCalendarUrl(e: {
   });
   return `https://calendar.google.com/calendar/render?${q.toString()}`;
 }
+
+// An event's agenda as rows, whichever way it was saved: the
+// structured rows when there are any, otherwise the legacy text parsed
+// into rows. Always returns clean {time,label} pairs.
+export function agendaOf(e: {
+  agendaItems?: { time?: string; label?: string }[] | null;
+  agenda?: string | null;
+}): { time: string; label: string }[] {
+  const rows = (e.agendaItems ?? [])
+    .map((r) => ({
+      time: String(r?.time ?? '').trim(),
+      label: String(r?.label ?? '').trim(),
+    }))
+    .filter((r) => r.label);
+  return rows.length ? rows : parseAgenda(e.agenda);
+}
+
+// Rows → the legacy text form ("10:00 Welcome"), one per line.
+export function agendaText(rows: { time?: string; label: string }[]) {
+  return rows
+    .map((r) => (r.time ? `${r.time} ${r.label}` : r.label))
+    .join('\n');
+}

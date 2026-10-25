@@ -229,6 +229,15 @@ export class EventActivity {
 }
 export const EventActivitySchema = SchemaFactory.createForClass(EventActivity);
 
+// One row of an event's agenda: an optional time and what happens.
+@Schema({ _id: false })
+export class EventAgendaItem {
+  @Prop({ default: '' }) time: string;
+  @Prop({ required: true }) label: string;
+}
+export const EventAgendaItemSchema =
+  SchemaFactory.createForClass(EventAgendaItem);
+
 export type EventDocument = Event & Document;
 
 @Schema({ timestamps: true, collection: 'crm_tools_events' })
@@ -252,7 +261,13 @@ export class Event {
   // 0 = unlimited.
   @Prop({ default: 0 }) capacity: number;
   @Prop({ default: '' }) host: string;
+  // Legacy free-text agenda. Kept in sync as "time  item" lines from
+  // `agendaItems` so anything still reading text keeps working;
+  // `agendaItems` is the source of truth (an event saved before it
+  // existed has it parsed from this text on read — see agendaOf()).
   @Prop({ default: '' }) agenda: string;
+  @Prop({ type: [EventAgendaItemSchema], default: [] })
+  agendaItems: EventAgendaItem[];
 
   // ── Invitation email (merged with the newsletter Event Invite) ──
   // The invitation email is built from this event — date, venue,

@@ -9,6 +9,7 @@ import {
   IsMongoId,
   IsArray,
   ArrayMinSize,
+  ArrayMaxSize,
   IsEmail,
   ValidateNested,
   ValidateIf,
@@ -19,6 +20,11 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { EventMode, EventAudienceType } from '../schemas';
+
+export class EventAgendaItemDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(20) time?: string;
+  @ApiProperty() @IsString() @MaxLength(300) label: string;
+}
 
 export class CreateEventDto {
   @ApiProperty() @IsString() title: string;
@@ -35,7 +41,17 @@ export class CreateEventDto {
   @ApiPropertyOptional() @IsOptional() @IsString() meetingLink?: string;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) capacity?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() host?: string;
+  // Legacy free-text agenda — still accepted (an older client may send
+  // it); `agendaItems` wins when both are present.
   @ApiPropertyOptional() @IsOptional() @IsString() agenda?: string;
+  // The agenda as rows: [{ time: "10:00", item }]. Time is optional.
+  @ApiPropertyOptional({ type: () => [EventAgendaItemDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(30)
+  @ValidateNested({ each: true })
+  @Type(() => EventAgendaItemDto)
+  agendaItems?: EventAgendaItemDto[];
   // Invitation email extras — see Event.inviteMessage.
   @ApiPropertyOptional()
   @IsOptional()
