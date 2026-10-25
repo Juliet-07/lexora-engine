@@ -4,8 +4,10 @@
 // footer() in utils/newsletter/newsletter-template.ts — so every
 // tenant email ends the same way whichever layout it uses.
 
+import { socialLinksHtml } from './social-icons';
+
 export interface FooterExtras {
-  socialLinks?: { label: string; url: string }[];
+  socialLinks?: { label: string; url: string; key?: string }[];
   address?: string;
   // Present for a real recipient; omitted where a link would be
   // meaningless (portal copies).
@@ -31,14 +33,12 @@ export function footerExtrasHtml(x?: FooterExtras | null): string {
   const parts: string[] = [];
   if (links.length) {
     parts.push(
-      `<p style="margin:0 0 10px;font-size:12px;line-height:1.9;font-family:Arial,sans-serif;text-align:center;">${links
-        .map(
-          (l) =>
-            `<a href="${esc(http(l.url))}" style="color:#4B0082;font-weight:bold;text-decoration:none;">${esc(l.label)}</a>`,
-        )
-        .join(
-          '<span style="color:#c9a84c;"> &nbsp;&middot;&nbsp; </span>',
-        )}</p>`,
+      socialLinksHtml(links, {
+        href: http,
+        textColor: '#4B0082',
+        font: 'font-family:Arial,sans-serif;',
+        margin: '0 0 12px',
+      }),
     );
   }
   if (x.address) {

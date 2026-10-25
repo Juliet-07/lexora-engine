@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { socialLinksHtml } from '../mailing/templates/social-icons';
 
 // ─────────────────────────────────────────────────────────────────
 // Shared newsletter templates — used by BOTH the platform-level
@@ -47,7 +48,7 @@ export interface NewsletterBrand {
   unsubscribeUrl?: string | null;
   // Tenant social links shown above the unsubscribe line. Only links
   // with a real http(s) URL are rendered.
-  socialLinks?: { label: string; url: string }[];
+  socialLinks?: { label: string; url: string; key?: string }[];
   // Postal address line, shown under the links when set.
   address?: string;
 }
@@ -127,19 +128,11 @@ function footer(brand: NewsletterBrand) {
         `<p style="font-size:11px;color:${COLORS.soft};line-height:1.7;margin:3px 0;${FONT}">${i === 0 ? `<b style="color:${COLORS.ink};">${esc(l)}</b>` : esc(l)}</p>`,
     )
     .join('');
-  const social = (brand.socialLinks ?? []).filter(
-    (l) => l && l.label && safeUrl(l.url) !== '#',
-  );
-  const socialHtml = social.length
-    ? `<p style="font-size:12px;line-height:1.9;margin:12px 0 6px;${FONT}">${social
-        .map(
-          (l) =>
-            `<a href="${esc(safeUrl(l.url))}" style="color:${COLORS.accent};font-weight:700;text-decoration:none;">${esc(l.label)}</a>`,
-        )
-        .join(
-          `<span style="color:${COLORS.soft};"> &nbsp;&middot;&nbsp; </span>`,
-        )}</p>`
-    : '';
+  const socialHtml = socialLinksHtml(brand.socialLinks ?? [], {
+    href: safeUrl,
+    textColor: COLORS.accent,
+    font: FONT,
+  });
   const addressHtml = brand.address
     ? `<p style="font-size:11px;color:${COLORS.soft};line-height:1.7;margin:3px 0;${FONT}">${esc(brand.address)}</p>`
     : '';

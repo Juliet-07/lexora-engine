@@ -47,7 +47,7 @@ const normEmail = (e: string) =>
 // social links + address for the footer, and (for emails to a
 // person) their own unsubscribe link.
 export interface EmailFooterContext {
-  socialLinks: { label: string; url: string }[];
+  socialLinks: { label: string; url: string; key: SocialLinkKey }[];
   address: string;
 }
 
@@ -123,6 +123,7 @@ export class EmailFooterService {
       socialLinks: SOCIAL_LINK_KEYS.filter((k) => !!s[k]).map((k) => ({
         label: LABELS[k],
         url: s[k],
+        key: k,
       })),
       address: s.address,
     };
