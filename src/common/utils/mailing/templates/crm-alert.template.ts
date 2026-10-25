@@ -6,6 +6,8 @@
 // cream footer convention every other CRM Tools email in this house
 // style uses.
 
+import { footerExtrasHtml, type FooterExtras } from './footer-extras';
+
 export type CrmAlertRecipientRole = 'client' | 'contact' | 'board member';
 
 const PRIORITY_COLOR: Record<string, string> = {
@@ -29,6 +31,8 @@ export interface CrmAlertEmailData {
   effectiveDate?: string | null;
   deadline?: string | null;
   isTest?: boolean;
+  // Tenant social links / address / unsubscribe link for the footer.
+  footer?: FooterExtras | null;
 }
 
 const fmtDate = (d?: string | null) =>
@@ -134,6 +138,7 @@ export function crmAlertTemplate(data: CrmAlertEmailData): {
               <p style="margin:0 0 10px;font-size:12px;color:#777777;line-height:1.6;font-family:Arial,sans-serif;text-align:center;">
                 ${footerContext}
               </p>
+              ${footerExtrasHtml(data.footer)}
               <p style="margin:0;font-size:11px;color:#999999;line-height:1.7;font-family:Arial,sans-serif;text-align:center;">
                 This is a confidential system-generated notification.<br/>
                 Please do not reply directly to this email.<br/>

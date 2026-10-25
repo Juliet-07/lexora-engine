@@ -406,7 +406,11 @@ export class EventAutomationService {
     }
 
     const businessName = await resolveBusinessName(this.userModel, tenantId);
-    const base = this.eventService.emailBase(e, businessName);
+    const base = this.eventService.emailBase(
+      e,
+      businessName,
+      await this.eventService.footerFor(tenantId),
+    );
 
     // ── Pre-event reminders ──
     if (step.group === 'pre') {

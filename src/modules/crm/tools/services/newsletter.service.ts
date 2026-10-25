@@ -1,6 +1,7 @@
 import {
   Injectable,
   Logger,
+  OnModuleInit,
   NotFoundException,
   BadRequestException,
   ForbiddenException,
@@ -55,6 +56,10 @@ import { EmailService } from 'src/common/utils/mailing/email.service';
 import { RegulatoryChangeService } from 'src/modules/grc/compliance/services/regulatory-change.service';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 import {
+  EmailFooterService,
+  type EmailFooterContext,
+} from './email-footer.service';
+import {
   crmNewsletterCampaignTemplate,
   type CrmNewsletterRecipientRole,
 } from 'src/common/utils/mailing/templates/crm-newsletter-campaign.template';
@@ -106,6 +111,7 @@ export class SegmentService {
     private readonly contactModel: Model<ContactDocument>,
     @InjectModel(BoardMember.name)
     private readonly boardMemberModel: Model<BoardMemberDocument>,
+    private readonly footerService: EmailFooterService,
   ) {}
 
   async getAll(tenantId: string) {
@@ -113,12 +119,53 @@ export class SegmentService {
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
+    const suppressed = await this.footerService.suppressedSet(tenantId);
     return Promise.all(
-      segments.map(async (s) => ({
-        ...s,
-        memberCount: (await this.resolveMembers(tenantId, s as any)).length,
-      })),
+      segments.map(async (s) => {
+        const all = await this.resolveAllMembers(tenantId, s as any);
+        const live = all.filter((m) => !suppressed.has(m.email.toLowerCase()));
+        return {
+          ...s,
+          memberCount: live.length,
+          // People the segment would contain but who have unsubscribed.
+          unsubscribedCount: all.length - live.length,
+        };
+      }),
     );
+  }
+
+  // Someone who has unsubscribed can't be added to ANY segment — so a
+  // create, or an update that adds people, is refused if it names
+  // one. People already in the segment are left alone on update (the
+  // tenant is saving other changes; they're skipped at resolve time
+  // anyway) — only an *addition* is blocked.
+  private async assertNoUnsubscribed(
+    tenantId: string,
+    audience: SegmentAudience | undefined,
+    memberIds: string[],
+    already: string[] = [],
+  ) {
+    const fresh = memberIds.filter((id) => !already.includes(String(id)));
+    if (!fresh.length) return;
+    const members = await this.resolveAllMembers(tenantId, {
+      mode: SegmentMode.MANUAL,
+      audience,
+      memberIds: fresh.map((id) => new Types.ObjectId(id)),
+      rule: null,
+    });
+    const suppressed = await this.footerService.suppressedSet(
+      tenantId,
+      members.map((m) => m.email),
+    );
+    const blocked = members.filter((m) =>
+      suppressed.has(m.email.toLowerCase()),
+    );
+    if (blocked.length) {
+      const names = blocked.map((m) => m.name || m.email).join(', ');
+      throw new BadRequestException(
+        `${names} ${blocked.length === 1 ? 'has' : 'have'} unsubscribed from your newsletters and can't be added to a segment`,
+      );
+    }
   }
 
   private validateSegmentDto(dto: CreateSegmentDto | UpdateSegmentDto) {
@@ -139,6 +186,11 @@ export class SegmentService {
 
   async create(tenantId: string, dto: CreateSegmentDto) {
     this.validateSegmentDto(dto);
+    await this.assertNoUnsubscribed(
+      tenantId,
+      dto.audience,
+      dto.memberIds ?? [],
+    );
     const created = await this.model.create({
       tenantId: new Types.ObjectId(tenantId),
       name: dto.name,
@@ -158,6 +210,12 @@ export class SegmentService {
       tenantId: new Types.ObjectId(tenantId),
     });
     if (!s) throw new NotFoundException('Segment not found');
+    await this.assertNoUnsubscribed(
+      tenantId,
+      dto.audience,
+      dto.memberIds ?? [],
+      (s.memberIds ?? []).map(String),
+    );
     s.name = dto.name;
     s.description = dto.description ?? '';
     s.mode = dto.mode;
@@ -201,6 +259,27 @@ export class SegmentService {
   // validateSegmentDto) — there's no confirmed rule-field equivalent
   // for those two collections yet.
   async resolveMembers(
+    tenantId: string,
+    segment: {
+      mode: SegmentMode;
+      audience?: SegmentAudience;
+      memberIds: Types.ObjectId[];
+      rule: { field: SegmentRuleField; value: string } | null;
+    },
+  ): Promise<ResolvedMember[]> {
+    const all = await this.resolveAllMembers(tenantId, segment);
+    if (!all.length) return all;
+    // Anyone who has unsubscribed is never a member, whatever the
+    // segment's rule or manual list says.
+    const suppressed = await this.footerService.suppressedSet(
+      tenantId,
+      all.map((m) => m.email),
+    );
+    return all.filter((m) => !suppressed.has(m.email.toLowerCase()));
+  }
+
+  // Members as the segment defines them, before unsubscribes are applied.
+  private async resolveAllMembers(
     tenantId: string,
     segment: {
       mode: SegmentMode;
@@ -353,6 +432,7 @@ export class CampaignService {
     private readonly segmentService: SegmentService,
     private readonly emailService: EmailService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly footerService: EmailFooterService,
   ) {}
 
   // Real union across every selected segment's real, live-resolved
@@ -388,19 +468,25 @@ export class CampaignService {
   // The tenant's own business name brands the header and footer —
   // the same templates the SuperAdmin newsletter uses, but this is
   // the tenant writing to its own clients / contacts / board.
-  private fragmentBrand(businessName: string) {
+  // The portal copy carries the tenant's social links but no
+  // unsubscribe link — a portal reader isn't being emailed.
+  private fragmentBrand(businessName: string, footer: EmailFooterContext) {
     return {
       headerText: businessName,
       footerLines: [
         businessName,
         'This is a confidential system-generated message.',
       ],
+      socialLinks: footer.socialLinks,
+      address: footer.address,
     };
   }
 
   private emailBrand(
     businessName: string,
     role: CrmNewsletterRecipientRole | null,
+    footer: EmailFooterContext,
+    unsubscribeUrl: string,
   ) {
     return {
       headerText: businessName,
@@ -411,7 +497,28 @@ export class CampaignService {
           : 'This is a test send — recipients receive a personalised footer.',
         'Please do not reply directly to this email.',
       ],
+      socialLinks: footer.socialLinks,
+      address: footer.address,
+      unsubscribeUrl,
     };
+  }
+
+  // The tenant's own EventInvite design is now sent from Event
+  // Management (one invitation email, built from the event itself) —
+  // so a tenant can no longer start a *newsletter* from it. A
+  // campaign that already uses it keeps working untouched.
+  private assertTemplateAllowed(
+    template: NewsletterTemplate | null | undefined,
+    existing?: string | null,
+  ) {
+    if (
+      template === NewsletterTemplate.EVENT_INVITE &&
+      existing !== NewsletterTemplate.EVENT_INVITE
+    ) {
+      throw new BadRequestException(
+        'Event invitations are now sent from Events — create the event there and its invitation uses this design, with registration and reminders built in',
+      );
+    }
   }
 
   // Resolves the stored content for a create/update. A template
@@ -425,7 +532,9 @@ export class CampaignService {
       previewText?: string;
       body?: string;
     },
+    existingTemplate?: string | null,
   ) {
+    this.assertTemplateAllowed(dto.template, existingTemplate);
     if (!dto.template) {
       return {
         template: null as string | null,
@@ -435,6 +544,7 @@ export class CampaignService {
       };
     }
     const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const footer = await this.footerService.footerContext(tenantId);
     const templateData = dto.templateData ?? {};
     return {
       template: dto.template as string,
@@ -444,7 +554,7 @@ export class CampaignService {
         template: dto.template,
         data: templateData,
         previewText: dto.previewText ?? '',
-        brand: this.fragmentBrand(businessName),
+        brand: this.fragmentBrand(businessName, footer),
         mode: 'fragment',
       }),
     };
@@ -453,13 +563,20 @@ export class CampaignService {
   // Exactly what recipients will receive, for the composer's live
   // preview. Nothing is saved or sent.
   async previewTemplate(tenantId: string, dto: PreviewNewsletterDto) {
+    this.assertTemplateAllowed(dto.template, null);
     const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const footer = await this.footerService.footerContext(tenantId);
     return {
       html: renderNewsletter({
         template: dto.template,
         data: dto.templateData,
         previewText: dto.previewText ?? '',
-        brand: this.emailBrand(businessName, 'client'),
+        brand: this.emailBrand(
+          businessName,
+          'client',
+          footer,
+          this.footerService.previewUrl(),
+        ),
         mode: 'email',
       }),
       missingFields: missingTemplateFields(dto.template, dto.templateData),
@@ -472,8 +589,18 @@ export class CampaignService {
   private renderEmailFor(
     c: any,
     businessName: string,
-    recipient: { name?: string; role: CrmNewsletterRecipientRole } | null,
+    recipient: {
+      name?: string;
+      email: string;
+      role: CrmNewsletterRecipientRole;
+    } | null,
+    footer: EmailFooterContext,
   ): { subject: string; html: string } {
+    // A real recipient gets their own signed unsubscribe link; a test
+    // send gets the inert preview link.
+    const unsubscribeUrl = recipient
+      ? this.footerService.urlFor(String(c.tenantId), recipient.email)
+      : this.footerService.previewUrl();
     if (c.template) {
       const subject = c.subject || c.name;
       return {
@@ -482,7 +609,12 @@ export class CampaignService {
           template: c.template as NewsletterTemplate,
           data: c.templateData ?? {},
           previewText: c.previewText ?? '',
-          brand: this.emailBrand(businessName, recipient?.role ?? null),
+          brand: this.emailBrand(
+            businessName,
+            recipient?.role ?? null,
+            footer,
+            unsubscribeUrl,
+          ),
           mode: 'email',
         }),
       };
@@ -500,6 +632,7 @@ export class CampaignService {
       isEventInvite: false,
       event: c.event ?? null,
       isTest: !recipient,
+      footer: { ...footer, unsubscribeUrl },
     });
   }
 
@@ -690,7 +823,7 @@ export class CampaignService {
 
     c.name = dto.name;
     c.type = dto.type;
-    const content = await this.composeContent(tenantId, dto);
+    const content = await this.composeContent(tenantId, dto, c.template);
     c.subject = dto.subject ?? '';
     c.previewText = content.previewText;
     c.template = content.template;
@@ -726,12 +859,32 @@ export class CampaignService {
     await c.save();
 
     const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const footer = await this.footerService.footerContext(tenantId);
+    // Recipients are a snapshot taken when the campaign was created
+    // or scheduled — someone may have unsubscribed since. Skip them,
+    // and say so on their row rather than leaving it looking like a
+    // failed send.
+    const suppressed = await this.footerService.suppressedSet(
+      tenantId,
+      (c.recipients as any[]).map((r) => r.email),
+    );
     for (const r of c.recipients as any[]) {
+      if (suppressed.has(String(r.email).toLowerCase())) {
+        r.delivered = false;
+        r.deliveryError = 'Unsubscribed — not sent';
+        continue;
+      }
       try {
-        const { subject, html } = this.renderEmailFor(c, businessName, {
-          name: r.clientName,
-          role: recipientRoleLabel(r.sourceType ?? SegmentAudience.CLIENT),
-        });
+        const { subject, html } = this.renderEmailFor(
+          c,
+          businessName,
+          {
+            name: r.clientName,
+            email: r.email,
+            role: recipientRoleLabel(r.sourceType ?? SegmentAudience.CLIENT),
+          },
+          footer,
+        );
         await this.emailService.sendCampaign(r.email, subject, html);
         r.delivered = true;
         r.deliveryError = null;
@@ -766,7 +919,13 @@ export class CampaignService {
     if (!c) throw new NotFoundException('Campaign not found');
     this.assertSendable(c);
     const businessName = await resolveBusinessName(this.userModel, tenantId);
-    const { subject, html } = this.renderEmailFor(c, businessName, null);
+    const footer = await this.footerService.footerContext(tenantId);
+    const { subject, html } = this.renderEmailFor(
+      c,
+      businessName,
+      null,
+      footer,
+    );
     await this.emailService.sendCampaign(dto.to, subject, html);
     return { sent: true };
   }
@@ -1080,7 +1239,9 @@ export class CampaignSchedulerService {
 // (crm-alert.template.ts) rather than a Campaign with extra fields. ─
 
 @Injectable()
-export class AlertService {
+export class AlertService implements OnModuleInit {
+  private readonly logger = new Logger(AlertService.name);
+
   constructor(
     @InjectModel(Alert.name)
     private readonly model: Model<AlertDocument>,
@@ -1088,7 +1249,32 @@ export class AlertService {
     private readonly userModel: Model<UserDocument>,
     private readonly segmentService: SegmentService,
     private readonly emailService: EmailService,
+    private readonly footerService: EmailFooterService,
   ) {}
+
+  // The product owner retired the "Engineering" alert category and
+  // renamed "Cybersecurity" to "Technology". Alerts already stored
+  // under the old names would otherwise vanish from the category
+  // filter (and fail enum validation the next time they are edited),
+  // so they are moved over once at startup. Idempotent: a no-op once
+  // nothing carries an old name. Best-effort — a failure here must
+  // never stop the app from booting.
+  async onModuleInit() {
+    try {
+      const res = await this.model.updateMany(
+        { category: { $in: ['Cybersecurity', 'Engineering'] } },
+        { $set: { category: 'Technology' } },
+      );
+      if (res.modifiedCount)
+        this.logger.log(
+          `Moved ${res.modifiedCount} alert(s) from retired categories to Technology`,
+        );
+    } catch (err) {
+      this.logger.warn(
+        `Alert category migration skipped: ${(err as Error).message}`,
+      );
+    }
+  }
 
   // Same union-across-segments, de-duplicated-by-email resolution as
   // CampaignService.resolveRecipients — kept as its own copy (rather
@@ -1279,10 +1465,24 @@ export class AlertService {
     await a.save();
 
     const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const footer = await this.footerService.footerContext(tenantId);
+    const suppressed = await this.footerService.suppressedSet(
+      tenantId,
+      (a.recipients as any[]).map((r) => r.email),
+    );
     for (const r of a.recipients as any[]) {
+      if (suppressed.has(String(r.email).toLowerCase())) {
+        r.delivered = false;
+        r.deliveryError = 'Unsubscribed — not sent';
+        continue;
+      }
       try {
         const { subject, html } = crmAlertTemplate({
           businessName,
+          footer: {
+            ...footer,
+            unsubscribeUrl: this.footerService.urlFor(tenantId, r.email),
+          },
           recipientName: r.clientName,
           recipientRole: recipientRoleLabel(
             r.sourceType ?? SegmentAudience.CLIENT,
@@ -1318,8 +1518,10 @@ export class AlertService {
     });
     if (!a) throw new NotFoundException('Alert not found');
     const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const footer = await this.footerService.footerContext(tenantId);
     const { subject, html } = crmAlertTemplate({
       businessName,
+      footer: { ...footer, unsubscribeUrl: this.footerService.previewUrl() },
       title: a.title,
       category: a.category,
       priority: a.priority,

@@ -55,6 +55,19 @@ export class EventController {
     return this.service.getById(t || u, id);
   }
 
+  @Get(':id/invitation-preview')
+  @ApiOperation({
+    summary:
+      'The invitation email exactly as invitees receive it (sample guest, nothing sent)',
+  })
+  invitationPreview(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.previewInvitation(t || u, id);
+  }
+
   @Post()
   @ApiOperation({ summary: 'Create an event, as a draft' })
   create(

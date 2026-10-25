@@ -253,6 +253,15 @@ export class Event {
   @Prop({ default: 0 }) capacity: number;
   @Prop({ default: '' }) host: string;
   @Prop({ default: '' }) agenda: string;
+
+  // ── Invitation email (merged with the newsletter Event Invite) ──
+  // The invitation email is built from this event — date, venue,
+  // agenda, registration link — and these three are the only extras
+  // the organiser writes: their own message, a hero image, and the
+  // button text. All optional.
+  @Prop({ default: '' }) inviteMessage: string;
+  @Prop({ default: '' }) inviteImageUrl: string;
+  @Prop({ default: '' }) inviteCtaLabel: string;
   // External only — real registration cutoff; meaningless for
   // InHouse events (no registration step), left null there.
   @Prop({ default: null }) registrationDeadline: Date | null;

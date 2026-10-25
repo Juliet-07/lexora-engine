@@ -6,6 +6,8 @@
 // like it belongs to the same platform, not a raw, unstyled dump of
 // whatever the tenant typed into the rich-text composer.
 
+import { footerExtrasHtml, type FooterExtras } from './footer-extras';
+
 export type CrmNewsletterRecipientRole = 'client' | 'contact' | 'board member';
 
 export interface CrmNewsletterCampaignEmailData {
@@ -26,6 +28,8 @@ export interface CrmNewsletterCampaignEmailData {
     rsvp?: boolean;
   } | null;
   isTest?: boolean;
+  // Tenant social links / address / unsubscribe link for the footer.
+  footer?: FooterExtras | null;
 }
 
 export function crmNewsletterCampaignTemplate(
@@ -124,6 +128,7 @@ export function crmNewsletterCampaignTemplate(
               <p style="margin:0 0 10px;font-size:12px;color:#777777;line-height:1.6;font-family:Arial,sans-serif;text-align:center;">
                 ${footerContext}
               </p>
+              ${footerExtrasHtml(data.footer)}
               <p style="margin:0;font-size:11px;color:#999999;line-height:1.7;font-family:Arial,sans-serif;text-align:center;">
                 This is a confidential system-generated notification.<br/>
                 Please do not reply directly to this email.<br/>

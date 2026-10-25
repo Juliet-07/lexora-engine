@@ -35,9 +35,12 @@ import {
   buildPipeline,
   buildSteps,
   computeStats,
+  eventBadge,
   eventInstants,
+  googleCalendarUrl,
   hasResponded,
   isValidTimeZone,
+  parseAgenda,
   phaseOf,
   resolveAutomation,
   scheduleFor,
@@ -65,6 +68,8 @@ import { EmploymentStatus } from 'src/modules/hr/schemas/employee.schema';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 import { eventInviteTemplate } from 'src/common/utils/mailing/templates/event-invite.template';
+import type { FooterExtras } from 'src/common/utils/mailing/templates/footer-extras';
+import { EmailFooterService } from './email-footer.service';
 
 const newToken = () => crypto.randomBytes(20).toString('hex');
 const uid = (p: string) =>
@@ -106,6 +111,7 @@ export class EventService {
     @InjectModel(Employee.name)
     private readonly employeeModel: Model<EmployeeDocument>,
     private readonly emailService: EmailService,
+    private readonly footerService: EmailFooterService,
   ) {}
 
   private displayName(u: {
@@ -285,6 +291,15 @@ export class EventService {
     doc.capacity = dto.capacity ?? 0;
     doc.host = dto.host ?? '';
     doc.agenda = dto.agenda ?? '';
+    doc.inviteMessage = (dto.inviteMessage ?? '').trim();
+    doc.inviteCtaLabel = (dto.inviteCtaLabel ?? '').trim();
+    const img = (dto.inviteImageUrl ?? '').trim();
+    if (img && !/^https?:\/\/\S+$/i.test(img)) {
+      throw new BadRequestException(
+        'The invitation image must be a web address starting with http:// or https://',
+      );
+    }
+    doc.inviteImageUrl = img;
     if (dto.timezone) {
       if (!isValidTimeZone(dto.timezone)) {
         throw new BadRequestException('Unknown time zone');
@@ -358,46 +373,107 @@ export class EventService {
     return { deleted: true };
   }
 
+  // The invitation, drawn with the Event Invite design from the event
+  // itself. An invite to a CRM contact also carries that person's own
+  // unsubscribe link (contacts are the people an external event
+  // reaches by email on the tenant's say-so); clients, board members
+  // and employees are invited as part of the relationship, so they
+  // get the social links but no unsubscribe line.
   private buildInviteEmail(
     businessName: string,
     e: EventDocument,
-    invite: { name: string; audienceType: EventAudienceType; token: string },
+    invite: {
+      name: string;
+      email?: string;
+      audienceType: EventAudienceType;
+      token: string;
+    },
+    footer?: FooterExtras,
+    preview = false,
   ) {
     const requiresRegistration = e.mode === EventMode.EXTERNAL;
-    const ctaLink = requiresRegistration
-      ? `${process.env.TENANT_APP_URL}/event-register/${invite.token}`
-      : invite.audienceType === EventAudienceType.CLIENT
-        ? `${process.env.CLIENT_APP_URL}/events`
-        : invite.audienceType === EventAudienceType.BOARD_MEMBER
-          ? `${process.env.BOARD_APP_URL}/events`
-          : `${process.env.TENANT_APP_URL}/my/events`;
+    const ctaLink = this.ctaLinkFor(e, invite);
+    const unsubscribeUrl =
+      invite.audienceType === EventAudienceType.CONTACT
+        ? preview || !invite.email
+          ? this.footerService.previewUrl()
+          : this.footerService.urlFor(String(e.tenantId), invite.email)
+        : null;
     return eventInviteTemplate({
-      businessName,
+      ...this.emailBase(e, businessName, { ...footer, unsubscribeUrl }),
       recipientName: invite.name,
-      title: e.title,
-      type: e.type,
       description: e.description,
-      date: e.date.toISOString(),
-      startTime: e.startTime,
-      endTime: e.endTime,
-      location: e.location,
+      message: e.inviteMessage,
+      ctaLabel: e.inviteCtaLabel,
       virtual: e.virtual,
-      meetingLink: e.virtual ? e.meetingLink : null,
       requiresRegistration,
+      registrationDeadlineLabel:
+        requiresRegistration && e.registrationDeadline
+          ? this.fmtDay(e.registrationDeadline)
+          : undefined,
       ctaLink,
     });
+  }
+
+  // What the organiser sees under "Invitation email" — the exact
+  // email, rendered for a sample guest, nothing sent.
+  async previewInvitation(tenantId: string, id: string) {
+    const e = await this.getDoc(tenantId, id);
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const footer = await this.footerService.footerContext(tenantId);
+    const audienceType =
+      e.mode === EventMode.EXTERNAL
+        ? EventAudienceType.CONTACT
+        : EventAudienceType.CLIENT;
+    const { subject, html } = this.buildInviteEmail(
+      businessName,
+      e,
+      { name: 'Alex Example', audienceType, token: 'preview' },
+      footer,
+      true,
+    );
+    return { subject, html };
+  }
+
+  // Footer pieces (social links + address) for the emails that follow
+  // the invitation. Transactional, so no unsubscribe line.
+  async footerFor(tenantId: string): Promise<FooterExtras> {
+    return this.footerService.footerContext(tenantId);
   }
 
   // Real, per-recipient sends via EmailService's real SMTP transport
   // — each invite's own sentAt/deliveryError reflects whether that
   // specific send actually succeeded, same partial-failure handling
-  // as CampaignService.sendNow.
+  // as CampaignService.sendNow. A CRM contact who has unsubscribed
+  // is not emailed (their row says why) and doesn't count as a
+  // failure.
   private async dispatch(tenantId: string, e: EventDocument, invites: any[]) {
-    if (!invites.length) return;
+    if (!invites.length) return { skippedUnsubscribed: 0 };
     const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const footer = await this.footerService.footerContext(tenantId);
+    const suppressed = await this.footerService.suppressedSet(
+      tenantId,
+      invites
+        .filter((i) => i.audienceType === EventAudienceType.CONTACT)
+        .map((i) => i.email),
+    );
+    let skippedUnsubscribed = 0;
     for (const inv of invites) {
+      if (
+        inv.audienceType === EventAudienceType.CONTACT &&
+        suppressed.has(String(inv.email).toLowerCase())
+      ) {
+        inv.deliveryError = 'Unsubscribed — not emailed';
+        skippedUnsubscribed++;
+        continue;
+      }
       try {
-        const { subject, html } = this.buildInviteEmail(businessName, e, inv);
+        const { subject, html } = this.buildInviteEmail(
+          businessName,
+          e,
+          inv,
+          footer,
+        );
         await this.emailService.sendCampaign(inv.email, subject, html);
         inv.sentAt = new Date();
         inv.deliveryError = null;
@@ -405,6 +481,7 @@ export class EventService {
         inv.deliveryError = err?.message ?? 'Send failed';
       }
     }
+    return { skippedUnsubscribed };
   }
 
   // Adds real invitees, resolved live against their real collection.
@@ -474,14 +551,15 @@ export class EventService {
     }
 
     e.invites.push(...fresh);
+    let skipped = 0;
     if (e.status === EventStatus.PUBLISHED) {
-      await this.dispatch(tenantId, e, fresh);
+      skipped = (await this.dispatch(tenantId, e, fresh)).skippedUnsubscribed;
     }
     this.log(
       e,
       'invited',
       e.status === EventStatus.PUBLISHED
-        ? `${fresh.length} ${fresh.length === 1 ? 'person' : 'people'} invited and emailed`
+        ? `${fresh.length} ${fresh.length === 1 ? 'person' : 'people'} invited and emailed${skipped ? ` (${skipped} not emailed — unsubscribed)` : ''}`
         : `${fresh.length} ${fresh.length === 1 ? 'person' : 'people'} added to the guest list (emailed on publish)`,
     );
     await e.save();
@@ -528,12 +606,12 @@ export class EventService {
     // now, as a new event would.
     if (!e.automation) e.automation = { ...DEFAULT_AUTOMATION } as any;
     const unsent = e.invites.filter((i) => !i.sentAt);
-    await this.dispatch(tenantId, e, unsent);
-    const failed = unsent.filter((i) => !i.sentAt).length;
+    const { skippedUnsubscribed } = await this.dispatch(tenantId, e, unsent);
+    const failed = unsent.filter((i) => !i.sentAt).length - skippedUnsubscribed;
     this.log(
       e,
       'published',
-      `Published — ${unsent.length - failed} of ${unsent.length} invitations sent${failed ? `, ${failed} failed` : ''}`,
+      `Published — ${unsent.length - failed - skippedUnsubscribed} of ${unsent.length} invitations sent${failed ? `, ${failed} failed` : ''}${skippedUnsubscribed ? `, ${skippedUnsubscribed} skipped (unsubscribed)` : ''}`,
     );
     await e.save();
     return this.present(e);
@@ -560,7 +638,11 @@ export class EventService {
     let failed = 0;
     if (wasPublished && dto.notifyInvitees !== false) {
       const businessName = await resolveBusinessName(this.userModel, tenantId);
-      const base = this.emailBase(e, businessName);
+      const base = this.emailBase(
+        e,
+        businessName,
+        await this.footerService.footerContext(tenantId),
+      );
       for (const inv of e.invites.filter(
         (i) => !!i.sentAt || hasResponded(i.status),
       )) {
@@ -844,7 +926,12 @@ export class EventService {
         String(e.tenantId),
       );
       const { subject, html } = eventRegistrationConfirmationTemplate({
-        ...this.emailBase(e, businessName),
+        ...this.emailBase(
+          e,
+          businessName,
+          await this.footerService.footerContext(String(e.tenantId)),
+          { meetingLinkInCalendar: true },
+        ),
         recipientName: name,
         meetingLink: e.virtual ? e.meetingLink || null : null,
       });
@@ -1092,7 +1179,30 @@ export class EventService {
     return `${day}${time} (${tz})`;
   }
 
-  emailBase(e: EventDocument | any, businessName: string) {
+  private fmtDay(d: Date | string) {
+    return new Intl.DateTimeFormat('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).format(new Date(d));
+  }
+
+  // Everything the shared event layout draws, taken from the event.
+  // `footer` carries the tenant's social links / address (and, for an
+  // invitation to a contact, their unsubscribe link). The meeting
+  // link only goes into the calendar entry once the person is
+  // registered — an invitation must not reveal it.
+  emailBase(
+    e: EventDocument | any,
+    businessName: string,
+    footer?: FooterExtras | null,
+    opts: { meetingLinkInCalendar?: boolean } = {},
+  ) {
+    const tz = e.timezone || DEFAULT_TIMEZONE;
+    const time = e.startTime
+      ? `${e.startTime}${e.endTime ? ` – ${e.endTime}` : ''} (${tz})`
+      : '';
     return {
       businessName,
       recipientName: '',
@@ -1100,6 +1210,23 @@ export class EventService {
       type: e.type,
       whenLabel: this.fmtWhen(e),
       where: e.virtual ? 'Virtual' : e.location || '',
+      dateLabel: new Intl.DateTimeFormat('en-GB', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+        timeZone: 'UTC',
+      }).format(new Date(e.date)),
+      timeLabel: time || undefined,
+      host: e.host || undefined,
+      badge: eventBadge(e.date),
+      agenda: parseAgenda(e.agenda),
+      calendarUrl: googleCalendarUrl({
+        ...(e.toObject?.() ?? e),
+        meetingLink: opts.meetingLinkInCalendar ? e.meetingLink : '',
+      }),
+      imageUrl: e.inviteImageUrl || undefined,
+      footer: footer ?? null,
     };
   }
 

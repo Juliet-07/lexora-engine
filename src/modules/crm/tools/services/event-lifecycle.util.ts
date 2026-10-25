@@ -572,3 +572,81 @@ export function buildPipeline(args: {
     { key: 'followup', label: 'Follow-up', ...followUp },
   ];
 }
+
+// ── Email presentation helpers ───────────────────────────────────
+// Pure, so the invitation preview, the real sends and the tests all
+// draw the same details from the same place.
+
+const MONTHS = [
+  'JAN',
+  'FEB',
+  'MAR',
+  'APR',
+  'MAY',
+  'JUN',
+  'JUL',
+  'AUG',
+  'SEP',
+  'OCT',
+  'NOV',
+  'DEC',
+];
+
+// The date badge in the email banner. `date` is the calendar day
+// itself stored at UTC midnight, so read it in UTC.
+export function eventBadge(date: Date | string) {
+  const d = new Date(date);
+  return { day: String(d.getUTCDate()), month: MONTHS[d.getUTCMonth()] };
+}
+
+// The free-text agenda ("09:00 Welcome\n09:30 Keynote") → rows for
+// the email. A line that starts with a time becomes {time,label};
+// any other line is kept as a plain row so nothing the tenant wrote
+// is dropped. Capped so a pasted essay can't swamp the email.
+export function parseAgenda(text: string | undefined | null) {
+  const rows: { time: string; label: string }[] = [];
+  for (const raw of String(text ?? '').split(/\r?\n/)) {
+    const line = raw.replace(/^\s*[-•*]\s*/, '').trim();
+    if (!line) continue;
+    const m = line.match(
+      /^(\d{1,2}[:.]\d{2}(?:\s?[AaPp][Mm])?)\s*(?:[-–—:|]\s*)?(.+)$/,
+    );
+    rows.push(
+      m
+        ? { time: m[1].replace('.', ':'), label: m[2].trim() }
+        : { time: '', label: line },
+    );
+    if (rows.length >= 12) break;
+  }
+  return rows;
+}
+
+// "Add to calendar" for the email: a Google Calendar template link
+// built from the event itself — nothing to host or keep in sync.
+export function googleCalendarUrl(e: {
+  title: string;
+  description?: string;
+  location?: string;
+  virtual?: boolean;
+  meetingLink?: string;
+  date: Date | string;
+  startTime?: string;
+  endTime?: string;
+  timezone?: string;
+}) {
+  const { startsAt, endsAt } = eventInstants(e);
+  const f = (d: Date) =>
+    d
+      .toISOString()
+      .replace(/[-:]/g, '')
+      .replace(/\.\d{3}/, '');
+  const where = e.virtual ? e.meetingLink || 'Online' : e.location || '';
+  const q = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: e.title,
+    dates: `${f(startsAt)}/${f(endsAt)}`,
+    details: e.description || '',
+    location: where,
+  });
+  return `https://calendar.google.com/calendar/render?${q.toString()}`;
+}

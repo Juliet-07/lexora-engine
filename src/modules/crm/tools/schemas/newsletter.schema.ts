@@ -225,11 +225,10 @@ export enum AlertCategory {
   COMPLIANCE = 'Compliance',
   GOVERNMENT = 'Government',
   SYSTEM = 'System',
-  ENGINEERING = 'Engineering',
   INDUSTRY = 'Industry',
   HEALTH_SAFETY = 'Health & Safety',
   ENVIRONMENTAL = 'Environmental',
-  CYBERSECURITY = 'Cybersecurity',
+  TECHNOLOGY = 'Technology',
   SUPPLY_CHAIN = 'Supply chain',
 }
 export const ALERT_CATEGORIES: AlertCategory[] = Object.values(AlertCategory);

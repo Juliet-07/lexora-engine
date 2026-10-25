@@ -36,6 +36,22 @@ export class CreateEventDto {
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) capacity?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() host?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() agenda?: string;
+  // Invitation email extras — see Event.inviteMessage.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  inviteMessage?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  inviteImageUrl?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  inviteCtaLabel?: string;
   // IANA zone the start/end times are in (e.g. "Africa/Kigali") —
   // validated in EventService. Defaults to Africa/Kigali.
   @ApiPropertyOptional() @IsOptional() @IsString() timezone?: string;

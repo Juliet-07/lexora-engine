@@ -40,10 +40,16 @@ export interface NewsletterBrand {
   // Footer lines, plain text (escaped when rendered).
   footerLines: string[];
   // When present, an "Unsubscribe" link is rendered in the footer.
-  // Tenant newsletters go to the tenant's own clients/board, who
-  // have a relationship with the tenant rather than a public mailing
-  // list, so they omit it.
+  // The super-admin newsletter (public website subscribers) and the
+  // tenant newsletters (each recipient gets their own signed link —
+  // see EmailFooterService) both use it; the portal fragment never
+  // does, since a portal reader isn't being emailed.
   unsubscribeUrl?: string | null;
+  // Tenant social links shown above the unsubscribe line. Only links
+  // with a real http(s) URL are rendered.
+  socialLinks?: { label: string; url: string }[];
+  // Postal address line, shown under the links when set.
+  address?: string;
 }
 
 const COLORS = {
@@ -88,8 +94,11 @@ const safeImageUrl = (u: unknown) => {
   return /^https?:\/\//i.test(v) ? v : '';
 };
 
-function ctaButton(label: string, url: string) {
-  return `<a href="${esc(safeUrl(url))}" style="display:inline-block;background:${COLORS.accent};color:#ffffff;font-weight:700;font-size:13.5px;padding:13px 28px;border-radius:7px;text-decoration:none;${FONT}">${esc(label)}</a>`;
+function ctaButton(label: string, url: string, secondary = false) {
+  const look = secondary
+    ? `background:#ffffff;color:${COLORS.accent};border:1.5px solid ${COLORS.accent};padding:11.5px 26.5px;`
+    : `background:${COLORS.accent};color:#ffffff;padding:13px 28px;`;
+  return `<a href="${esc(safeUrl(url))}" style="display:inline-block;${look}font-weight:700;font-size:13.5px;border-radius:7px;text-decoration:none;margin:4px 5px;${FONT}">${esc(label)}</a>`;
 }
 
 // A plain <img> inside a table cell is safe in every mail client.
@@ -118,12 +127,30 @@ function footer(brand: NewsletterBrand) {
         `<p style="font-size:11px;color:${COLORS.soft};line-height:1.7;margin:3px 0;${FONT}">${i === 0 ? `<b style="color:${COLORS.ink};">${esc(l)}</b>` : esc(l)}</p>`,
     )
     .join('');
+  const social = (brand.socialLinks ?? []).filter(
+    (l) => l && l.label && safeUrl(l.url) !== '#',
+  );
+  const socialHtml = social.length
+    ? `<p style="font-size:12px;line-height:1.9;margin:12px 0 6px;${FONT}">${social
+        .map(
+          (l) =>
+            `<a href="${esc(safeUrl(l.url))}" style="color:${COLORS.accent};font-weight:700;text-decoration:none;">${esc(l.label)}</a>`,
+        )
+        .join(
+          `<span style="color:${COLORS.soft};"> &nbsp;&middot;&nbsp; </span>`,
+        )}</p>`
+    : '';
+  const addressHtml = brand.address
+    ? `<p style="font-size:11px;color:${COLORS.soft};line-height:1.7;margin:3px 0;${FONT}">${esc(brand.address)}</p>`
+    : '';
   const unsub = brand.unsubscribeUrl
-    ? `<p style="font-size:11px;color:${COLORS.soft};line-height:1.7;margin:3px 0;${FONT}"><a href="${esc(safeUrl(brand.unsubscribeUrl))}" style="color:${COLORS.accent};text-decoration:none;">Unsubscribe</a></p>`
+    ? `<p style="font-size:11px;color:${COLORS.soft};line-height:1.7;margin:8px 0 3px;${FONT}">Don&rsquo;t want these emails? <a href="${esc(safeUrl(brand.unsubscribeUrl))}" style="color:${COLORS.accent};text-decoration:underline;">Unsubscribe</a></p>`
     : '';
   return `
   <tr><td style="padding:26px 36px 32px;text-align:center;border-top:1px solid ${COLORS.line};background:#fbfaff;">
     ${lines}
+    ${socialHtml}
+    ${addressHtml}
     ${unsub}
   </td></tr>`;
 }
@@ -293,35 +320,77 @@ function renderArticleSpotlight(
   return wrap(body, previewText, brand, mode);
 }
 
-function renderEventInvite(
-  data: Record<string, any>,
-  previewText: string,
-  brand: NewsletterBrand,
-  mode: Mode,
-) {
-  const infoRows: any[] = Array.isArray(data.infoRows) ? data.infoRows : [];
+// ── Event email shell ────────────────────────────────────────────
+// The Event Invite design, as one reusable layout. The newsletter
+// "Event Invite" template (super-admin) and every tenant event email
+// (invitation, reminder, registration confirmation, follow-ups,
+// cancellation) are all drawn by this, so an event reads the same
+// from the first invitation to the last thank-you.
+export interface EventMessageOptions {
+  brand: NewsletterBrand;
+  previewText?: string;
+  mode?: Mode;
+  banner: {
+    day?: string;
+    month?: string;
+    heading: string;
+    sub?: string;
+    // 'alert' paints the banner red (cancellations).
+    tone?: 'default' | 'alert';
+  };
+  imageUrl?: string;
+  imageAlt?: string;
+  // e.g. "Dear Amina," — plain text.
+  greeting?: string;
+  // Plain text; line breaks are kept.
+  paragraphs?: string[];
+  infoRows?: { label: string; value: string }[];
+  agenda?: { time?: string; label: string }[];
+  buttons?: { label: string; url: string; secondary?: boolean }[];
+  calendarUrl?: string;
+  calendarLabel?: string;
+  footnote?: string;
+}
+
+export function renderEventMessage(o: EventMessageOptions): string {
+  const mode: Mode = o.mode ?? 'email';
+  const infoRows = (o.infoRows ?? []).filter((r) => r && r.label && r.value);
+  // Up to three facts sit side by side; more than that wrap onto a
+  // second line (4 → 2+2, 5 → 3+2) so none gets squeezed.
+  const perRow =
+    infoRows.length <= 3 ? infoRows.length : Math.ceil(infoRows.length / 2);
+  const infoLines: (typeof infoRows)[] = [];
+  for (let i = 0; i < infoRows.length; i += perRow || 1) {
+    infoLines.push(infoRows.slice(i, i + perRow));
+  }
   const infoHtml = infoRows.length
     ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${COLORS.line};border-radius:9px;margin-bottom:22px;">
-        <tr>${infoRows
+        ${infoLines
           .map(
-            (r, i) => `
-          <td style="padding:14px;text-align:center;${i < infoRows.length - 1 ? `border-right:1px solid ${COLORS.line};` : ''}">
+            (line, li) =>
+              `<tr>${line
+                .map(
+                  (r, i) => `
+          <td width="${Math.floor(100 / perRow)}%" style="padding:14px;text-align:center;vertical-align:top;${i < line.length - 1 ? `border-right:1px solid ${COLORS.line};` : ''}${li > 0 ? `border-top:1px solid ${COLORS.line};` : ''}">
             <div style="font-size:10.5px;color:${COLORS.soft};letter-spacing:.05em;text-transform:uppercase;margin-bottom:3px;${FONT}">${esc(r.label)}</div>
             <div style="font-size:13px;font-weight:700;color:${COLORS.ink};${FONT}">${esc(r.value)}</div>
           </td>`,
+                )
+                .join('')}</tr>`,
           )
-          .join('')}</tr>
+          .join('')}
       </table>`
     : '';
 
-  const agenda: any[] = Array.isArray(data.agenda) ? data.agenda : [];
+  const agenda = (o.agenda ?? []).filter((a) => a && a.label);
   const agendaHtml = agenda.length
-    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:22px;">
+    ? `<div style="font-size:10.5px;color:${COLORS.soft};letter-spacing:.05em;text-transform:uppercase;margin:0 0 6px;${FONT}">Agenda</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:22px;">
         ${agenda
           .map(
             (a, i) => `
           <tr><td style="padding:8px 0;${i < agenda.length - 1 ? `border-bottom:1px solid #f1f0f7;` : ''}font-size:13px;${FONT}">
-            <span style="color:${COLORS.accent};font-weight:700;display:inline-block;width:60px;font-size:12.5px;">${esc(a.time)}</span>
+            ${a.time ? `<span style="color:${COLORS.accent};font-weight:700;display:inline-block;width:60px;font-size:12.5px;">${esc(a.time)}</span>` : ''}
             <span style="color:${COLORS.inkSoft};">${esc(a.label)}</span>
           </td></tr>`,
           )
@@ -329,30 +398,96 @@ function renderEventInvite(
       </table>`
     : '';
 
+  const paragraphs = [
+    ...(o.greeting
+      ? [`<b style="color:${COLORS.ink};">${esc(o.greeting)}</b>`]
+      : []),
+    ...(o.paragraphs ?? []).filter(Boolean).map((p) => multiline(p)),
+  ]
+    .map(
+      (p) =>
+        `<p style="font-size:13.5px;line-height:1.7;color:${COLORS.inkSoft};margin:0 0 16px;${FONT}">${p}</p>`,
+    )
+    .join('');
+
+  const buttons = (o.buttons ?? []).filter(
+    (b) => b && b.label && safeUrl(b.url) !== '#',
+  );
+  const buttonsHtml = buttons.length
+    ? `<div style="text-align:center;padding:6px 0 12px;">${buttons
+        .map((b) => ctaButton(b.label, b.url, !!b.secondary))
+        .join('')}</div>`
+    : '';
+  const calendarHtml =
+    o.calendarUrl && safeUrl(o.calendarUrl) !== '#'
+      ? `<div style="text-align:center;font-size:12.5px;color:${COLORS.accent};font-weight:600;padding-bottom:4px;"><a href="${esc(safeUrl(o.calendarUrl))}" style="color:inherit;text-decoration:none;">+ ${esc(o.calendarLabel || 'Add to calendar')}</a></div>`
+      : '';
+  const footnoteHtml = o.footnote
+    ? `<p style="font-size:12px;line-height:1.6;color:${COLORS.soft};margin:14px 0 0;text-align:center;${FONT}">${multiline(o.footnote)}</p>`
+    : '';
+
+  const hasBadge = !!(o.banner.day || o.banner.month);
+  const badge = hasBadge
+    ? `<td style="background:#ffffff;color:${COLORS.ink};border-radius:10px;padding:10px 16px;text-align:center;">
+        <div style="font-size:26px;font-weight:800;line-height:1;">${esc(o.banner.day)}</div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:.05em;color:${COLORS.accent};">${esc(o.banner.month)}</div>
+      </td>`
+    : '';
+  const bannerBg = o.banner.tone === 'alert' ? '#8e2a1f' : COLORS.ink;
+
   const body = `
-  ${header(brand)}
-  <tr><td style="background:${COLORS.ink};color:#ffffff;padding:30px 36px;">
+  ${header(o.brand)}
+  <tr><td style="background:${bannerBg};color:#ffffff;padding:30px 36px;">
     <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-      <td style="background:#ffffff;color:${COLORS.ink};border-radius:10px;padding:10px 16px;text-align:center;">
-        <div style="font-size:26px;font-weight:800;line-height:1;">${esc(data.day)}</div>
-        <div style="font-size:11px;font-weight:700;letter-spacing:.05em;color:${COLORS.accent};">${esc(data.month)}</div>
-      </td>
-      <td style="padding-left:20px;${FONT}">
-        <div style="font-size:19px;margin:0 0 4px;font-weight:700;color:#ffffff;">${esc(data.heading)}</div>
-        <div style="font-size:12.5px;color:#b9b5d6;">${esc(data.location)}</div>
+      ${badge}
+      <td style="${hasBadge ? 'padding-left:20px;' : ''}${FONT}">
+        <div style="font-size:19px;margin:0 0 4px;font-weight:700;color:#ffffff;">${esc(o.banner.heading)}</div>
+        ${o.banner.sub ? `<div style="font-size:12.5px;color:#b9b5d6;">${esc(o.banner.sub)}</div>` : ''}
       </td>
     </tr></table>
   </td></tr>
-  ${imageRow(data.imageUrl, data.imageAlt)}
+  ${imageRow(o.imageUrl, o.imageAlt)}
   <tr><td style="padding:26px 36px 6px;">
-    <p style="font-size:13.5px;line-height:1.7;color:${COLORS.inkSoft};margin:0 0 16px;${FONT}">${multiline(data.bodyText)}</p>
+    ${paragraphs}
     ${infoHtml}
     ${agendaHtml}
-    ${data.ctaUrl ? `<div style="text-align:center;padding:6px 0 12px;">${ctaButton(data.ctaLabel || 'Reserve my seat', data.ctaUrl)}</div>` : ''}
-    ${data.calendarUrl ? `<div style="text-align:center;font-size:12.5px;color:${COLORS.accent};font-weight:600;padding-bottom:4px;"><a href="${esc(safeUrl(data.calendarUrl))}" style="color:inherit;text-decoration:none;">+ ${esc(data.calendarLabel || 'Add to calendar')}</a></div>` : ''}
+    ${buttonsHtml}
+    ${calendarHtml}
+    ${footnoteHtml}
   </td></tr>`;
 
-  return wrap(body, previewText, brand, mode);
+  return wrap(body, o.previewText ?? '', o.brand, mode);
+}
+
+// The newsletter "Event Invite" template — a thin mapping from the
+// template's authored fields onto the shared event layout.
+function renderEventInvite(
+  data: Record<string, any>,
+  previewText: string,
+  brand: NewsletterBrand,
+  mode: Mode,
+) {
+  return renderEventMessage({
+    brand,
+    previewText,
+    mode,
+    banner: {
+      day: data.day,
+      month: data.month,
+      heading: data.heading,
+      sub: data.location,
+    },
+    imageUrl: data.imageUrl,
+    imageAlt: data.imageAlt,
+    paragraphs: data.bodyText ? [data.bodyText] : [],
+    infoRows: Array.isArray(data.infoRows) ? data.infoRows : [],
+    agenda: Array.isArray(data.agenda) ? data.agenda : [],
+    buttons: data.ctaUrl
+      ? [{ label: data.ctaLabel || 'Reserve my seat', url: data.ctaUrl }]
+      : [],
+    calendarUrl: data.calendarUrl,
+    calendarLabel: data.calendarLabel,
+  });
 }
 
 export function renderNewsletter(opts: {
