@@ -271,6 +271,14 @@ export type StepDef = {
 
 const DAY_GRACE = 6 * HOUR;
 
+// Does this event have guests who register through a public/personal
+// link (External or Both), and ones who confirm from a portal
+// (InHouse or Both)?
+export const hasExternalAudience = (mode: EventMode | string) =>
+  mode === EventMode.EXTERNAL || mode === EventMode.BOTH;
+export const hasInternalAudience = (mode: EventMode | string) =>
+  mode === EventMode.IN_HOUSE || mode === EventMode.BOTH;
+
 export function buildSteps(
   e: {
     mode: EventMode | string;
@@ -289,7 +297,7 @@ export function buildSteps(
     completedAt && completedAt.getTime() < endsAt.getTime()
       ? completedAt.getTime()
       : endsAt.getTime();
-  const external = e.mode === EventMode.EXTERNAL;
+  const external = hasExternalAudience(e.mode);
   const steps: StepDef[] = [
     {
       key: 'reminder:week',
@@ -508,7 +516,7 @@ export function buildPipeline(args: {
       ? { state: 'active', detail: `${stats.responded} so far` }
       : {
           state: 'done',
-          detail: `${stats.responded} ${mode === EventMode.EXTERNAL ? 'registered' : 'acknowledged'}`,
+          detail: `${stats.responded} ${mode === EventMode.EXTERNAL ? 'registered' : mode === EventMode.BOTH ? 'responded' : 'acknowledged'}`,
         };
 
   const invitations: { state: PipelineState; detail: string } =
@@ -563,7 +571,12 @@ export function buildPipeline(args: {
     },
     {
       key: 'registration',
-      label: mode === EventMode.EXTERNAL ? 'Registration' : 'Acknowledgement',
+      label:
+        mode === EventMode.EXTERNAL
+          ? 'Registration'
+          : mode === EventMode.BOTH
+            ? 'Responses'
+            : 'Acknowledgement',
       ...registration,
     },
     { key: 'invitations', label: 'Invitations', ...invitations },

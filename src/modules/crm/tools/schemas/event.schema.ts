@@ -7,13 +7,15 @@ import { Document, Types } from 'mongoose';
 // EmailService, and attendance is a real signal rather than a
 // manually-clicked status.
 //
-// Two real event shapes, picked at creation and fixed for the
+// Three real event shapes, picked at creation and fixed for the
 // event's life (no mode switch after invitees exist — see
 // EventService.create):
 //   - External: the tenant invites real CRM Contacts. Each invite
 //     gets its own personal registration link; submitting that form
 //     is itself the attendance signal — there's no separate manual
 //     "check in" step once a registration comes in.
+//   - Both: the two above on one event — each guest follows the path
+//     of their own audience type.
 //   - InHouse: the tenant invites its own real Clients, Board
 //     Members and/or Employees — any mix. No registration step:
 //     each invitee acknowledges attendance directly from their own
@@ -38,6 +40,10 @@ export const EVENT_TYPES: EventType[] = [
 export enum EventMode {
   IN_HOUSE = 'InHouse',
   EXTERNAL = 'External',
+  // Internal AND external guests on one event: contacts register
+  // through their personal link, clients/board/employees acknowledge
+  // from their portal.
+  BOTH = 'Both',
 }
 
 export enum EventStatus {
@@ -47,9 +53,9 @@ export enum EventStatus {
   CANCELLED = 'Cancelled',
 }
 
-// Which real collection an invitee comes from. Contact is External-
-// only; Client/BoardMember/Employee are InHouse-only — enforced by
-// EventService, not by the schema itself.
+// Which real collection an invitee comes from. Contact is for
+// External/Both events; Client/BoardMember/Employee for InHouse/Both
+// — enforced by EventService, not by the schema itself.
 export enum EventAudienceType {
   CLIENT = 'Client',
   BOARD_MEMBER = 'BoardMember',
@@ -238,6 +244,21 @@ export class EventAgendaItem {
 export const EventAgendaItemSchema =
   SchemaFactory.createForClass(EventAgendaItem);
 
+// A file the organiser attaches to the event — typically the slides,
+// a PDF handout or the report shared after it. Invited clients, board
+// members and employees see these in their own portal.
+@Schema({ _id: false })
+export class EventFile {
+  @Prop({ required: true }) id: string;
+  @Prop({ required: true }) name: string;
+  @Prop({ default: '' }) description: string;
+  @Prop({ required: true }) url: string;
+  @Prop({ default: '' }) mimeType: string;
+  @Prop({ default: 0 }) size: number;
+  @Prop({ default: () => new Date() }) uploadedAt: Date;
+}
+export const EventFileSchema = SchemaFactory.createForClass(EventFile);
+
 export type EventDocument = Event & Document;
 
 @Schema({ timestamps: true, collection: 'crm_tools_events' })
@@ -266,6 +287,8 @@ export class Event {
   // `agendaItems` is the source of truth (an event saved before it
   // existed has it parsed from this text on read — see agendaOf()).
   @Prop({ default: '' }) agenda: string;
+  @Prop({ type: [EventFileSchema], default: [] }) documents: EventFile[];
+
   @Prop({ type: [EventAgendaItemSchema], default: [] })
   agendaItems: EventAgendaItem[];
 

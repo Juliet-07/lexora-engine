@@ -1,6 +1,7 @@
 import {
   NewsletterBrand,
   NewsletterTemplate,
+  missingTemplateFields,
   renderNewsletter,
   validateTemplateData,
 } from 'src/common/utils/newsletter/newsletter-template';
@@ -36,4 +37,4 @@ export function renderNewsletterHtml(
   });
 }
 
-export { validateTemplateData };
+export { validateTemplateData, missingTemplateFields };

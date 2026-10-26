@@ -223,7 +223,7 @@ export enum AlertCategory {
   LEGAL = 'Legal',
   FINANCIAL = 'Financial',
   COMPLIANCE = 'Compliance',
-  GOVERNMENT = 'Government',
+  OPERATIONS = 'Operations',
   SYSTEM = 'System',
   INDUSTRY = 'Industry',
   HEALTH_SAFETY = 'Health & Safety',

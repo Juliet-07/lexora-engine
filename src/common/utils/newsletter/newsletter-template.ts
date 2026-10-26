@@ -95,6 +95,90 @@ const safeImageUrl = (u: unknown) => {
   return /^https?:\/\//i.test(v) ? v : '';
 };
 
+// ── Free-form content blocks ────────────────────────────────────
+// Any template can carry `data.contentBlocks`: an ordered list of
+// text sections, images, pull quotes and section dividers that the
+// author drops between the template's own content — so a newsletter
+// can read text · image · quote · divider · text, instead of being
+// limited to one hero picture. Unknown / empty blocks are skipped;
+// image URLs are http(s) only.
+export type ContentBlock =
+  | { type: 'text'; heading?: string; text?: string }
+  | {
+      type: 'image';
+      url?: string;
+      alt?: string;
+      caption?: string;
+      linkUrl?: string;
+    }
+  | { type: 'quote'; text?: string; author?: string }
+  | { type: 'divider'; label?: string };
+
+export const MAX_CONTENT_BLOCKS = 40;
+
+function contentBlocksInner(raw: unknown): string {
+  const blocks: any[] = Array.isArray(raw)
+    ? raw.slice(0, MAX_CONTENT_BLOCKS)
+    : [];
+  return blocks
+    .map((b) => {
+      switch (b?.type) {
+        case 'text': {
+          const heading = String(b.heading ?? '').trim();
+          const text = String(b.text ?? '').trim();
+          if (!heading && !text) return '';
+          return `<div style="margin:0 0 18px;">
+            ${heading ? `<div style="font-size:16px;font-weight:700;color:${COLORS.ink};margin:0 0 6px;${FONT}">${esc(heading)}</div>` : ''}
+            ${text ? `<p style="font-size:13.5px;line-height:1.7;color:${COLORS.inkSoft};margin:0;${FONT}">${multiline(text)}</p>` : ''}
+          </div>`;
+        }
+        case 'image': {
+          const src = safeImageUrl(b.url);
+          if (!src) return '';
+          const img = `<img src="${esc(src)}" alt="${esc(b.alt || '')}" width="568" style="display:block;width:100%;max-width:568px;height:auto;border:0;border-radius:8px;" />`;
+          const link = safeUrl(b.linkUrl);
+          return `<div style="margin:0 0 20px;">
+            ${link !== '#' ? `<a href="${esc(link)}" style="text-decoration:none;">${img}</a>` : img}
+            ${b.caption ? `<div style="font-size:12px;line-height:1.5;color:${COLORS.soft};text-align:center;margin-top:7px;${FONT}">${esc(b.caption)}</div>` : ''}
+          </div>`;
+        }
+        case 'quote': {
+          const text = String(b.text ?? '').trim();
+          if (!text) return '';
+          return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 22px;">
+            <tr><td style="border-left:4px solid ${COLORS.accent};background:${COLORS.paper};border-radius:0 8px 8px 0;padding:16px 20px;">
+              <div style="font-size:17px;line-height:1.55;font-style:italic;color:${COLORS.ink};${FONT}">&ldquo;${multiline(text)}&rdquo;</div>
+              ${b.author ? `<div style="font-size:12px;color:${COLORS.soft};margin-top:8px;font-weight:600;${FONT}">&mdash; ${esc(b.author)}</div>` : ''}
+            </td></tr>
+          </table>`;
+        }
+        case 'divider': {
+          const label = String(b.label ?? '').trim();
+          return label
+            ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 22px;">
+                <tr>
+                  <td style="border-top:1px solid ${COLORS.line};line-height:0;font-size:0;">&nbsp;</td>
+                  <td width="1" style="white-space:nowrap;padding:0 14px;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:${COLORS.soft};font-weight:700;${FONT}">${esc(label)}</td>
+                  <td style="border-top:1px solid ${COLORS.line};line-height:0;font-size:0;">&nbsp;</td>
+                </tr>
+              </table>`
+            : `<div style="border-top:1px solid ${COLORS.line};margin:8px 0 24px;line-height:0;font-size:0;">&nbsp;</div>`;
+        }
+        default:
+          return '';
+      }
+    })
+    .join('');
+}
+
+// As table rows, for the templates whose body is a list of rows.
+function contentBlocksRows(raw: unknown): string {
+  const inner = contentBlocksInner(raw);
+  return inner
+    ? `<tr><td style="padding:22px 36px 4px;">${inner}</td></tr>`
+    : '';
+}
+
 function ctaButton(label: string, url: string, secondary = false) {
   const look = secondary
     ? `background:#ffffff;color:${COLORS.accent};border:1.5px solid ${COLORS.accent};padding:11.5px 26.5px;`
@@ -213,7 +297,8 @@ function renderRegulatoryAlert(
     ${checklistHtml ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">${checklistHtml}</table>` : ''}
     ${data.ctaUrl ? `<div style="text-align:center;padding:6px 0 24px;">${ctaButton(data.ctaLabel || 'Read the full advisory', data.ctaUrl)}</div>` : '<div style="padding-bottom:18px;"></div>'}
     ${data.fineText ? `<div style="font-size:12px;color:${COLORS.soft};text-align:center;padding-bottom:4px;${FONT}">${esc(data.fineText)}</div>` : ''}
-  </td></tr>`;
+  </td></tr>
+  ${contentBlocksRows(data.contentBlocks)}`;
 
   return wrap(body, previewText, brand, mode);
 }
@@ -261,6 +346,7 @@ function renderQuarterlyRoundup(
   ${imageRow(data.imageUrl, data.imageAlt)}
   <tr><td style="padding:26px 36px 6px;font-size:13.5px;line-height:1.7;color:${COLORS.inkSoft};${FONT}">${multiline(data.intro)}</td></tr>
   ${sectionsHtml}
+  ${contentBlocksRows(data.contentBlocks)}
   ${blogHtml}`;
 
   // The hero band replaces the normal wordmark header entirely
@@ -308,6 +394,7 @@ function renderArticleSpotlight(
     <p style="font-size:14px;line-height:1.75;color:${COLORS.inkSoft};margin:0 0 20px;${FONT}">${multiline(data.excerpt)}</p>
     ${data.ctaUrl ? `<div style="padding-bottom:26px;">${ctaButton(data.ctaLabel || 'Read the full article', data.ctaUrl)}</div>` : '<div style="padding-bottom:10px;"></div>'}
   </td></tr>
+  ${contentBlocksRows(data.contentBlocks)}
   ${moreHtml}`;
 
   return wrap(body, previewText, brand, mode);
@@ -343,6 +430,9 @@ export interface EventMessageOptions {
   calendarUrl?: string;
   calendarLabel?: string;
   footnote?: string;
+  // Pre-rendered free-form content blocks (see contentBlocksInner),
+  // placed between the message text and the facts.
+  blocksHtml?: string;
 }
 
 export function renderEventMessage(o: EventMessageOptions): string {
@@ -442,6 +532,7 @@ export function renderEventMessage(o: EventMessageOptions): string {
   ${imageRow(o.imageUrl, o.imageAlt)}
   <tr><td style="padding:26px 36px 6px;">
     ${paragraphs}
+    ${o.blocksHtml ?? ''}
     ${infoHtml}
     ${agendaHtml}
     ${buttonsHtml}
@@ -480,6 +571,7 @@ function renderEventInvite(
       : [],
     calendarUrl: data.calendarUrl,
     calendarLabel: data.calendarLabel,
+    blocksHtml: contentBlocksInner(data.contentBlocks),
   });
 }
 

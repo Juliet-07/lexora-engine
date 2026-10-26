@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
@@ -9,11 +13,10 @@ import {
   NewsletterCampaignStatus,
 } from '../schemas/newsletter-campaign.schema';
 import { NewsletterSubscriberService } from './newsletter-subscriber.service';
-import {
-  UpsertNewsletterCampaignDto,
-} from '../dtos/newsletter-campaign.dto';
+import { UpsertNewsletterCampaignDto } from '../dtos/newsletter-campaign.dto';
 import {
   renderNewsletterHtml,
+  missingTemplateFields,
   validateTemplateData,
 } from './newsletter-template-renderer';
 
@@ -112,6 +115,25 @@ export class NewsletterCampaignService {
     c.scheduledAt = null;
     await c.save();
     return c.toObject();
+  }
+
+  preview(dto: {
+    template: any;
+    previewText?: string;
+    templateData: Record<string, any>;
+  }) {
+    return {
+      html: renderNewsletterHtml(
+        dto.template,
+        dto.templateData ?? {},
+        dto.previewText ?? '',
+        this.unsubscribeUrl('preview'),
+      ),
+      missingFields: missingTemplateFields(
+        dto.template,
+        dto.templateData ?? {},
+      ),
+    };
   }
 
   async sendTest(id: string, to: string) {

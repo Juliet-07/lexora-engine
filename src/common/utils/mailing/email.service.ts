@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { inlineSocialIcons } from './templates/social-icons';
 import * as nodemailer from 'nodemailer';
 import {
   tenantWelcomeTemplate,
@@ -298,6 +299,24 @@ export class EmailService {
         rejectUnauthorized: process.env.SMTP_STARTTLS === 'true',
       },
     });
+
+    // Every outgoing email passes through here: embedded social icons
+    // become inline (cid:) attachments so they show in Gmail/Outlook
+    // without depending on any public URL.
+    const send = this.transporter.sendMail.bind(this.transporter);
+    this.transporter.sendMail = (opts: any, ...rest: any[]) => {
+      if (opts && typeof opts.html === 'string') {
+        const inl = inlineSocialIcons(opts.html);
+        if (inl.attachments.length) {
+          opts = {
+            ...opts,
+            html: inl.html,
+            attachments: [...(opts.attachments ?? []), ...inl.attachments],
+          };
+        }
+      }
+      return send(opts, ...rest);
+    };
   }
 
   async sendTenantWelcome(data: TenantWelcomeEmailData): Promise<void> {

@@ -52,6 +52,13 @@ export class NewsletterCampaignAdminController {
     return this.campaigns.getOne(id);
   }
 
+  // The newsletter exactly as subscribers will receive it, rendered
+  // from the (possibly unsaved) form — nothing is saved or sent.
+  @Post('campaigns/preview')
+  preview(@Body() dto: UpsertNewsletterCampaignDto) {
+    return this.campaigns.preview(dto);
+  }
+
   @Post('campaigns')
   create(@Body() dto: UpsertNewsletterCampaignDto) {
     return this.campaigns.create(dto);

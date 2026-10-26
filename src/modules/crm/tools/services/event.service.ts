@@ -38,6 +38,7 @@ import {
   eventBadge,
   eventInstants,
   googleCalendarUrl,
+  hasExternalAudience,
   hasResponded,
   isValidTimeZone,
   parseAgenda,
@@ -87,6 +88,15 @@ const ALLOWED_AUDIENCES: Record<EventMode, EventAudienceType[]> = {
     EventAudienceType.CLIENT,
     EventAudienceType.BOARD_MEMBER,
     EventAudienceType.EMPLOYEE,
+  ],
+  // Internal and external guests together — each follows the path of
+  // their own audience type (portal acknowledgement vs. registration
+  // link), see ctaLinkFor / buildInviteEmail.
+  [EventMode.BOTH]: [
+    EventAudienceType.CLIENT,
+    EventAudienceType.BOARD_MEMBER,
+    EventAudienceType.EMPLOYEE,
+    EventAudienceType.CONTACT,
   ],
 };
 
@@ -217,10 +227,8 @@ export class EventService {
       agendaItems: agendaOf(o),
       openRegistration: {
         enabled:
-          o.mode === EventMode.EXTERNAL &&
-          !!o.openRegistration &&
-          !!o.openToken,
-        token: o.mode === EventMode.EXTERNAL ? (o.openToken ?? null) : null,
+          hasExternalAudience(o.mode) && !!o.openRegistration && !!o.openToken,
+        token: hasExternalAudience(o.mode) ? (o.openToken ?? null) : null,
       },
       automation: resolveAutomation(o.automation),
       outcome: o.outcome ?? {},
@@ -322,7 +330,7 @@ export class EventService {
       doc.timezone = dto.timezone;
     }
     doc.registrationDeadline =
-      doc.mode === EventMode.EXTERNAL && dto.registrationDeadline
+      hasExternalAudience(doc.mode) && dto.registrationDeadline
         ? new Date(dto.registrationDeadline)
         : null;
   }
@@ -338,7 +346,7 @@ export class EventService {
       automation: { ...DEFAULT_AUTOMATION },
       // External events get a shareable registration link from the
       // start (the tenant can switch it off or rotate it).
-      ...(dto.mode === EventMode.EXTERNAL
+      ...(hasExternalAudience(dto.mode)
         ? { openToken: newToken(), openRegistration: true }
         : {}),
     });
@@ -346,7 +354,7 @@ export class EventService {
     this.log(
       created,
       'created',
-      `Event created as a ${created.mode === EventMode.EXTERNAL ? 'external' : 'in-house'} ${created.type.toLowerCase()} — added to your calendar`,
+      `Event created as ${created.mode === EventMode.BOTH ? 'an internal & external' : created.mode === EventMode.EXTERNAL ? 'an external' : 'an in-house'} ${created.type.toLowerCase()} — added to your calendar`,
     );
     await created.save();
     return this.present(created);
@@ -355,10 +363,10 @@ export class EventService {
   // Real content editing — allowed while Draft or Published (the
   // event's own details, like venue or agenda, can genuinely still
   // change after invitations go out); refused once Completed or
-  // Cancelled. `mode` itself never changes after creation — it
-  // decides which real audience and which attendance path (public
-  // registration vs. portal acknowledgement) every existing invite
-  // already follows.
+  // Cancelled. `mode` can only ever widen to "Both" — it decides
+  // which real audiences may be invited and which attendance path
+  // (public registration vs. portal acknowledgement) each invite
+  // follows.
   async update(tenantId: string, id: string, dto: UpdateEventDto) {
     const e = await this.model.findOne({
       _id: id,
@@ -372,6 +380,19 @@ export class EventService {
       throw new BadRequestException(
         'This event is completed or cancelled — it can no longer be edited',
       );
+    }
+    // The one allowed change of mode is widening to "Both": the
+    // organiser decides, after creating an internal-only or external-
+    // only event, to invite the other side too. Existing invites keep
+    // the path they already follow. (Narrowing is never allowed — it
+    // could orphan guests.)
+    if (dto.mode === EventMode.BOTH && e.mode !== EventMode.BOTH) {
+      e.mode = EventMode.BOTH;
+      if (!e.openToken) {
+        e.openToken = newToken();
+        e.openRegistration = true;
+      }
+      this.log(e, 'updated', 'Event opened to internal and external guests');
     }
     this.applyDto(e, dto);
     this.log(e, 'updated', 'Event details updated');
@@ -406,7 +427,10 @@ export class EventService {
     footer?: FooterExtras,
     preview = false,
   ) {
-    const requiresRegistration = e.mode === EventMode.EXTERNAL;
+    // Only contacts register through a link; internal guests confirm
+    // from their own portal — so this is per guest, not per event.
+    const requiresRegistration =
+      invite.audienceType === EventAudienceType.CONTACT;
     const ctaLink = this.ctaLinkFor(e, invite);
     const unsubscribeUrl =
       invite.audienceType === EventAudienceType.CONTACT
@@ -432,14 +456,22 @@ export class EventService {
 
   // What the organiser sees under "Invitation email" — the exact
   // email, rendered for a sample guest, nothing sent.
-  async previewInvitation(tenantId: string, id: string) {
+  async previewInvitation(
+    tenantId: string,
+    id: string,
+    audience?: 'internal' | 'external',
+  ) {
     const e = await this.getDoc(tenantId, id);
     const businessName = await resolveBusinessName(this.userModel, tenantId);
     const footer = await this.footerService.footerContext(tenantId);
     const audienceType =
-      e.mode === EventMode.EXTERNAL
-        ? EventAudienceType.CONTACT
-        : EventAudienceType.CLIENT;
+      audience === 'internal'
+        ? EventAudienceType.CLIENT
+        : audience === 'external'
+          ? EventAudienceType.CONTACT
+          : e.mode === EventMode.IN_HOUSE
+            ? EventAudienceType.CLIENT
+            : EventAudienceType.CONTACT;
     const { subject, html } = this.buildInviteEmail(
       businessName,
       e,
@@ -735,6 +767,22 @@ export class EventService {
       meetingLink: e.meetingLink,
       agenda: e.agenda,
       agendaItems: agendaOf(e),
+      // Slides / handouts, shared with people who took part once the
+      // event is over.
+      documents:
+        e.status === EventStatus.COMPLETED &&
+        (invite.status === EventInviteStatus.REGISTERED ||
+          invite.status === EventInviteStatus.ACKNOWLEDGED ||
+          invite.attended === true)
+          ? (e.documents ?? []).map((d: any) => ({
+              id: d.id,
+              name: d.name,
+              description: d.description || '',
+              url: d.url,
+              mimeType: d.mimeType || '',
+              size: d.size || 0,
+            }))
+          : [],
       host: e.host,
       capacity: e.capacity,
       registrationDeadline: e.registrationDeadline,
@@ -763,9 +811,9 @@ export class EventService {
   // (events created before this feature have none).
   async getOpenLink(tenantId: string, id: string) {
     const e = await this.getDoc(tenantId, id);
-    if (e.mode !== EventMode.EXTERNAL) {
+    if (!hasExternalAudience(e.mode)) {
       throw new BadRequestException(
-        'Only external events have a public registration link — in-house guests acknowledge from their own portal',
+        'Only events with external guests have a public registration link — in-house guests acknowledge from their own portal',
       );
     }
     if (!e.openToken) {
@@ -783,9 +831,9 @@ export class EventService {
     dto: SetOpenRegistrationDto,
   ) {
     const e = await this.getDoc(tenantId, id);
-    if (e.mode !== EventMode.EXTERNAL) {
+    if (!hasExternalAudience(e.mode)) {
       throw new BadRequestException(
-        'Only external events have a public registration link',
+        'Only events with external guests have a public registration link',
       );
     }
     if (
@@ -824,7 +872,7 @@ export class EventService {
   private async findByOpenToken(token: string) {
     if (!token) return null;
     const e = await this.model.findOne({ openToken: token });
-    if (!e || e.mode !== EventMode.EXTERNAL || !e.openRegistration) return null;
+    if (!e || !hasExternalAudience(e.mode) || !e.openRegistration) return null;
     return e;
   }
 
@@ -1045,7 +1093,7 @@ export class EventService {
     const e = await this.model.findOne({
       _id: eventId,
       tenantId: new Types.ObjectId(tenantId),
-      mode: EventMode.IN_HOUSE,
+      mode: { $in: [EventMode.IN_HOUSE, EventMode.BOTH] },
       status: EventStatus.PUBLISHED,
     });
     if (!e) throw new NotFoundException('Event not found');
@@ -1090,6 +1138,15 @@ export class EventService {
       // Extras the portal popup shows, same as the invitation email.
       inviteMessage: e.inviteMessage || '',
       inviteImageUrl: e.inviteImageUrl || '',
+      documents: (e.documents ?? []).map((d: any) => ({
+        id: d.id,
+        name: d.name,
+        description: d.description || '',
+        url: d.url,
+        mimeType: d.mimeType || '',
+        size: d.size || 0,
+        uploadedAt: d.uploadedAt,
+      })),
       status: e.status,
       myStatus: mine?.status ?? null,
       myRespondedAt: mine?.respondedAt ?? null,
@@ -1104,7 +1161,7 @@ export class EventService {
     const events = await this.model
       .find({
         tenantId: new Types.ObjectId(tenantId),
-        mode: EventMode.IN_HOUSE,
+        mode: { $in: [EventMode.IN_HOUSE, EventMode.BOTH] },
         status: { $in: [EventStatus.PUBLISHED, EventStatus.COMPLETED] },
         invites: {
           $elemMatch: { audienceType, sourceId: new Types.ObjectId(sourceId) },
@@ -1260,7 +1317,7 @@ export class EventService {
     e: { mode: EventMode | string },
     invite: { audienceType: EventAudienceType; token: string },
   ) {
-    return e.mode === EventMode.EXTERNAL
+    return invite.audienceType === EventAudienceType.CONTACT
       ? `${process.env.TENANT_APP_URL}/event-register/${invite.token}`
       : invite.audienceType === EventAudienceType.CLIENT
         ? `${process.env.CLIENT_APP_URL}/events`
@@ -1311,7 +1368,7 @@ export class EventService {
   // with the event's name and an entry on the contact's activity
   // timeline. Idempotent per invite via syncedToContact.
   async syncAttendeesToContacts(e: EventDocument): Promise<number> {
-    if (e.mode !== EventMode.EXTERNAL) return 0;
+    if (!hasExternalAudience(e.mode)) return 0;
     let n = 0;
     const tag = `Event: ${e.title}`.slice(0, 60);
     const when = new Date(e.date).toISOString().slice(0, 10);
@@ -1392,6 +1449,48 @@ export class EventService {
       'attendance',
       `Attendance recorded — ${stats.attendedInvites} of ${stats.responded || stats.invited} attended${stats.noShows ? `, ${stats.noShows} no-show${stats.noShows === 1 ? '' : 's'}` : ''}${synced ? `; ${synced} contact${synced === 1 ? '' : 's'} updated` : ''}`,
     );
+    await e.save();
+    return this.present(e);
+  }
+
+  // ── Documents shared after the event (slides, PDFs, …) ──────────
+  private static readonly MAX_DOCUMENTS = 25;
+
+  async addDocument(
+    tenantId: string,
+    id: string,
+    file: { name: string; url: string; mimeType: string; size: number },
+    description?: string,
+  ) {
+    const e = await this.getDoc(tenantId, id);
+    if (e.status === EventStatus.CANCELLED) {
+      throw new BadRequestException('A cancelled event cannot have documents');
+    }
+    if ((e.documents ?? []).length >= EventService.MAX_DOCUMENTS) {
+      throw new BadRequestException(
+        `An event can hold up to ${EventService.MAX_DOCUMENTS} documents`,
+      );
+    }
+    e.documents.push({
+      id: uid('doc'),
+      name: file.name,
+      description: (description ?? '').trim().slice(0, 300),
+      url: file.url,
+      mimeType: file.mimeType,
+      size: file.size,
+      uploadedAt: new Date(),
+    } as any);
+    this.log(e, 'updated', `Document added: ${file.name}`);
+    await e.save();
+    return this.present(e);
+  }
+
+  async removeDocument(tenantId: string, id: string, docId: string) {
+    const e = await this.getDoc(tenantId, id);
+    const doc = (e.documents ?? []).find((d) => d.id === docId);
+    if (!doc) throw new NotFoundException('Document not found');
+    e.documents = e.documents.filter((d) => d.id !== docId) as any;
+    this.log(e, 'updated', `Document removed: ${doc.name}`);
     await e.save();
     return this.present(e);
   }
@@ -1497,7 +1596,7 @@ export class EventService {
       date: new Date(e.date).toISOString().slice(0, 10),
       time: e.startTime || '09:00',
       layer: CalendarLayer.EVENT,
-      source: `${e.mode === EventMode.EXTERNAL ? 'External' : 'In-house'} ${String(e.type).toLowerCase()}`,
+      source: `${e.mode === EventMode.BOTH ? 'Internal & external' : e.mode === EventMode.EXTERNAL ? 'External' : 'In-house'} ${String(e.type).toLowerCase()}`,
       location: e.virtual ? 'Virtual' : e.location || '—',
       editable: false,
     }));

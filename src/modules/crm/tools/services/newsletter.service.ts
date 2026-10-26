@@ -1252,8 +1252,9 @@ export class AlertService implements OnModuleInit {
     private readonly footerService: EmailFooterService,
   ) {}
 
-  // The product owner retired the "Engineering" alert category and
-  // renamed "Cybersecurity" to "Technology". Alerts already stored
+  // The product owner retired the "Engineering" alert category,
+  // renamed "Cybersecurity" to "Technology" and "Government" to
+  // "Operations". Alerts already stored
   // under the old names would otherwise vanish from the category
   // filter (and fail enum validation the next time they are edited),
   // so they are moved over once at startup. Idempotent: a no-op once
@@ -1268,6 +1269,14 @@ export class AlertService implements OnModuleInit {
       if (res.modifiedCount)
         this.logger.log(
           `Moved ${res.modifiedCount} alert(s) from retired categories to Technology`,
+        );
+      const gov = await this.model.updateMany(
+        { category: 'Government' },
+        { $set: { category: 'Operations' } },
+      );
+      if (gov.modifiedCount)
+        this.logger.log(
+          `Renamed ${gov.modifiedCount} alert(s) from Government to Operations`,
         );
     } catch (err) {
       this.logger.warn(

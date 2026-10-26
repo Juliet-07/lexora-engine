@@ -6,8 +6,22 @@ import {
   Delete,
   Body,
   Param,
+  Query,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import { randomUUID } from 'crypto';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { extname, join } from 'path';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiConsumes,
+} from '@nestjs/swagger';
 import { EventService, EventAutomationService } from '../services';
 import {
   CreateEventDto,
@@ -27,6 +41,39 @@ import {
   UserType,
 } from 'src/common/interfaces/user-role.enum';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
+
+// Slides, handouts and reports shared after an event. Kept per tenant
+// under uploads/events and returned as an absolute URL.
+const EVENT_DOC_TYPES: Record<string, string> = {
+  'application/pdf': '.pdf',
+  'application/vnd.ms-powerpoint': '.ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+    '.pptx',
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+    '.docx',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'text/csv': '.csv',
+  'text/plain': '.txt',
+  'application/zip': '.zip',
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'video/mp4': '.mp4',
+};
+const eventDocConfig = {
+  storage: memoryStorage(),
+  limits: { fileSize: 30 * 1024 * 1024 },
+  fileFilter: (_req: any, file: Express.Multer.File, cb: any) =>
+    EVENT_DOC_TYPES[file.mimetype]
+      ? cb(null, true)
+      : cb(
+          new BadRequestException(
+            'Accepted: PDF, PowerPoint, Word, Excel, CSV, text, ZIP, PNG, JPG or MP4 (up to 30MB).',
+          ),
+          false,
+        ),
+};
 
 @ApiTags('CRM — Tools — Events')
 @ApiBearerAuth()
@@ -64,8 +111,13 @@ export class EventController {
     @Param('id') id: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @Query('audience') audience?: string,
   ) {
-    return this.service.previewInvitation(t || u, id);
+    return this.service.previewInvitation(
+      t || u,
+      id,
+      audience === 'internal' || audience === 'external' ? audience : undefined,
+    );
   }
 
   @Post()
@@ -235,6 +287,55 @@ export class EventController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.recordOutcome(t || u, id, dto);
+  }
+
+  @Post(':id/documents')
+  @UseInterceptors(FileInterceptor('file', eventDocConfig))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary:
+      'Attach a document (slides, PDF, …) — invited clients, board members and employees can open it from their portal',
+  })
+  uploadDocument(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('description') description: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    if (!file) throw new BadRequestException('No file was uploaded.');
+    const tenant = String(t || u);
+    const dir = join(process.cwd(), 'uploads', 'events', tenant);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const stored = `${randomUUID()}${EVENT_DOC_TYPES[file.mimetype] || extname(file.originalname)}`;
+    writeFileSync(join(dir, stored), file.buffer);
+    const base =
+      process.env.APP_URL || `http://localhost:${process.env.PORT || 3001}`;
+    // multer decodes multipart names as latin1; restore UTF-8 so
+    // "Q3 résumé.pdf" doesn't arrive mangled.
+    const name = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    return this.service.addDocument(
+      tenant,
+      id,
+      {
+        name,
+        url: `${base}/uploads/events/${tenant}/${stored}`,
+        mimeType: file.mimetype,
+        size: file.size,
+      },
+      description,
+    );
+  }
+
+  @Delete(':id/documents/:docId')
+  @ApiOperation({ summary: 'Remove an attached document' })
+  removeDocument(
+    @Param('id') id: string,
+    @Param('docId') docId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.removeDocument(t || u, id, docId);
   }
 
   @Post(':id/complete')

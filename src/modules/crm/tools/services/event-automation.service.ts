@@ -12,6 +12,7 @@ import {
   Event,
   EventDocument,
   EventAutomationStatus,
+  EventAudienceType,
   EventInviteStatus,
   EventMode,
   EventStatus,
@@ -33,6 +34,7 @@ import {
   buildSteps,
   computeStats,
   eventInstants,
+  hasExternalAudience,
   hasResponded,
   isNoShow,
   resolveAutomation,
@@ -361,7 +363,7 @@ export class EventAutomationService {
         tenantId,
         eventId: String(e._id),
         title: `Tomorrow: ${e.title}`,
-        description: `${stats.responded} of ${stats.invited} invitees have ${e.mode === EventMode.EXTERNAL ? 'registered' : 'confirmed'}. Starts ${e.startTime || 'tomorrow'} (${e.timezone}).`,
+        description: `${stats.responded} of ${stats.invited} invitees have ${e.mode === EventMode.EXTERNAL ? 'registered' : e.mode === EventMode.BOTH ? 'responded' : 'confirmed'}. Starts ${e.startTime || 'tomorrow'} (${e.timezone}).`,
       });
       return {
         status: EventAutomationStatus.SENT,
@@ -391,7 +393,7 @@ export class EventAutomationService {
     }
 
     if (step.key === 'post:crmsync') {
-      if (e.mode !== EventMode.EXTERNAL) return skipped('In-house event');
+      if (!hasExternalAudience(e.mode)) return skipped('In-house event');
       const n = await this.eventService.syncAttendeesToContacts(e);
       await e.save();
       return n
@@ -419,15 +421,22 @@ export class EventAutomationService {
         e.capacity > 0 &&
         e.invites.filter((i) => i.status === EventInviteStatus.REGISTERED)
           .length >= e.capacity;
+      // Registration only applies to contacts; internal guests are
+      // never "closed out" (they confirm from their portal).
       const closed =
-        e.mode === EventMode.EXTERNAL &&
+        hasExternalAudience(e.mode) &&
         (full ||
           (!!e.registrationDeadline &&
             e.registrationDeadline.getTime() < now.getTime()));
       const targets = e.invites.filter((i) => {
         if (!i.sentAt || i.status === EventInviteStatus.DECLINED) return false;
         // Registration closed → no point nagging the people who haven't.
-        if (closed && !hasResponded(i.status)) return false;
+        if (
+          closed &&
+          i.audienceType === EventAudienceType.CONTACT &&
+          !hasResponded(i.status)
+        )
+          return false;
         return true;
       });
       return this.sendBatch(targets, (inv) =>
@@ -436,7 +445,7 @@ export class EventAutomationService {
           recipientName: inv.name,
           leadLabel: lead,
           responded: hasResponded(inv.status),
-          requiresRegistration: e.mode === EventMode.EXTERNAL,
+          requiresRegistration: inv.audienceType === EventAudienceType.CONTACT,
           ctaLink: this.eventService.ctaLinkFor(e, inv),
           meetingLink: e.virtual ? e.meetingLink : null,
         }),
