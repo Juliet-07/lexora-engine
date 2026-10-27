@@ -682,10 +682,15 @@ export class TrialBalanceService {
       .map((a) => {
         const net = balanceMap.get(a.code) ?? 0;
         if (Math.abs(net) < 0.01) return null;
-        const isDebitNormal =
-          a.type === AccountType.ASSET || a.type === AccountType.EXPENSE;
-        const debit = isDebitNormal ? Math.max(0, net) : Math.max(0, -net);
-        const credit = isDebitNormal ? Math.max(0, -net) : Math.max(0, net);
+        // A trial balance lists each account's closing balance on the
+        // side it actually sits — a net debit in the Debit column, a net
+        // credit in the Credit column — whatever the account's type.
+        // (An account's "normal" side only tells you which side to
+        // expect; it must not decide where the balance is printed, or a
+        // liability with its usual credit balance lands in Debit and the
+        // two totals can never agree.)
+        const debit = Math.max(0, net);
+        const credit = Math.max(0, -net);
         return { code: a.code, name: a.name, type: a.type, debit, credit };
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);

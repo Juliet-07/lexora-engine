@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Body, Param, Query, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Body,
+  Param,
+  Query,
+  Res,
+} from '@nestjs/common';
 import { Response } from 'express';
 import {
   ApiTags,
@@ -7,7 +16,12 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { ManagementReportingService } from '../services';
-import { SaveExecutiveSummaryDto, EmailManagementReportDto } from '../dtos';
+import {
+  SaveExecutiveSummaryDto,
+  EmailManagementReportDto,
+  EmailBoardReportDto,
+  SaveReportContentDto,
+} from '../dtos';
 import { ReportPeriodType } from '../schemas';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
@@ -43,6 +57,37 @@ export class ManagementReportingController {
       periodKey,
       displayCurrency,
     );
+  }
+
+  @Get('pack')
+  @ApiQuery({ name: 'displayCurrency', required: false })
+  @ApiOperation({
+    summary:
+      'Everything the Finance → Report page shows for one period — overview, P&L, balance sheet, cash flow, trial balance, aged receivables/payables, budget vs actuals, ratios and the management report content',
+  })
+  getPack(
+    @Param('periodType') periodType: ReportPeriodType,
+    @Param('periodKey') periodKey: string,
+    @Query('displayCurrency') displayCurrency: string | undefined,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getPack(t || u, periodType, periodKey, displayCurrency);
+  }
+
+  @Put('content')
+  @ApiOperation({
+    summary:
+      "Save the tenant's own part of the management report — CEO/MD message, section commentary, risks and actions (each call saves only the parts it sends)",
+  })
+  saveContent(
+    @Param('periodType') periodType: ReportPeriodType,
+    @Param('periodKey') periodKey: string,
+    @Body() dto: SaveReportContentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.saveContent(t || u, periodType, periodKey, dto, 'You');
   }
 
   @Post('executive-summary')
@@ -107,6 +152,26 @@ export class ManagementReportingController {
       dto.displayCurrency,
       dto.recipientName,
       dto.recipientEmail,
+      dto.subject,
+    );
+  }
+
+  @Post('email-board')
+  @ApiOperation({
+    summary: 'Email the full report PDF to every active board member',
+  })
+  emailBoard(
+    @Param('periodType') periodType: ReportPeriodType,
+    @Param('periodKey') periodKey: string,
+    @Body() dto: EmailBoardReportDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.emailReportToBoard(
+      t || u,
+      periodType,
+      periodKey,
+      dto.displayCurrency,
       dto.subject,
     );
   }

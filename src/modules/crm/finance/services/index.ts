@@ -8,6 +8,7 @@ export * from './management-reporting.service';
 export * from './installment-auto-send.service';
 export * from './invoice.service';
 export * from './purchases.service';
+export * from './report-pack.service';
 export * from './sales.service';
 export * from './tax.service';
 export * from './tax-obligation-reminder.service';

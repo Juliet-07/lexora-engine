@@ -28,6 +28,11 @@ import { ValuationMethod, IfrsLevel } from '../schemas';
 import { InterestTreatment } from '../schemas';
 import { ClientInvoiceAction } from '../schemas';
 import { ExpenseCategory, BillPayeeType } from '../schemas';
+import {
+  CeoMessageStatus,
+  ReportActionPriority,
+  ReportSeverity,
+} from '../schemas';
 
 // ── Invoices ──────────────────────────────────────────────────
 
@@ -762,4 +767,68 @@ export class EmailManagementReportDto {
   @ApiProperty() @IsEmail() recipientEmail: string;
   @ApiProperty() @IsString() subject: string;
   @ApiPropertyOptional() @IsOptional() @IsString() displayCurrency?: string;
+}
+
+export class EmailBoardReportDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() subject?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() displayCurrency?: string;
+}
+
+export class ReportCommentaryDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() ceoMessage?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() revenue?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() costs?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() cashflow?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() receivables?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() payables?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() budget?: string;
+}
+
+export class ReportRiskDto {
+  @ApiProperty({ enum: ReportSeverity })
+  @IsEnum(ReportSeverity)
+  severity: ReportSeverity;
+  @ApiProperty() @IsString() text: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() impact?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() likelihood?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() mitigation?: string;
+}
+
+export class ReportActionDto {
+  @ApiProperty({ enum: ReportActionPriority })
+  @IsEnum(ReportActionPriority)
+  priority: ReportActionPriority;
+  @ApiProperty() @IsString() text: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() due?: string;
+}
+
+// Every part is optional: each tab of the report saves only what it
+// owns (one section's commentary, the risk register, or the actions).
+export class SaveReportContentDto {
+  @ApiPropertyOptional({ type: ReportCommentaryDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ReportCommentaryDto)
+  commentary?: ReportCommentaryDto;
+
+  @ApiPropertyOptional({ enum: CeoMessageStatus })
+  @IsOptional()
+  @IsEnum(CeoMessageStatus)
+  ceoMessageStatus?: CeoMessageStatus;
+
+  @ApiPropertyOptional({ type: [ReportRiskDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReportRiskDto)
+  risks?: ReportRiskDto[];
+
+  @ApiPropertyOptional({ type: [ReportActionDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReportActionDto)
+  actions?: ReportActionDto[];
 }

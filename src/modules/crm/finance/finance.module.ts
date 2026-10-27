@@ -166,6 +166,7 @@ import {
   LpReportingService,
   BudgetService,
   ManagementReportingService,
+  ReportPackService,
 } from './services';
 import {
   WriteOffController,
@@ -344,6 +345,7 @@ import {
     LpReportingService,
     BudgetService,
     ManagementReportingService,
+    ReportPackService,
     EmailService,
   ],
   controllers: [
