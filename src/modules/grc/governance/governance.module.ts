@@ -21,6 +21,22 @@ import {
   BoardEvaluationSubmissionSchema,
   OrgStructureNode,
   OrgStructureNodeSchema,
+  ShareClass,
+  ShareClassSchema,
+  ShareTransaction,
+  ShareTransactionSchema,
+  VestingSchedule,
+  VestingScheduleSchema,
+  ConvertibleInstrument,
+  ConvertibleInstrumentSchema,
+  ShareholderDocument,
+  ShareholderDocumentSchema,
+  ShareholderDocAccessLog,
+  ShareholderDocAccessLogSchema,
+  IpAsset,
+  IpAssetSchema,
+  RegisteredCharge,
+  RegisteredChargeSchema,
 } from './schemas';
 import {
   MeetingService,
@@ -34,6 +50,9 @@ import {
   ResolutionService,
   OrgStructureService,
   BoardEvaluationService,
+  CapTableService,
+  IpAssetService,
+  RegisteredChargeService,
 } from './services';
 import {
   MeetingController,
@@ -44,6 +63,9 @@ import {
   BoardTrainingController,
   OrgStructureController,
   BoardEvaluationController,
+  CapTableController,
+  IpAssetController,
+  RegisteredChargeController,
 } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas';
 import { EmailService } from 'src/common/utils/mailing/email.service';
@@ -54,6 +76,11 @@ import {
   TenantContractTemplate,
   TenantContractTemplateSchema,
 } from 'src/modules/crm/tools/schemas';
+import { ExchangeRateService } from 'src/modules/hr/services/exchange-rate.service';
+import {
+  ExchangeRateSnapshot,
+  ExchangeRateSnapshotSchema,
+} from 'src/modules/hr/schemas';
 import { SuperAdminModule } from 'src/modules/super_admin/super_admin.module';
 import {
   PolicyTemplate,
@@ -107,6 +134,29 @@ import {
         name: OrgStructureNode.name,
         schema: OrgStructureNodeSchema,
       },
+      // Cap table, IP register and register of charges (Oct 2026).
+      { name: ShareClass.name, schema: ShareClassSchema },
+      { name: ShareTransaction.name, schema: ShareTransactionSchema },
+      { name: VestingSchedule.name, schema: VestingScheduleSchema },
+      {
+        name: ConvertibleInstrument.name,
+        schema: ConvertibleInstrumentSchema,
+      },
+      { name: ShareholderDocument.name, schema: ShareholderDocumentSchema },
+      {
+        name: ShareholderDocAccessLog.name,
+        schema: ShareholderDocAccessLogSchema,
+      },
+      { name: IpAsset.name, schema: IpAssetSchema },
+      { name: RegisteredCharge.name, schema: RegisteredChargeSchema },
+      // The cap table shows values in a chosen display currency, so it
+      // needs FX rates — provided directly here with its snapshot model
+      // (same direct-registration convention as above) rather than
+      // importing HrModule's service.
+      {
+        name: ExchangeRateSnapshot.name,
+        schema: ExchangeRateSnapshotSchema,
+      },
     ]),
     // For PlatformContractTemplateService only — SuperAdminModule has
     // no path back into GovernanceModule/ComplianceModule/ToolsModule,
@@ -126,6 +176,10 @@ import {
     ResolutionService,
     OrgStructureService,
     BoardEvaluationService,
+    CapTableService,
+    IpAssetService,
+    RegisteredChargeService,
+    ExchangeRateService,
   ],
   controllers: [
     MeetingController,
@@ -137,6 +191,9 @@ import {
     ResolutionController,
     OrgStructureController,
     BoardEvaluationController,
+    CapTableController,
+    IpAssetController,
+    RegisteredChargeController,
   ],
   exports: [
     MeetingService,

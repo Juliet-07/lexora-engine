@@ -29,8 +29,25 @@ export class OrgStructureNode {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   tenantId: Types.ObjectId;
 
+  // Primary role — always equal to types[0]. Kept so everything that
+  // already reads `type` (older clients, exports) keeps working.
   @Prop({ enum: OrgStructureNodeType, required: true })
   type: OrgStructureNodeType;
+
+  // Every role this node holds. One person can be several things at
+  // once — a shareholder AND a board member, a director who is also a
+  // department head — so a node carries a SET of roles instead of a
+  // single type. Statistics count each role separately (a
+  // shareholder-director counts once under Shareholder and once under
+  // Board). OrgStructureService#onModuleInit backfills `types` from
+  // `type` on documents created before this field existed.
+  @Prop({ type: [String], enum: OrgStructureNodeType, default: [] })
+  types: OrgStructureNodeType[];
+
+  // Optional contact — lets the cap table and shareholder documents
+  // refer to the person, and is shown on the shareholder record.
+  @Prop({ type: String, default: null })
+  email: string | null;
 
   // A person's name, a department name, "Board of Directors", a
   // shareholder's name — whatever the tenant wants this box to say.

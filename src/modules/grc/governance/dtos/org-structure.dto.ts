@@ -6,13 +6,34 @@ import {
   IsMongoId,
   IsIn,
   IsArray,
+  ArrayMinSize,
+  IsEmail,
 } from 'class-validator';
 import { OrgStructureNodeType } from '../schemas';
 
 export class CreateOrgStructureNodeDto {
-  @ApiProperty({ enum: OrgStructureNodeType })
+  @ApiPropertyOptional({
+    enum: OrgStructureNodeType,
+    isArray: true,
+    description:
+      'Every role this node holds (one person can be a shareholder and a ' +
+      'board member). The first one is the primary role.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsEnum(OrgStructureNodeType, { each: true })
+  types?: OrgStructureNodeType[];
+
+  @ApiPropertyOptional({
+    enum: OrgStructureNodeType,
+    description: 'Single-role shorthand — use `types` for several roles.',
+  })
+  @IsOptional()
   @IsEnum(OrgStructureNodeType)
-  type: OrgStructureNodeType;
+  type?: OrgStructureNodeType;
+
+  @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
 
   @ApiProperty() @IsString() name: string;
 
@@ -32,10 +53,21 @@ export class CreateOrgStructureNodeDto {
 }
 
 export class UpdateOrgStructureNodeDto {
+  @ApiPropertyOptional({ enum: OrgStructureNodeType, isArray: true })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsEnum(OrgStructureNodeType, { each: true })
+  types?: OrgStructureNodeType[];
+
   @ApiPropertyOptional({ enum: OrgStructureNodeType })
   @IsOptional()
   @IsEnum(OrgStructureNodeType)
   type?: OrgStructureNodeType;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  email?: string | null;
 
   @ApiPropertyOptional() @IsOptional() @IsString() name?: string;
 

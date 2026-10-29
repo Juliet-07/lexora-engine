@@ -9,7 +9,13 @@ import { Model, Types } from 'mongoose';
 import {
   OrgStructureNode,
   OrgStructureNodeDocument,
+  OrgStructureNodeType,
 } from '../schemas/org-structure-node.schema';
+import {
+  ShareTransaction,
+  ShareTransactionDocument,
+} from '../schemas/ownership.schema';
+import { sharesHeldBy } from '../utils/ledger.util';
 import {
   CreateOrgStructureNodeDto,
   UpdateOrgStructureNodeDto,
@@ -18,6 +24,9 @@ import {
 export interface OrgStructureTreeNode {
   id: string;
   type: string;
+  // Every role the node holds (type is types[0]).
+  types: string[];
+  email: string | null;
   name: string;
   subtitle: string | null;
   parentIds: string[];
@@ -49,7 +58,34 @@ export class OrgStructureService implements OnModuleInit {
   constructor(
     @InjectModel(OrgStructureNode.name)
     private readonly model: Model<OrgStructureNodeDocument>,
+    @InjectModel(ShareTransaction.name)
+    private readonly txModel: Model<ShareTransactionDocument>,
   ) {}
+
+  // Normalises a requested role list: de-duplicated, at least one
+  // role, primary (`type`) = first. Accepts the single-role shorthand.
+  private resolveTypes(
+    types?: OrgStructureNodeType[],
+    type?: OrgStructureNodeType,
+  ): OrgStructureNodeType[] {
+    // `types` wins when given; `type` alone is the legacy single-role call.
+    if (types?.length) return [...new Set(types)];
+    return type ? [type] : [];
+  }
+
+  private cleanEmail(email?: string | null): string | null {
+    const v = (email ?? '').trim();
+    if (!v) return null;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+      throw new BadRequestException('Enter a valid email address.');
+    }
+    return v;
+  }
+
+  private async sharesHeld(tenantId: Types.ObjectId, nodeId: string) {
+    const txs = await this.txModel.find({ tenantId }).lean();
+    return sharesHeldBy(txs as any[], nodeId);
+  }
 
   // One-time, idempotent backfill from the old single-parent field
   // (parentId) to the new parentIds array — safe to run on every
@@ -60,6 +96,18 @@ export class OrgStructureService implements OnModuleInit {
   // }` on some Mongoose versions and throws without it, so this is
   // the version-safe way to do a conditional field rename.
   async onModuleInit() {
+    // Roles backfill (Oct 2026 multi-role): a node created before
+    // `types` existed holds just its one `type`.
+    const untyped = await this.model
+      .find({ $or: [{ types: { $exists: false } }, { types: { $size: 0 } }] })
+      .select('type')
+      .lean();
+    await Promise.all(
+      untyped.map((n) =>
+        this.model.updateOne({ _id: n._id }, { $set: { types: [n.type] } }),
+      ),
+    );
+
     const legacyNodes = await this.model
       .find({ parentIds: { $exists: false } })
       .select('parentId')
@@ -115,6 +163,8 @@ export class OrgStructureService implements OnModuleInit {
       return {
         id,
         type: n.type,
+        types: n.types?.length ? n.types : [n.type],
+        email: n.email ?? null,
         name: n.name,
         subtitle: n.subtitle ?? null,
         parentIds: (n.parentIds ?? []).map((p) => p.toString()),
@@ -128,8 +178,11 @@ export class OrgStructureService implements OnModuleInit {
       build(n, null, new Set()),
     );
     const typeCounts: Record<string, number> = {};
+    // A node holding several roles counts once under each of them.
     for (const n of nodes) {
-      typeCounts[n.type] = (typeCounts[n.type] ?? 0) + 1;
+      for (const t of n.types?.length ? n.types : [n.type]) {
+        typeCounts[t] = (typeCounts[t] ?? 0) + 1;
+      }
     }
 
     return {
@@ -166,9 +219,16 @@ export class OrgStructureService implements OnModuleInit {
       parentIds: parentIds[0] ?? { $size: 0 },
     });
 
+    const types = this.resolveTypes(dto.types, dto.type);
+    if (!types.length) {
+      throw new BadRequestException('Choose at least one role for this node.');
+    }
+
     return this.model.create({
       tenantId: tId,
-      type: dto.type,
+      type: types[0],
+      types,
+      email: this.cleanEmail(dto.email),
       name: dto.name,
       subtitle: dto.subtitle ?? null,
       parentIds,
@@ -181,7 +241,28 @@ export class OrgStructureService implements OnModuleInit {
     const node = await this.model.findOne({ _id: id, tenantId: tId });
     if (!node) throw new NotFoundException('Node not found');
 
-    if (dto.type !== undefined) node.type = dto.type as any;
+    if (dto.types !== undefined || dto.type !== undefined) {
+      const types = this.resolveTypes(dto.types, dto.type);
+      if (!types.length) {
+        throw new BadRequestException(
+          'Choose at least one role for this node.',
+        );
+      }
+      const hadShareholder = (
+        node.types?.length ? node.types : [node.type]
+      ).includes(OrgStructureNodeType.SHAREHOLDER);
+      if (hadShareholder && !types.includes(OrgStructureNodeType.SHAREHOLDER)) {
+        const held = await this.sharesHeld(tId, id);
+        if (held > 0) {
+          throw new BadRequestException(
+            `${node.name} still holds ${held.toLocaleString('en-US')} shares on the cap table. Transfer or buy back those shares before removing the Shareholder role.`,
+          );
+        }
+      }
+      node.types = types as any;
+      node.type = types[0];
+    }
+    if (dto.email !== undefined) node.email = this.cleanEmail(dto.email);
     if (dto.name !== undefined) node.name = dto.name;
     if (dto.subtitle !== undefined) node.subtitle = dto.subtitle;
 
@@ -291,6 +372,37 @@ export class OrgStructureService implements OnModuleInit {
     const tId = new Types.ObjectId(tenantId);
     const node = await this.model.findOne({ _id: id, tenantId: tId });
     if (!node) throw new NotFoundException('Node not found');
+
+    // Never delete someone who still holds shares — that would make
+    // the cap table stop adding up. Works out everything this removal
+    // would take with it (the node, plus — on cascade — nodes left
+    // with no remaining parent) and checks each one's holdings.
+    const all = await this.model.find({ tenantId: tId }).lean();
+    const doomed = new Set<string>([id]);
+    if (cascade) {
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const n of all) {
+          const nid = (n._id as any).toString();
+          if (doomed.has(nid) || !n.parentIds?.length) continue;
+          if (n.parentIds.every((p) => doomed.has(p.toString()))) {
+            doomed.add(nid);
+            grew = true;
+          }
+        }
+      }
+    }
+    const txs = (await this.txModel.find({ tenantId: tId }).lean()) as any[];
+    for (const d of doomed) {
+      const held = sharesHeldBy(txs, d);
+      if (held > 0) {
+        const who = all.find((n) => (n._id as any).toString() === d);
+        throw new BadRequestException(
+          `${who?.name ?? 'This node'} still holds ${held.toLocaleString('en-US')} shares on the cap table. Transfer or buy back those shares before removing it.`,
+        );
+      }
+    }
 
     const childCount = await this.model.countDocuments({
       tenantId: tId,
