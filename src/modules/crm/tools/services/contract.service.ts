@@ -84,6 +84,12 @@ import {
 
 const DEFAULT_SIGNING_EXPIRY_HOURS = 168; // 7 days
 
+// Stages in which a contract is in force and can be formally amended.
+const AMENDABLE_STAGES: ContractStage[] = [
+  ContractStage.ACTIVE,
+  ContractStage.RENEWAL,
+];
+
 @Injectable()
 export class CommentService {
   constructor(
@@ -551,6 +557,18 @@ export class ContractService {
       tenantId: new Types.ObjectId(tenantId),
     });
     if (!c) throw new NotFoundException('Contract not found');
+    // An amendment is a formal change to a contract that is already in
+    // force. Before execution the document is simply edited (editor,
+    // negotiation rounds); once it has expired or been terminated there is
+    // nothing left to vary. This also keeps `newBody` — which replaces the
+    // document — from being a way round the signed-contract edit lock.
+    if (!AMENDABLE_STAGES.includes(c.stage)) {
+      throw new BadRequestException(
+        c.stage === ContractStage.EXPIRY_TERMINATION
+          ? 'This contract has expired or been terminated, so it can no longer be amended.'
+          : `Amendments apply to a contract that is in force. This one is at "${c.stage}" — edit it in the editor or log a negotiation round instead, and amend it once it is Active.`,
+      );
+    }
     const ref = `AMD-${String(c.amendments.length + 1).padStart(2, '0')}`;
     c.amendments.push({ ref, at: new Date(), summary: dto.summary } as any);
     if (dto.newBody != null) {
