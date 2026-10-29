@@ -9,6 +9,7 @@ import {
   IsNumber,
   IsBoolean,
   IsArray,
+  IsNotEmpty,
   ValidateNested,
 } from 'class-validator';
 import {
@@ -25,6 +26,12 @@ import {
   AgendaItemType,
 } from '../schemas';
 import { Type } from 'class-transformer';
+
+export class AddAttendeeDto {
+  @ApiProperty() @IsString() @IsNotEmpty() name: string;
+  @ApiProperty() @IsEmail() email: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() role?: string;
+}
 
 export class CreateMeetingDto {
   @ApiProperty() @IsString() title: string;
@@ -45,12 +52,17 @@ export class CreateMeetingDto {
   platform?: MeetingPlatform;
   @ApiProperty() @IsString() chair: string;
   @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
-}
-
-export class AddAttendeeDto {
-  @ApiProperty() @IsString() name: string;
-  @ApiProperty() @IsEmail() email: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() role?: string;
+  // Oct 2026: an Ad-hoc meeting has no board/committee roster to draw
+  // from, so the tenant writes the attendee list (name + email, optional
+  // role) while creating it. Notices, the board pack, minutes and
+  // reminders all go to this list. Rejected for Board/Committee, whose
+  // attendees are automatic.
+  @ApiPropertyOptional({ type: [AddAttendeeDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AddAttendeeDto)
+  attendees?: AddAttendeeDto[];
 }
 
 export class SubmitAckDocumentDto {

@@ -155,6 +155,15 @@ export class MeetingService {
     tenantId: string,
     dto: CreateMeetingDto,
   ): Promise<{ name: string; email: string; role: string }[]> {
+    if (
+      dto.attendees?.length &&
+      (dto.type === MeetingAudienceType.BOARD ||
+        dto.type === MeetingAudienceType.COMMITTEE)
+    ) {
+      throw new BadRequestException(
+        `Attendees for a ${dto.type} meeting are automatic — they can't be listed by hand.`,
+      );
+    }
     if (dto.type === MeetingAudienceType.BOARD) {
       const boardMembers = await this.boardMemberService.getAll(tenantId);
       return (boardMembers as any[])
@@ -176,7 +185,32 @@ export class MeetingService {
         role: m.role,
       }));
     }
-    return [];
+    // Executive / Ad-hoc / AGM / EGM — no roster to draw from, so the
+    // attendee list the tenant wrote on the form is used as-is.
+    return this.cleanManualAttendees(dto.attendees);
+  }
+
+  // Trims, lower-cases emails and refuses a list that names the same
+  // email twice — each email gets one acknowledgement/RSVP token, so a
+  // duplicate would silently collapse into one recipient.
+  private cleanManualAttendees(
+    list: { name: string; email: string; role?: string }[] | undefined,
+  ): { name: string; email: string; role: string }[] {
+    const seen = new Set<string>();
+    return (list ?? []).map((a) => {
+      const name = (a.name ?? '').trim();
+      const email = (a.email ?? '').trim().toLowerCase();
+      if (!name) {
+        throw new BadRequestException('Every attendee needs a name.');
+      }
+      if (seen.has(email)) {
+        throw new BadRequestException(
+          `${email} is on the attendee list more than once.`,
+        );
+      }
+      seen.add(email);
+      return { name, email, role: (a.role ?? '').trim() };
+    });
   }
 
   async getAll(tenantId: string) {
@@ -258,9 +292,15 @@ export class MeetingService {
   async addAttendee(tenantId: string, id: string, dto: AddAttendeeDto) {
     const meeting = await this.getById(tenantId, id);
     this.assertManualAttendeesAllowed(meeting);
+    const email = dto.email.trim().toLowerCase();
+    if (meeting.attendees.some((a) => a.email.toLowerCase() === email)) {
+      throw new BadRequestException(
+        `${email} is already on this meeting's attendee list.`,
+      );
+    }
     meeting.attendees.push({
-      name: dto.name,
-      email: dto.email,
+      name: dto.name.trim(),
+      email,
       role: dto.role ?? '',
     } as any);
     meeting.markModified('attendees');
