@@ -21,6 +21,107 @@ export function renderContractBody(
   });
 }
 
+// ─────────────────────────────────────────────────────────────
+// Marked rendering (CRM / vendor / KYC contracts).
+//
+// renderContractBody() above bakes a value into the text and forgets
+// where it came from, so a field can never be changed again without
+// re-generating the contract (or hunting for the text by eye). The
+// marked variant keeps the trail: every field is wrapped in an element
+// that remembers its key —
+//
+//   <span data-merge="clientJurisdiction">Rwanda</span>
+//   <span data-merge="commencementDate" data-empty="true">{{commencementDate}}</span>
+//
+// — which is what the editor's Merge Fields panel reads to list the
+// fields in a document and to change a value everywhere it appears,
+// without touching anything else the tenant has hand-edited. A field
+// with no value is shown as its literal {{token}} (highlighted in the
+// editor) rather than silently blank, the same "make the gap visible"
+// rule as renderContractBody; a token the vocabulary doesn't know is
+// treated the same way, so a platform template's own custom fields
+// become fillable too.
+//
+// The wrapper carries no styling, so the signing page, the PDF and the
+// emailed copy look exactly as before.
+//
+// Block-level values (the scope-of-work <ol>) go in a <div> — a <span>
+// containing a list is invalid and gets torn apart when the browser
+// re-parses it.
+// ─────────────────────────────────────────────────────────────
+const HTML_VALUE_FIELDS = new Set(['scopeOfWork']);
+
+export function escapeMergeValue(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function mergeValueHtml(key: string, value: string): string {
+  return HTML_VALUE_FIELDS.has(key) ? value : escapeMergeValue(value);
+}
+
+function wrapMergeField(key: string, value: string): string {
+  const tag = HTML_VALUE_FIELDS.has(key) ? 'div' : 'span';
+  return value.trim()
+    ? `<${tag} data-merge="${key}">${mergeValueHtml(key, value)}</${tag}>`
+    : `<${tag} data-merge="${key}" data-empty="true">{{${key}}}</${tag}>`;
+}
+
+// One pass over the body. Two things can be matched:
+//  1. a field element rendered earlier — left alone unless it is still
+//     showing its {{token}} and a value now exists for it, in which case
+//     only the token text inside it is replaced (so any formatting the
+//     tenant applied around it survives);
+//  2. a bare {{token}} — rendered, wrapped.
+// Safe to run repeatedly: filled fields are never touched again.
+const MARKED_OR_BARE =
+  /<(span|div)\b([^>]*?)\sdata-merge="(\w+)"([^>]*)>([\s\S]*?)<\/\1>|\{\{(\w+)\}\}/g;
+
+export function renderContractBodyMarked(
+  body: string,
+  fields: Record<string, string>,
+): string {
+  return body.replace(
+    MARKED_OR_BARE,
+    (
+      match: string,
+      tag: string | undefined,
+      before: string,
+      markedKey: string,
+      after: string,
+      inner: string,
+      bareKey: string | undefined,
+      offset: number,
+      whole: string,
+    ) => {
+      if (tag) {
+        const stillToken = /^\s*\{\{\w+\}\}\s*$/.test(
+          inner.replace(/<[^>]*>/g, ''),
+        );
+        const value = fields[markedKey];
+        if (!stillToken || value === undefined || !String(value).trim()) {
+          return match;
+        }
+        const open = `<${tag}${before} data-merge="${markedKey}"${after}>`
+          .replace(/\sdata-empty="[^"]*"/, '')
+          .replace(/\sdata-empty(?=[\s>])/, '');
+        return `${open}${inner.replace(/\{\{\w+\}\}/, () => mergeValueHtml(markedKey, String(value)))}</${tag}>`;
+      }
+      const key = bareKey as string;
+      // A token sitting inside a tag's own attribute (href="{{x}}")
+      // can't hold an element — substitute plain text there.
+      const lastOpen = whole.lastIndexOf('<', offset);
+      const lastClose = whole.lastIndexOf('>', offset);
+      if (lastOpen > lastClose) {
+        return key in fields ? escapeMergeValue(String(fields[key])) : match;
+      }
+      return wrapMergeField(
+        key,
+        key in fields ? String(fields[key] ?? '') : '',
+      );
+    },
+  );
+}
+
 // Scans a (possibly already partly-rendered) body for any `{{token}}`
 // still left literal — used to warn a tenant right after generation,
 // and by the resync action below, rather than making them spot gaps

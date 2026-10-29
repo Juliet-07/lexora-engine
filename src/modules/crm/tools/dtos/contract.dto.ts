@@ -9,6 +9,7 @@ import {
   IsMongoId,
   IsEmail,
   IsArray,
+  IsObject,
   ValidateNested,
   Min,
 } from 'class-validator';
@@ -268,6 +269,16 @@ export class TenantRespondToCommentDto {
 export class EditRenderedBodyDto {
   @ApiProperty() @IsString() renderedBody: string;
   @ApiPropertyOptional() @IsOptional() @IsString() changeNote?: string;
+  // Merge-field values changed in the editor's Merge Fields panel, keyed
+  // by field name (CONTRACT_MERGE_FIELDS) — written back to the
+  // contract's saved details alongside the new body.
+  @ApiPropertyOptional({
+    type: 'object',
+    additionalProperties: { type: 'string' },
+  })
+  @IsOptional()
+  @IsObject()
+  mergeFieldValues?: Record<string, string>;
 }
 
 export class CountersignToolContractDto {

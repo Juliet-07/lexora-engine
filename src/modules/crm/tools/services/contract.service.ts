@@ -61,7 +61,7 @@ import {
 import { ToolContractPdfService } from './contract-pdf.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import {
-  renderContractBody,
+  renderContractBodyMarked,
   formatScopeOfWorkList,
   findUnresolvedTokens,
 } from 'src/common/utils/contract-fields.util';
@@ -924,7 +924,7 @@ export class ContractService {
       clientRegisteredAddress: dto.clientRegisteredAddress ?? '',
       serviceCategory: dto.serviceCategory ?? '',
     };
-    const renderedBody = renderContractBody(template.content, fields);
+    const renderedBody = renderContractBodyMarked(template.content, fields);
 
     const ref = await this.nextRef(tId);
 
@@ -1181,6 +1181,16 @@ export class ContractService {
       );
     }
     contract.renderedBody = dto.renderedBody;
+    // Values changed in the editor's Merge Fields panel are also written
+    // back onto the contract's own saved details, so the register, the
+    // resync action and anything else reading them agree with the
+    // document. Only fields that map onto a stored detail are applied;
+    // identity fields (title, counterparty, tenant name) stay as they are
+    // — changing those in one clause of a document is a wording change,
+    // not a change to who the contract is with.
+    if (dto.mergeFieldValues) {
+      this.applyMergeFieldValues(contract, dto.mergeFieldValues);
+    }
     contract.interactions.push({
       type: ToolContractInteractionType.UPDATED,
       occurredAt: new Date(),
@@ -1190,6 +1200,47 @@ export class ContractService {
     } as any);
     await contract.save();
     return contract;
+  }
+
+  // Maps the panel's merge-field keys onto the contract's stored
+  // details. Unknown keys and unusable values (a non-numeric contract
+  // value, an unparsable date) are skipped rather than rejected — the
+  // document text has already been saved by then, and a field the
+  // contract doesn't store simply lives in the document alone.
+  private applyMergeFieldValues(
+    contract: ToolContractDocument_,
+    values: Record<string, string>,
+  ): void {
+    const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+    const plain = [
+      'scopeOfWork',
+      'tenantCompanyJurisdiction',
+      'clientJurisdiction',
+      'leadProfessionalName',
+      'leadProfessionalTitle',
+      'clientRepresentativeName',
+      'clientRepresentativeTitle',
+      'engagementDuration',
+      'tenantRegisteredAddress',
+      'clientRegisteredAddress',
+      'serviceCategory',
+    ] as const;
+    for (const key of plain) {
+      if (key in values) (contract as any)[key] = text(values[key]);
+    }
+    if ('contractCurrency' in values && text(values.contractCurrency)) {
+      contract.currency = text(values.contractCurrency).toUpperCase();
+    }
+    if ('contractValue' in values) {
+      const n = Number(text(values.contractValue).replace(/,/g, ''));
+      if (Number.isFinite(n) && n >= 0) contract.value = n;
+    }
+    if ('commencementDate' in values) {
+      const raw = text(values.commencementDate);
+      const d = raw ? new Date(raw) : null;
+      if (!raw) contract.commencementDate = null;
+      else if (d && !Number.isNaN(d.getTime())) contract.commencementDate = d;
+    }
   }
 
   // Re-applies merge-field substitution using the contract's OWN
@@ -1264,7 +1315,10 @@ export class ContractService {
       serviceCategory: contract.serviceCategory ?? '',
     };
 
-    contract.renderedBody = renderContractBody(contract.renderedBody, fields);
+    contract.renderedBody = renderContractBodyMarked(
+      contract.renderedBody,
+      fields,
+    );
     contract.interactions.push({
       type: ToolContractInteractionType.UPDATED,
       occurredAt: new Date(),
