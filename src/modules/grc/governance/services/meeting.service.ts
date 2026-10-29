@@ -304,6 +304,23 @@ export class MeetingService {
       role: dto.role ?? '',
     } as any);
     meeting.markModified('attendees');
+    // Added after the notice already went out: list them as a Pending
+    // recipient so "Resend to non-respondents" reaches them — otherwise
+    // a late addition would never get the notice at all. Nothing is
+    // emailed here; the tenant decides when to resend.
+    if (
+      meeting.notice?.dispatchedAt &&
+      !meeting.notice.recipients.some((r) => r.email.toLowerCase() === email)
+    ) {
+      meeting.notice.recipients.push({
+        name: dto.name.trim(),
+        email,
+        rsvp: NoticeRsvpStatus.PENDING,
+        openedAt: null,
+        lastReminderSentAt: null,
+      } as any);
+      meeting.markModified('notice');
+    }
     await meeting.save();
     return meeting;
   }
@@ -311,8 +328,24 @@ export class MeetingService {
   async removeAttendee(tenantId: string, id: string, index: number) {
     const meeting = await this.getById(tenantId, id);
     this.assertManualAttendeesAllowed(meeting);
+    const attendee = meeting.attendees[index];
+    if (!attendee) throw new NotFoundException('Attendee not found');
+    // Attendance is stored against each attendee's position in this
+    // list, so removing someone once it's been recorded would shift
+    // every later person's record onto the wrong name.
+    if (meeting.attendanceRecordedAt || meeting.attendanceEntries?.length) {
+      throw new BadRequestException(
+        "Attendance has already been recorded for this meeting, so attendees can't be removed.",
+      );
+    }
     meeting.attendees.splice(index, 1);
     meeting.markModified('attendees');
+    if (meeting.notice?.recipients?.length) {
+      meeting.notice.recipients = meeting.notice.recipients.filter(
+        (r) => r.email.toLowerCase() !== attendee.email.toLowerCase(),
+      ) as any;
+      meeting.markModified('notice');
+    }
     await meeting.save();
     return meeting;
   }
