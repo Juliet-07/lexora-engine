@@ -86,16 +86,22 @@ export class MeetingNoticeReminderService {
         const isBoardMember = boardMemberEmails.has(
           recipient.email.toLowerCase(),
         );
-        const rsvpLink = isBoardMember
-          ? `${process.env.BOARD_APP_URL}/meetings`
-          : (() => {
-              const tokenEntry = meeting.notice.rsvpTokens.find(
-                (t) => t.attendeeEmail === recipient.email.toLowerCase(),
-              );
-              return tokenEntry
-                ? `${process.env.TENANT_APP_URL}/meeting-notice/${tokenEntry.token}`
-                : null;
-            })();
+        // Board/Committee meetings: board members RSVP in their portal.
+        // Every other type: everyone uses their personal public link
+        // (a board member who has no token yet — a meeting noticed
+        // before this rule — falls back to the portal).
+        const portalOnly =
+          isBoardMember &&
+          (meeting.type === 'Board' || meeting.type === 'Committee');
+        const tokenEntry = meeting.notice.rsvpTokens.find(
+          (t) => t.attendeeEmail === recipient.email.toLowerCase(),
+        );
+        const rsvpLink =
+          !portalOnly && tokenEntry
+            ? `${process.env.TENANT_APP_URL}/meeting-notice/${tokenEntry.token}`
+            : isBoardMember
+              ? `${process.env.BOARD_APP_URL}/meetings`
+              : null;
         if (!rsvpLink) continue;
 
         await this.emailService

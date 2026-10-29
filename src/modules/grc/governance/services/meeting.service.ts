@@ -1272,7 +1272,9 @@ export class MeetingService {
     // submitBoardMemberNoticeRsvp).
     const rsvpLinkByEmail = new Map<string, string>();
     for (const r of meeting.attendees) {
-      if (boardMemberEmails.has(r.email.toLowerCase())) continue;
+      if (!this.needsPublicRsvpLink(meeting, r.email, boardMemberEmails)) {
+        continue;
+      }
       const token = this.ensureNoticeRsvpToken(meeting, r.email, r.name);
       rsvpLinkByEmail.set(
         r.email.toLowerCase(),
@@ -1351,7 +1353,9 @@ export class MeetingService {
 
     const rsvpLinkByEmail = new Map<string, string>();
     for (const r of pending) {
-      if (boardMemberEmails.has(r.email.toLowerCase())) continue;
+      if (!this.needsPublicRsvpLink(meeting, r.email, boardMemberEmails)) {
+        continue;
+      }
       const token = this.ensureNoticeRsvpToken(meeting, r.email, r.name);
       rsvpLinkByEmail.set(
         r.email.toLowerCase(),
@@ -1560,6 +1564,50 @@ export class MeetingService {
     meeting.markModified('conflictDeclarations');
     await meeting.save();
     return meeting;
+  }
+
+  // Who gets a public, no-sign-in RSVP link. A Board/Committee meeting's
+  // attendees are real board members who RSVP in the board portal, so
+  // only an outsider gets a link there. Every other type (Ad-hoc,
+  // Executive, AGM, EGM) has attendees who may have no login at all, so
+  // EVERY attendee gets one — even if their email also belongs to a
+  // board member (who then gets the portal button as well).
+  private needsPublicRsvpLink(
+    meeting: GovernanceMeetingDocument,
+    email: string,
+    boardMemberEmails: Set<string>,
+  ): boolean {
+    return (
+      !this.isBoardPortalMeetingType(meeting.type) ||
+      !boardMemberEmails.has(email.toLowerCase())
+    );
+  }
+
+  // Tenant view of the personal RSVP links — so the organiser can copy
+  // one and send it by WhatsApp/SMS if an email lands in spam.
+  async getNoticeRsvpLinks(tenantId: string, id: string) {
+    const meeting = await this.getById(tenantId, id);
+    if (!meeting.notice.dispatchedAt) {
+      return [];
+    }
+    const boardMembers = await this.boardMemberService.getAll(tenantId);
+    const boardMemberEmails = new Set(
+      (boardMembers as any[])
+        .map((b) => b.email?.toLowerCase())
+        .filter(Boolean),
+    );
+    const out = meeting.notice.recipients.map((r) => {
+      if (!this.needsPublicRsvpLink(meeting, r.email, boardMemberEmails)) {
+        return { email: r.email.toLowerCase(), link: null as string | null };
+      }
+      const token = this.ensureNoticeRsvpToken(meeting, r.email, r.name);
+      return {
+        email: r.email.toLowerCase(),
+        link: `${process.env.TENANT_APP_URL}/meeting-notice/${token}`,
+      };
+    });
+    await meeting.save();
+    return out;
   }
 
   private ensureNoticeRsvpToken(

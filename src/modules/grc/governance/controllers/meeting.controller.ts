@@ -481,6 +481,19 @@ export class MeetingController {
     return this.meetingService.resendNotice(tenantId, id, businessName);
   }
 
+  @Get(':id/notice/rsvp-links')
+  @ApiOperation({
+    summary:
+      "Each notice recipient's personal public RSVP link (no sign-in needed), for copying",
+  })
+  getNoticeRsvpLinks(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.meetingService.getNoticeRsvpLinks(t || u, id);
+  }
+
   @Get(':id/notice/pdf')
   @ApiOperation({
     summary:
