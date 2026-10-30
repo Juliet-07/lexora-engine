@@ -28,6 +28,7 @@ import {
 } from '../dtos';
 import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
+import { getMergeFieldRegistry } from '../../../common/utils/contract-merge-registry';
 
 @ApiTags('SuperAdmin')
 @ApiBearerAuth()
@@ -52,6 +53,22 @@ export class PlatformContractTemplateController {
     @Query('areaKey') areaKey?: string,
   ) {
     return this.service.getAll(folderId, moduleKey, areaKey);
+  }
+
+  // Declared before ':id' so "merge-fields" is not read as a template id.
+  @Get('merge-fields')
+  @ApiQuery({
+    name: 'moduleKey',
+    required: false,
+    description:
+      'crm | kyc_aml | hr | grc — the fields a template for that module can use. Omit for every field.',
+  })
+  @ApiOperation({
+    summary:
+      'The merge-field registry — every {{token}} a template can use, with label, group, description and a sample value. The single source of truth the template editor reads.',
+  })
+  getMergeFields(@Query('moduleKey') moduleKey?: string) {
+    return getMergeFieldRegistry(moduleKey);
   }
 
   @Get(':id')

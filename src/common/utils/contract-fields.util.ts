@@ -10,6 +10,8 @@
 // silently incomplete legal document.
 // ═══════════════════════════════════════════════════════════════
 
+import { BLOCK_HTML_FIELDS } from './contract-merge-registry';
+
 const PLACEHOLDER_PATTERN = /\{\{(\w+)\}\}/g;
 
 export function renderContractBody(
@@ -49,14 +51,23 @@ export function renderContractBody(
 // containing a list is invalid and gets torn apart when the browser
 // re-parses it.
 // ─────────────────────────────────────────────────────────────
-const HTML_VALUE_FIELDS = new Set(['scopeOfWork']);
+// The registry says which fields expand into a whole list (scopeOfWork,
+// and for deal contracts partiesList / signatoriesList).
+const HTML_VALUE_FIELDS = BLOCK_HTML_FIELDS;
+
+// Free-text values that can run to several lines (the deal term-sheet
+// sections). Rendered inline with <br> between the lines, so they stay
+// valid inside a <p> and keep the paragraphs the author typed.
+const MULTILINE_FIELDS = (key: string) => key.startsWith('termSheet');
 
 export function escapeMergeValue(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function mergeValueHtml(key: string, value: string): string {
-  return HTML_VALUE_FIELDS.has(key) ? value : escapeMergeValue(value);
+  if (HTML_VALUE_FIELDS.has(key)) return value;
+  const escaped = escapeMergeValue(value);
+  return MULTILINE_FIELDS(key) ? escaped.replace(/\r?\n/g, '<br>') : escaped;
 }
 
 function wrapMergeField(key: string, value: string): string {
@@ -170,6 +181,15 @@ export function formatScopeOfWorkList(raw: string): string {
     .map((item) => `<li>${escapeHtml(item)}</li>`)
     .join('');
   return `<ol>${listItems}</ol>`;
+}
+
+// A bulleted HTML list from plain strings (each is escaped). Empty input
+// renders as nothing, matching formatScopeOfWorkList's rule — never an
+// empty <ul></ul> shell.
+export function formatBulletList(items: string[]): string {
+  const clean = items.map((i) => i.trim()).filter(Boolean);
+  if (!clean.length) return '';
+  return `<ul>${clean.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul>`;
 }
 
 // Builds merge fields for a candidate being hired. Candidate

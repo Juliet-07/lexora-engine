@@ -38,6 +38,7 @@ import {
   UserType,
 } from 'src/common/interfaces/user-role.enum';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
+import { getMergeFieldRegistry } from 'src/common/utils/contract-merge-registry';
 import {
   ContractService,
   TenantContractTemplateService,
@@ -625,6 +626,16 @@ export class TenantContractTemplateController {
     @Query('areaKey') areaKey?: string,
   ) {
     return this.service.getAvailableTemplates(t || u, moduleKey, areaKey);
+  }
+
+  // Before ':id' so "merge-fields" is not read as a template id.
+  @Get('merge-fields')
+  @ApiOperation({
+    summary:
+      "The merge-field registry — labels, groups and input kinds for every {{token}}, so the contract editor's Merge Fields panel names deal and engagement fields the same way the template editor does",
+  })
+  getMergeFields() {
+    return getMergeFieldRegistry();
   }
 
   @Get('folders')
