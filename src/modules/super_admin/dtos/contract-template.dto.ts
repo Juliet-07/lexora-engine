@@ -16,7 +16,23 @@ export class CreatePlatformContractTemplateDto {
   category: PlatformTemplateCategory;
   @ApiPropertyOptional() @IsOptional() @IsString() jurisdiction?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
-  @ApiProperty() @IsString() content: string;
+  @ApiProperty({ description: 'The body of the agreement (rich text)' })
+  @IsString()
+  content: string;
+  @ApiPropertyOptional({
+    description:
+      'Cover page (rich text, merge fields allowed). Empty = no cover page.',
+  })
+  @IsOptional()
+  @IsString()
+  coverPage?: string;
+  @ApiPropertyOptional({
+    description: "Add a table of contents page, built from the body's headings",
+  })
+  @IsOptional()
+  @IsBoolean()
+  tocEnabled?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() tocTitle?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() version?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() folderId?: string;
   // Free text — the frontend owns this taxonomy (see

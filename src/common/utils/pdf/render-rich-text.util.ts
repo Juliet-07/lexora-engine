@@ -115,6 +115,7 @@ function extractInlineStyle(el: HTMLElement, inherited: TextStyle): TextStyle {
 }
 
 const BLOCK_TAGS = new Set([
+  'section',
   'p',
   'div',
   'ul',
@@ -184,6 +185,15 @@ function renderBlock(
 
   const style = extractInlineStyle(el, inheritedStyle);
 
+  // The parts of a structured contract (cover page, contents, body) — see
+  // common/utils/contract-structure.util.ts. Contents and body each start
+  // on a new page; the cover is centred and set down the page.
+  const part = el.getAttribute?.('data-contract-part');
+  if (tag === 'section' && part) {
+    renderContractPart(doc, el, part, style);
+    return;
+  }
+
   if (tag === 'h1' || tag === 'h2' || tag === 'h3') {
     doc.moveDown(0.4);
     renderInlineParagraph(
@@ -252,6 +262,48 @@ function renderBlock(
   }
 
   renderInlineParagraph(doc, el, style);
+}
+
+function renderContractPart(
+  doc: PDFKit.PDFDocument,
+  el: HTMLElement,
+  part: string,
+  style: TextStyle,
+): void {
+  if (part === 'cover') {
+    doc.moveDown(8);
+    const centred: TextStyle = { ...style, align: 'center' };
+    for (const child of el.childNodes) renderBlock(doc, child, centred);
+    return;
+  }
+  doc.addPage();
+  if (part === 'toc') {
+    for (const child of el.childNodes) {
+      const c = child as HTMLElement;
+      if (c.tagName?.toLowerCase() === 'h2') {
+        doc.moveDown(0.5);
+        renderInlineParagraph(doc, c, { ...style, bold: true }, undefined, 18);
+        doc.moveDown(0.8);
+      } else if (c.getAttribute?.('data-toc-entry') !== undefined) {
+        // Indent each entry by its heading depth.
+        const level = Number(c.getAttribute('data-level')) || 1;
+        const x = doc.x;
+        doc.x = x + (level - 1) * 18;
+        renderInlineParagraph(
+          doc,
+          c,
+          { ...style, bold: level === 1 },
+          undefined,
+          level === 1 ? 11 : 10.5,
+        );
+        doc.x = x;
+      } else {
+        renderBlock(doc, child, style);
+      }
+    }
+    return;
+  }
+  for (const child of el.childNodes) renderBlock(doc, child, style);
 }
 
 function renderInlineParagraph(

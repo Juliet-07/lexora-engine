@@ -38,6 +38,7 @@ import { UserType } from '../../../common/interfaces/user-role.enum';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
 import { resolveBusinessName } from '../../../common/utils/resolve-business-name.util';
 import { loadTenantCompany } from '../../../common/utils/contract-common-fields';
+import { getMergeFieldRegistry } from '../../../common/utils/contract-merge-registry';
 
 // Read-only: a contract template is now authored and published by
 // the super admin (Contract Templates, module "hr") — the tenant
@@ -58,6 +59,18 @@ export class ContractTemplateController {
   })
   getAll(@Query('workerCategory') workerCategory?: string) {
     return this.templateService.getAll(workerCategory);
+  }
+
+  // Declared before ':templateId' so "merge-fields" isn't read as an id.
+  @Get('merge-fields')
+  @ApiOperation({
+    summary:
+      "The merge-field registry — labels, groups and input kinds, for the contract editor's Merge Fields panel (reachable by HR without the CRM module)",
+  })
+  getMergeFields() {
+    // The clause-level fields have no system value and are named from their
+    // token by the app, so they are left out to keep this small.
+    return getMergeFieldRegistry('hr').filter((f) => f.source !== 'clause');
   }
 
   @Get(':templateId')

@@ -43,7 +43,10 @@ import { randomBytes } from 'crypto';
 import * as PDFKitImport from 'pdfkit';
 import { User, UserDocument } from 'src/modules/auth/schemas';
 import { htmlToParagraphs } from 'src/common/utils/html-to-paragraphs.util';
+import { renderRichText } from 'src/common/utils/pdf/render-rich-text.util';
+import { escapeMergeValue } from 'src/common/utils/contract-fields.util';
 import {
+  buildDealToc,
   describeContractFields,
   normalizeFieldValue,
   renderDealContractBody,
@@ -101,6 +104,14 @@ export class DealService {
           };
         }),
         fields: describeContractFields(c),
+        // The structured pages: a cover (fields resolved) and a contents
+        // page built from the sections as they now stand.
+        cover: renderDealContractBody(c.variables, c.coverPage ?? ''),
+        toc: {
+          enabled: !!c.tocEnabled,
+          title: c.tocTitle || 'Table of Contents',
+          entries: c.tocEnabled ? buildDealToc(c.variables, c.sections) : [],
+        },
       })),
     };
   }
@@ -938,6 +949,45 @@ export class DealService {
     });
   }
 
+  // A contract made from a template with a cover page and/or a contents
+  // page starts with those, each on its own page, before the body.
+  private isStructured(contract: any): boolean {
+    return (
+      !!(contract.coverPage ?? '').replace(/<[^>]*>/g, '').trim() ||
+      !!contract.tocEnabled
+    );
+  }
+
+  private renderFrontPages(doc: any, contract: any) {
+    const cover = renderDealContractBody(
+      contract.variables,
+      contract.coverPage ?? '',
+    );
+    const entries = contract.tocEnabled
+      ? buildDealToc(contract.variables, contract.sections)
+      : [];
+    const parts: string[] = [];
+    if (cover.replace(/<[^>]*>/g, '').trim()) {
+      parts.push(`<section data-contract-part="cover">${cover}</section>`);
+    }
+    if (entries.length) {
+      const title = escapeMergeValue(contract.tocTitle || 'Table of Contents');
+      parts.push(
+        `<section data-contract-part="toc"><h2 data-toc-heading>${title}</h2>` +
+          entries
+            .map(
+              (e) =>
+                `<div data-toc-entry data-level="${e.level}">${escapeMergeValue(e.title)}</div>`,
+            )
+            .join('') +
+          `</section>`,
+      );
+    }
+    if (parts.length) renderRichText(doc, parts.join(''));
+    // Whatever follows (the body) starts on a fresh page.
+    doc.addPage();
+  }
+
   private renderBody(
     contract: { variables: Record<string, string> },
     body: string,
@@ -957,72 +1007,82 @@ export class DealService {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      doc
-        .fontSize(18)
-        .font('Helvetica-Bold')
-        .text(contract.name, { align: 'center' });
-      doc.moveDown(0.2);
-      doc
-        .fontSize(11)
-        .font('Helvetica')
-        .fillColor('#666666')
-        .text(deal.name, { align: 'center' });
-      doc.moveDown(0.3);
-      doc
-        .fontSize(10)
-        .fillColor('#666666')
-        .text(
-          `${businessName} · Generated ${new Date().toLocaleDateString()}`,
-          { align: 'center' },
-        );
-      doc.moveDown(0.3);
-      doc
-        .fontSize(11)
-        .fillColor('#000000')
-        .text(`${deal.client} vs ${deal.counterparty}`, { align: 'center' });
-      doc.moveDown(1.5);
-
-      doc.fontSize(14).font('Helvetica-Bold').text('Parties to this Agreement');
-      doc.moveDown(0.5);
-      for (const side of ['Buyer', 'Seller'] as const) {
-        const sideParties = deal.parties.filter((p) => p.side === side);
-        doc.fontSize(12).font('Helvetica-Bold').text(`${side} Side`);
-        if (sideParties.length === 0) {
-          doc
-            .fontSize(10)
-            .font('Helvetica-Oblique')
-            .text('No parties recorded.');
-        } else {
-          sideParties.forEach((p) => {
-            doc
-              .fontSize(10)
-              .font('Helvetica')
-              .text(`${p.name} — ${p.title}${p.email ? ` (${p.email})` : ''}`);
-          });
-        }
-        doc.moveDown(0.5);
-      }
-      doc.moveDown(1);
-
-      doc.fontSize(14).font('Helvetica-Bold').text('Term Sheet');
-      doc.moveDown(0.5);
-      const tsFields: [string, string][] = [
-        ['Structure', deal.termSheet.structure],
-        ['Consideration', deal.termSheet.consideration],
-        ['Conditions', deal.termSheet.conditions],
-        ['Exclusivity', deal.termSheet.exclusivity],
-        ['Confidentiality', deal.termSheet.confidentiality],
-        ['Timeline', deal.termSheet.timeline],
-      ];
-      tsFields.forEach(([label, value]) => {
-        doc.fontSize(11).font('Helvetica-Bold').text(`${label}:`);
+      const structured = this.isStructured(contract);
+      if (structured) {
+        this.renderFrontPages(doc, contract);
+      } else {
+        doc
+          .fontSize(18)
+          .font('Helvetica-Bold')
+          .text(contract.name, { align: 'center' });
+        doc.moveDown(0.2);
+        doc
+          .fontSize(11)
+          .font('Helvetica')
+          .fillColor('#666666')
+          .text(deal.name, { align: 'center' });
+        doc.moveDown(0.3);
         doc
           .fontSize(10)
-          .font('Helvetica')
-          .text(value || '—');
-        doc.moveDown(0.4);
-      });
-      doc.moveDown(1);
+          .fillColor('#666666')
+          .text(
+            `${businessName} · Generated ${new Date().toLocaleDateString()}`,
+            { align: 'center' },
+          );
+        doc.moveDown(0.3);
+        doc
+          .fontSize(11)
+          .fillColor('#000000')
+          .text(`${deal.client} vs ${deal.counterparty}`, { align: 'center' });
+        doc.moveDown(1.5);
+
+        doc
+          .fontSize(14)
+          .font('Helvetica-Bold')
+          .text('Parties to this Agreement');
+        doc.moveDown(0.5);
+        for (const side of ['Buyer', 'Seller'] as const) {
+          const sideParties = deal.parties.filter((p) => p.side === side);
+          doc.fontSize(12).font('Helvetica-Bold').text(`${side} Side`);
+          if (sideParties.length === 0) {
+            doc
+              .fontSize(10)
+              .font('Helvetica-Oblique')
+              .text('No parties recorded.');
+          } else {
+            sideParties.forEach((p) => {
+              doc
+                .fontSize(10)
+                .font('Helvetica')
+                .text(
+                  `${p.name} — ${p.title}${p.email ? ` (${p.email})` : ''}`,
+                );
+            });
+          }
+          doc.moveDown(0.5);
+        }
+        doc.moveDown(1);
+
+        doc.fontSize(14).font('Helvetica-Bold').text('Term Sheet');
+        doc.moveDown(0.5);
+        const tsFields: [string, string][] = [
+          ['Structure', deal.termSheet.structure],
+          ['Consideration', deal.termSheet.consideration],
+          ['Conditions', deal.termSheet.conditions],
+          ['Exclusivity', deal.termSheet.exclusivity],
+          ['Confidentiality', deal.termSheet.confidentiality],
+          ['Timeline', deal.termSheet.timeline],
+        ];
+        tsFields.forEach(([label, value]) => {
+          doc.fontSize(11).font('Helvetica-Bold').text(`${label}:`);
+          doc
+            .fontSize(10)
+            .font('Helvetica')
+            .text(value || '—');
+          doc.moveDown(0.4);
+        });
+        doc.moveDown(1);
+      }
 
       doc.fontSize(14).font('Helvetica-Bold').text(contract.name);
       doc.moveDown(0.5);
@@ -1061,6 +1121,7 @@ export class DealService {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
+      if (this.isStructured(contract)) this.renderFrontPages(doc, contract);
       doc
         .fontSize(18)
         .font('Helvetica-Bold')

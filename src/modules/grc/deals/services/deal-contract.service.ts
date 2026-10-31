@@ -166,6 +166,8 @@ export class DealContractService {
       // Included so the form can show which fields the template uses
       // and which of them this deal can fill — see describeTokens.
       content: t.content ?? '',
+      hasCoverPage: !!(t.coverPage ?? '').replace(/<[^>]*>/g, '').trim(),
+      hasContents: !!t.tocEnabled,
     };
   }
 
@@ -262,7 +264,10 @@ export class DealContractService {
     if (templateId) {
       const t = await this.loadDealTemplate(templateId);
       template = { _id: String(t._id), title: t.title };
-      fields = this.describeTokens(t.content ?? '', known);
+      fields = this.describeTokens(
+        `${t.coverPage ?? ''}${t.content ?? ''}`,
+        known,
+      );
     }
 
     return {
@@ -338,6 +343,9 @@ export class DealContractService {
       templateId: template._id,
       templateName: template.title,
       reference,
+      coverPage: template.coverPage ?? '',
+      tocEnabled: !!template.tocEnabled,
+      tocTitle: template.tocTitle || 'Table of Contents',
       sections: splitTemplateIntoSections(template.content, template.title).map(
         (s) => ({ ...s, comments: [], redlines: [] }),
       ),

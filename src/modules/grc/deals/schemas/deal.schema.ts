@@ -141,6 +141,8 @@ export const RedlineSchema = SchemaFactory.createForClass(Redline);
 @Schema({ _id: false })
 export class ContractSection {
   @Prop({ required: true }) title: string;
+  // Heading depth in the template (1–3), for the contents page.
+  @Prop({ default: 1 }) level: number;
   @Prop({ required: true }) body: string;
   @Prop({ type: [ContractCommentSchema], default: [] })
   comments: ContractComment[];
@@ -268,6 +270,12 @@ export class Contract {
   templateId: Types.ObjectId | null;
   @Prop({ default: '' }) templateName: string;
   @Prop({ default: '' }) reference: string;
+  // The template's cover page (merge fields stay as {{token}}; resolved when
+  // shown) and whether to put a contents page, built from the sections,
+  // between it and the body.
+  @Prop({ default: '' }) coverPage: string;
+  @Prop({ default: false }) tocEnabled: boolean;
+  @Prop({ default: 'Table of Contents' }) tocTitle: string;
   @Prop({ type: [ContractSectionSchema], default: [] })
   sections: ContractSection[];
   @Prop({ type: Object, default: {} }) variables: Record<string, string>;

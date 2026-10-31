@@ -65,8 +65,19 @@ export class PlatformContractTemplate {
   @Prop({ enum: TemplateSourceType, default: TemplateSourceType.AUTHORED })
   sourceType: TemplateSourceType;
 
-  // Populated only when sourceType is 'authored'.
+  // Populated only when sourceType is 'authored'. `content` is the BODY of
+  // the agreement; the cover page and the table of contents are separate
+  // parts (see common/utils/contract-structure.util.ts) put in front of it
+  // when a contract is generated.
   @Prop({ default: '' }) content: string;
+
+  // Cover page (rich text, merge fields allowed). Empty = no cover page.
+  @Prop({ default: '' }) coverPage: string;
+  // A contents page built automatically from the body's headings.
+  // Off for templates written before this existed, so their bodies — which
+  // may carry a hand-typed contents list — don't end up with two.
+  @Prop({ default: false }) tocEnabled: boolean;
+  @Prop({ default: 'Table of Contents' }) tocTitle: string;
 
   // Populated only when sourceType is 'uploaded' — a real file
   // already on disk, served the same static-asset way engagement

@@ -1,4 +1,8 @@
 import {
+  refreshTableOfContents,
+  renderTemplateDocument,
+} from 'src/common/utils/contract-structure.util';
+import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -957,7 +961,7 @@ export class ContractService {
       }),
       standardFields,
     );
-    const renderedBody = renderContractBodyMarked(template.content, fields);
+    const renderedBody = renderTemplateDocument(template, fields);
 
     const created = await this.model.create({
       tenantId: tId,
@@ -1211,7 +1215,8 @@ export class ContractService {
           : 'This contract was declined and can no longer be edited.',
       );
     }
-    contract.renderedBody = dto.renderedBody;
+    // Keep the contents page in step with the headings as they now stand.
+    contract.renderedBody = refreshTableOfContents(dto.renderedBody);
     // Values changed in the editor's Merge Fields panel are also written
     // back onto the contract's own saved details, so the register, the
     // resync action and anything else reading them agree with the
@@ -1380,9 +1385,8 @@ export class ContractService {
       standardFields,
     );
 
-    contract.renderedBody = renderContractBodyMarked(
-      contract.renderedBody,
-      fields,
+    contract.renderedBody = refreshTableOfContents(
+      renderContractBodyMarked(contract.renderedBody, fields),
     );
     contract.interactions.push({
       type: ToolContractInteractionType.UPDATED,

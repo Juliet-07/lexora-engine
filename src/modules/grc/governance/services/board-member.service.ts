@@ -1,4 +1,8 @@
 import {
+  refreshTableOfContents,
+  renderTemplateDocument,
+} from 'src/common/utils/contract-structure.util';
+import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -67,10 +71,7 @@ import {
   type ContractMergeField,
 } from 'src/modules/crm/tools/schemas';
 import { PlatformContractTemplateService } from 'src/modules/super_admin/services/contract-template.service';
-import {
-  renderContractBody,
-  formatScopeOfWorkList,
-} from 'src/common/utils/contract-fields.util';
+import { formatScopeOfWorkList } from 'src/common/utils/contract-fields.util';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
 import {
   buildCommonMergeFields,
@@ -555,7 +556,7 @@ export class BoardMemberService {
       }),
       standardFields,
     );
-    const renderedBody = renderContractBody(template.content, fields);
+    const renderedBody = renderTemplateDocument(template, fields);
 
     return this.toolContractModel.create({
       tenantId,

@@ -1,4 +1,8 @@
 import {
+  refreshTableOfContents,
+  renderTemplateDocument,
+} from 'src/common/utils/contract-structure.util';
+import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -26,7 +30,6 @@ import { Candidate, CandidateDocument } from '../schemas/candidate.schema';
 import { Employee, EmployeeDocument } from '../schemas/employee.schema';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import {
-  renderContractBody,
   buildMergeFieldsForCandidate,
   buildMergeFieldsForEmployee,
 } from '../../../common/utils/contract-fields.util';
@@ -128,7 +131,7 @@ export class ContractService {
       signerName: candidate.name,
       signerEmail: candidate.email,
       workerCategory: candidate.workerCategory,
-      renderedBody: renderContractBody(template.content, fields),
+      renderedBody: renderTemplateDocument(template, fields),
       status: ContractStatus.DRAFT,
     });
   }
@@ -202,7 +205,7 @@ export class ContractService {
       signerName: `${employee.firstName} ${employee.lastName}`,
       signerEmail: employee.email,
       workerCategory: employeeCategory,
-      renderedBody: renderContractBody(template.content, fields),
+      renderedBody: renderTemplateDocument(template, fields),
       status: ContractStatus.DRAFT,
       requiresSignature: template.hrRequiresSignature ?? true,
     });
@@ -331,7 +334,7 @@ export class ContractService {
       );
     }
 
-    contract.renderedBody = dto.renderedBody;
+    contract.renderedBody = refreshTableOfContents(dto.renderedBody);
     contract.interactions.push({
       type: InteractionType.UPDATED,
       occurredAt: new Date(),

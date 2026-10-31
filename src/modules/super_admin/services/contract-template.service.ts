@@ -126,6 +126,9 @@ export class PlatformContractTemplateService {
       areaKey: dto.areaKey ?? '',
       sourceType: TemplateSourceType.AUTHORED,
       content: dto.content,
+      coverPage: dto.coverPage ?? '',
+      tocEnabled: dto.tocEnabled ?? false,
+      tocTitle: dto.tocTitle?.trim() || 'Table of Contents',
       version: dto.version ?? '1.0',
       status: PlatformTemplateStatus.DRAFT,
       createdBy,
@@ -154,6 +157,10 @@ export class PlatformContractTemplateService {
     t.jurisdiction = dto.jurisdiction ?? '';
     t.description = dto.description ?? '';
     t.content = dto.content;
+    if (dto.coverPage !== undefined) t.coverPage = dto.coverPage;
+    if (dto.tocEnabled !== undefined) t.tocEnabled = dto.tocEnabled;
+    if (dto.tocTitle !== undefined)
+      t.tocTitle = dto.tocTitle.trim() || 'Table of Contents';
     t.version = dto.version ?? t.version;
     if (dto.folderId !== undefined) {
       t.folderId = dto.folderId ? (dto.folderId as any) : null;

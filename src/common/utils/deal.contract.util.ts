@@ -53,6 +53,8 @@ const stripTags = (h: string) =>
 export interface TemplateSection {
   title: string;
   body: string;
+  /** Heading depth (1–3) — drives the indent on the contents page. */
+  level: number;
 }
 
 /**
@@ -71,19 +73,20 @@ export function splitTemplateIntoSections(
   const source = (html ?? '').trim();
   const headings = [...source.matchAll(/<h([1-3])\b[^>]*>([\s\S]*?)<\/h\1>/gi)];
   if (!headings.length) {
-    return [{ title: fallbackTitle || 'Agreement', body: source }];
+    return [{ title: fallbackTitle || 'Agreement', body: source, level: 1 }];
   }
 
   const raw: TemplateSection[] = [];
   const preamble = source.slice(0, headings[0].index ?? 0);
   if (stripTags(preamble))
-    raw.push({ title: 'Preamble', body: preamble.trim() });
+    raw.push({ title: 'Preamble', body: preamble.trim(), level: 1 });
   headings.forEach((h, i) => {
     const start = (h.index ?? 0) + h[0].length;
     const end = headings[i + 1]?.index ?? source.length;
     raw.push({
       title: stripTags(h[2]) || `Section ${raw.length + 1}`,
       body: source.slice(start, end).trim(),
+      level: Number(h[1]),
     });
   });
 
@@ -98,12 +101,12 @@ export function splitTemplateIntoSections(
       }
       return;
     }
-    out.push({ title: sec.title, body: carry + sec.body });
+    out.push({ title: sec.title, body: carry + sec.body, level: sec.level });
     carry = '';
   });
   return out.length
     ? out
-    : [{ title: fallbackTitle || 'Agreement', body: source }];
+    : [{ title: fallbackTitle || 'Agreement', body: source, level: 1 }];
 }
 
 // ── Fields used by a contract ────────────────────────────────
@@ -141,6 +144,7 @@ const blockToText = (html: string) =>
 export function describeContractFields(contract: {
   templateId?: unknown;
   variables?: Record<string, string>;
+  coverPage?: string;
   sections?: { title?: string; body?: string }[];
 }): ContractFieldInfo[] {
   const vars = contract.variables ?? {};
@@ -164,6 +168,8 @@ export function describeContractFields(contract: {
       unknown: !def && !legacy,
     });
   };
+  // The cover page comes first in the document, so its fields do too.
+  for (const m of (contract.coverPage ?? '').matchAll(TOKEN)) add(m[1], false);
   for (const s of contract.sections ?? []) {
     for (const text of [s.title ?? '', s.body ?? '']) {
       for (const m of text.matchAll(TOKEN)) add(m[1], false);
@@ -186,4 +192,32 @@ export function describeContractFields(contract: {
  */
 export function normalizeFieldValue(token: string, value: string): string {
   return token === 'scopeOfWork' ? formatScopeOfWorkList(value) : value;
+}
+
+export interface DealTocEntry {
+  level: number;
+  title: string;
+}
+
+/**
+ * The contents page of a deal contract, from its sections as they stand now
+ * (so a deleted section disappears from it). Titles are field-resolved. The
+ * "Preamble" (text before the first heading) is not an entry. Levels are
+ * shown relative to the shallowest heading used.
+ */
+export function buildDealToc(
+  variables: Record<string, string> | undefined | null,
+  sections: { title?: string; level?: number }[],
+): DealTocEntry[] {
+  const rows = (sections ?? []).filter(
+    (s) => s.title && s.title !== 'Preamble',
+  );
+  if (!rows.length) return [];
+  const top = Math.min(...rows.map((s) => s.level ?? 1));
+  return rows.map((s) => ({
+    level: (s.level ?? 1) - top + 1,
+    title: decodeHtmlEntities(
+      renderDealContractBody(variables, s.title as string),
+    ),
+  }));
 }
