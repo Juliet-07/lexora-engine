@@ -72,6 +72,11 @@ import {
   formatScopeOfWorkList,
 } from 'src/common/utils/contract-fields.util';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+import {
+  buildCommonMergeFields,
+  loadTenantCompany,
+  overlayNonEmpty,
+} from 'src/common/utils/contract-common-fields';
 // Imported directly from its own file, not the services barrel — the
 // barrel also re-exports this service, so importing it that way here
 // would be a circular module reference. One-directional otherwise:
@@ -491,12 +496,14 @@ export class BoardMemberService {
       }
     }
 
-    const businessName = await resolveBusinessName(
+    const tenantCompany = await loadTenantCompany(
       this.userModel,
       String(tenantId),
     );
+    const businessName = tenantCompany.name;
+    const ref = await this.nextContractRef(tenantId);
 
-    const fields: Record<ContractMergeField, string> = {
+    const standardFields: Record<ContractMergeField, string> = {
       title: dto.contractTitle,
       counterpartyName: member.name,
       recipientName: member.name,
@@ -520,9 +527,35 @@ export class BoardMemberService {
       clientRegisteredAddress: dto.clientRegisteredAddress ?? '',
       serviceCategory: dto.serviceCategory ?? '',
     };
+    // Common fields first (Party A = us, Party B = the board member…); the
+    // appointment form's own values win where they were entered.
+    const fields = overlayNonEmpty(
+      buildCommonMergeFields({
+        tenant: tenantCompany,
+        title: dto.contractTitle,
+        reference: ref,
+        governingLaw: dto.tenantCompanyJurisdiction,
+        scopeOfWork: dto.scopeOfWork,
+        partyA: {
+          name: businessName,
+          address: dto.tenantRegisteredAddress,
+          representative: dto.leadProfessionalName,
+          representativeTitle: dto.leadProfessionalTitle,
+        },
+        partyB: {
+          name: member.name,
+          email: member.email,
+          address: dto.clientRegisteredAddress,
+          representative: dto.clientRepresentativeName,
+          representativeTitle: dto.clientRepresentativeTitle,
+        },
+        expiryDate: member.termEnds.toISOString().slice(0, 10),
+        value: dto.value,
+        currency: dto.currency ?? 'USD',
+      }),
+      standardFields,
+    );
     const renderedBody = renderContractBody(template.content, fields);
-
-    const ref = await this.nextContractRef(tenantId);
 
     return this.toolContractModel.create({
       tenantId,

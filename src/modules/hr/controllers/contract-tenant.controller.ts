@@ -37,6 +37,7 @@ import { UserTypes, CurrentUser } from '../../../common/decorators/index';
 import { UserType } from '../../../common/interfaces/user-role.enum';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
 import { resolveBusinessName } from '../../../common/utils/resolve-business-name.util';
+import { loadTenantCompany } from '../../../common/utils/contract-common-fields';
 
 // Read-only: a contract template is now authored and published by
 // the super admin (Contract Templates, module "hr") — the tenant
@@ -98,12 +99,8 @@ export class ContractController {
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    const businessName = await resolveBusinessName(this.userModel, t || u);
-    return this.contractService.generateFromCandidate(
-      t || u,
-      businessName,
-      dto,
-    );
+    const tenant = await loadTenantCompany(this.userModel, t || u);
+    return this.contractService.generateFromCandidate(t || u, tenant, dto);
   }
 
   @Post('generate-for-employee')
@@ -116,8 +113,8 @@ export class ContractController {
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    const businessName = await resolveBusinessName(this.userModel, t || u);
-    return this.contractService.generateForEmployee(t || u, businessName, dto);
+    const tenant = await loadTenantCompany(this.userModel, t || u);
+    return this.contractService.generateForEmployee(t || u, tenant, dto);
   }
 
   @Get()

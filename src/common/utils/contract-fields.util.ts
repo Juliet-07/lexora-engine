@@ -64,7 +64,7 @@ export function escapeMergeValue(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function mergeValueHtml(key: string, value: string): string {
+export function mergeValueHtml(key: string, value: string): string {
   if (HTML_VALUE_FIELDS.has(key)) return value;
   const escaped = escapeMergeValue(value);
   return MULTILINE_FIELDS(key) ? escaped.replace(/\r?\n/g, '<br>') : escaped;

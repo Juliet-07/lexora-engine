@@ -66,6 +66,11 @@ import {
   findUnresolvedTokens,
 } from 'src/common/utils/contract-fields.util';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+import {
+  buildCommonMergeFields,
+  loadTenantCompany,
+  overlayNonEmpty,
+} from 'src/common/utils/contract-common-fields';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { UserType } from 'src/common/interfaces/user-role.enum';
@@ -278,19 +283,6 @@ export class TenantLetterheadService {
   }
 }
 
-// Server-side-only extras for generating a contract from inside another
-// module — currently GRC deals. Kept out of GenerateFromTemplateDto on
-// purpose: a client request must never be able to name a deal, tag a
-// contract with the 'grc_deal' origin, or inject its own merge values.
-export interface GenerateFromTemplateOptions {
-  dealId?: string;
-  dealName?: string;
-  // Values for tokens beyond CONTRACT_MERGE_FIELDS (dealName, buyerName,
-  // termSheet…). Merged over the standard fields and saved on the
-  // contract so Resync can refill them.
-  extraFields?: Record<string, string>;
-}
-
 @Injectable()
 export class ContractService {
   constructor(
@@ -358,39 +350,6 @@ export class ContractService {
       })
       .sort({ createdAt: -1 })
       .lean();
-  }
-
-  // Every contract drafted inside one GRC deal, by the real dealId link
-  // set when it was generated. A slim projection — the deal page needs
-  // the reference, stage and signing status, not the document body.
-  async getDealContracts(tenantId: string, dealId: string) {
-    return this.model
-      .find({
-        tenantId: new Types.ObjectId(tenantId),
-        dealId: new Types.ObjectId(dealId),
-      })
-      .select(
-        'ref title type stage value currency counterparty counterpartyEmail templateName signatureStatus expiresOn createdAt origin dealId dealName',
-      )
-      .sort({ createdAt: -1 })
-      .lean();
-  }
-
-  // Published platform templates for one module/area — the picker a
-  // module other than CRM uses (GRC deals read moduleKey 'grc', area
-  // 'deals'), without needing the CRM-only /tools/contract-templates
-  // route.
-  async getPublishedPlatformTemplates(moduleKey: string, areaKey?: string) {
-    const all = await this.platformTemplateService.getAll(
-      undefined,
-      moduleKey,
-      areaKey,
-    );
-    return (all as any[]).filter((t) => t.status === 'Published');
-  }
-
-  async getPlatformTemplate(templateId: string) {
-    return this.platformTemplateService.getById(templateId);
   }
 
   async getById(tenantId: string, id: string) {
@@ -927,7 +886,6 @@ export class ContractService {
   async generateFromTemplate(
     tenantId: string,
     dto: GenerateFromTemplateDto,
-    options: GenerateFromTemplateOptions = {},
   ): Promise<ToolContractDocument_> {
     const tId = new Types.ObjectId(tenantId);
 
@@ -946,7 +904,8 @@ export class ContractService {
       }
     }
 
-    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const tenantCompany = await loadTenantCompany(this.userModel, tenantId);
+    const businessName = tenantCompany.name;
     const { counterparty, counterpartyEmail } = await this.resolveCounterparty(
       tenantId,
       dto.clientId,
@@ -989,16 +948,37 @@ export class ContractService {
       clientRegisteredAddress: dto.clientRegisteredAddress ?? '',
       serviceCategory: dto.serviceCategory ?? '',
     };
-    // A deal contract adds its own tokens (dealName, buyerName,
-    // termSheet…) on top of the standard set.
-    const extraFields = options.extraFields ?? {};
-    const fields: Record<string, string> = {
-      ...standardFields,
-      ...extraFields,
-    };
-    const renderedBody = renderContractBodyMarked(template.content, fields);
-
+    // The common fields (parties A/B, our company's profile details,
+    // dates, value…) are filled the same way in every module. The form's
+    // own values win where they were entered.
     const ref = await this.nextRef(tId);
+    const fields = overlayNonEmpty(
+      buildCommonMergeFields({
+        tenant: tenantCompany,
+        title: dto.title,
+        reference: ref,
+        governingLaw: dto.tenantCompanyJurisdiction,
+        scopeOfWork: dto.scopeOfWork,
+        partyA: {
+          name: businessName,
+          address: dto.tenantRegisteredAddress,
+          representative: dto.leadProfessionalName,
+          representativeTitle: dto.leadProfessionalTitle,
+        },
+        partyB: {
+          name: counterparty,
+          email: counterpartyEmail,
+          address: dto.clientRegisteredAddress,
+          representative: dto.clientRepresentativeName,
+          representativeTitle: dto.clientRepresentativeTitle,
+        },
+        expiryDate: dto.expiresOn,
+        value: dto.value,
+        currency: dto.currency ?? 'USD',
+      }),
+      standardFields,
+    );
+    const renderedBody = renderContractBodyMarked(template.content, fields);
 
     const created = await this.model.create({
       tenantId: tId,
@@ -1036,14 +1016,7 @@ export class ContractService {
       renderedBody,
       requiresSignature: true,
       signatureStatus: SignatureStatus.NOT_SENT,
-      origin: options.dealId
-        ? 'grc_deal'
-        : dto.vendorId
-          ? 'vendor'
-          : (dto.origin ?? 'crm'),
-      dealId: options.dealId ? new Types.ObjectId(options.dealId) : null,
-      dealName: options.dealName ?? '',
-      extraMergeFields: extraFields,
+      origin: dto.vendorId ? 'vendor' : (dto.origin ?? 'crm'),
     });
     return created;
   }
@@ -1361,7 +1334,8 @@ export class ContractService {
       );
     }
 
-    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const tenantCompany = await loadTenantCompany(this.userModel, tenantId);
+    const businessName = tenantCompany.name;
     const createdAt = (contract as any).createdAt as Date | undefined;
     const standardFields: Record<ContractMergeField, string> = {
       title: contract.title,
@@ -1393,11 +1367,39 @@ export class ContractService {
       clientRegisteredAddress: contract.clientRegisteredAddress ?? '',
       serviceCategory: contract.serviceCategory ?? '',
     };
-    // A deal contract's own tokens, saved at generation time.
-    const fields: Record<string, string> = {
-      ...standardFields,
-      ...((contract as any).extraMergeFields ?? {}),
-    };
+    // Common fields too, so a contract drafted before a field existed
+    // (or before the company profile was completed) can still fill it.
+    const fields = overlayNonEmpty(
+      buildCommonMergeFields({
+        tenant: tenantCompany,
+        title: contract.title,
+        reference: contract.ref,
+        governingLaw: contract.tenantCompanyJurisdiction,
+        scopeOfWork: contract.scopeOfWork,
+        partyA: {
+          name: businessName,
+          address: contract.tenantRegisteredAddress,
+          representative: contract.leadProfessionalName,
+          representativeTitle: contract.leadProfessionalTitle,
+        },
+        partyB: {
+          name: contract.counterparty,
+          email: contract.counterpartyEmail,
+          address: contract.clientRegisteredAddress,
+          representative: contract.clientRepresentativeName,
+          representativeTitle: contract.clientRepresentativeTitle,
+        },
+        effectiveDate: createdAt
+          ? new Date(createdAt).toISOString().slice(0, 10)
+          : undefined,
+        expiryDate: contract.expiresOn
+          ? new Date(contract.expiresOn).toISOString().slice(0, 10)
+          : undefined,
+        value: contract.value,
+        currency: contract.currency ?? 'USD',
+      }),
+      standardFields,
+    );
 
     contract.renderedBody = renderContractBodyMarked(
       contract.renderedBody,

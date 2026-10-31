@@ -14,12 +14,10 @@ import {
 import { DealContractService } from '../services/deal-contract.service';
 import { GenerateDealContractDto } from '../dtos/deal-contract.dto';
 
-// Generating contracts inside a deal. A deal contract is a real Contract
-// Management contract (origin 'grc_deal', linked back by dealId), so
-// sending for signature, negotiation, amendments and the signed copy all
-// work in the CRM contract tool exactly as for any other contract. These
-// routes are guarded by the Deals module (not CRM), so a deal team can
-// draft from a template even before they open Contract Management.
+// Generating contracts inside a deal. A deal contract belongs to the deal
+// (Deal.contracts[]) and is managed there — editing, comments, redlines,
+// the review loop and execution — independently of Contract Management
+// (CRM). These routes are guarded by the Deals module only.
 @ApiTags('Deals & Transactions — Contracts from templates')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT, UserType.EMPLOYEE)
@@ -56,22 +54,10 @@ export class DealContractController {
     return this.service.getDraft(t || u, id, templateId || undefined);
   }
 
-  @Get(':id/template-contracts')
-  @ApiOperation({
-    summary: 'Contracts drafted from templates inside this deal',
-  })
-  list(
-    @Param('id') id: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.listContracts(t || u, id);
-  }
-
   @Post(':id/template-contracts')
   @ApiOperation({
     summary:
-      'Generate a contract in this deal from a published template; it appears in Contract Management linked to the deal',
+      'Generate a contract in this deal from a published template; it is created inside the deal and managed there (editing, redlines, review, signing)',
   })
   generate(
     @Param('id') id: string,

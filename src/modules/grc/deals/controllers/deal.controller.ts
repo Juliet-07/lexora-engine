@@ -28,9 +28,7 @@ import {
   UpdateTermSheetDto,
   AddDDItemDto,
   UpdateDDItemDto,
-  CreateContractDto,
   RenameContractDto,
-  AddContractSectionDto,
   UpdateContractSectionBodyDto,
   AddContractCommentDto,
   SetContractVariableDto,
@@ -44,7 +42,6 @@ import {
   AddPartyDto,
   UpdatePartyDto,
   SubmitReviewDto,
-  AddContractSectionFromPrecedentDto,
   AddRedlineDto,
   UpdateCommercialTermsDto,
 } from '../dtos';
@@ -293,16 +290,6 @@ export class DealController {
   }
 
   // ── Contracts ────────────────────────────────────────────────
-  @Post(':id/contracts')
-  createContract(
-    @Param('id') id: string,
-    @Body() dto: CreateContractDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.createContract(t || u, id, dto);
-  }
-
   @Patch(':id/contracts/:contractId')
   renameContract(
     @Param('id') id: string,
@@ -322,33 +309,6 @@ export class DealController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.deleteContract(t || u, id, contractId);
-  }
-
-  @Post(':id/contracts/:contractId/sections')
-  addContractSection(
-    @Param('id') id: string,
-    @Param('contractId') contractId: string,
-    @Body() dto: AddContractSectionDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.addContractSection(t || u, id, contractId, dto);
-  }
-
-  @Post(':id/contracts/:contractId/sections/from-precedent')
-  addContractSectionFromPrecedent(
-    @Param('id') id: string,
-    @Param('contractId') contractId: string,
-    @Body() dto: AddContractSectionFromPrecedentDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.addContractSectionFromPrecedent(
-      t || u,
-      id,
-      contractId,
-      dto,
-    );
   }
 
   @Delete(':id/contracts/:contractId/sections/:index')

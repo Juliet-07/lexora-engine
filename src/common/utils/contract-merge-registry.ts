@@ -10,8 +10,16 @@
 // GET /deals/:id/contract-templates for the tenant), so adding or
 // renaming a field is a one-file change here.
 //
+// Two kinds of field:
+//   • COMMON fields (contract-merge-common-fields.ts) — available in every
+//     module: title, Party A / Party B, our company's details, dates, value.
+//     Filled for every pipeline by buildCommonMergeFields().
+//   • Module-specific fields below — deal, engagement, HR… only where they
+//     make sense.
+//
 // To add a field (e.g. from the product owner's field list):
-//   1. add one entry to MERGE_FIELD_REGISTRY below;
+//   1. add one entry — to COMMON_FIELDS if every contract needs it, else to
+//      MERGE_FIELD_REGISTRY below;
 //   2. make the generating service supply its value (CRM:
 //      ContractService.generateFromTemplate; HR: buildMergeFieldsFor…;
 //      deals: buildDealMergeFields in deal-contract.service.ts).
@@ -21,6 +29,10 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { PO_FIELDS, type PoFieldSection } from './contract-merge-po-fields';
+import {
+  COMMON_FIELDS,
+  LEGACY_ALIAS_FIELDS,
+} from './contract-merge-common-fields';
 
 export type MergeFieldModule = 'crm' | 'kyc_aml' | 'hr' | 'grc' | 'finance';
 
@@ -63,190 +75,37 @@ export interface MergeFieldDefinition {
    * for GRC. Omitted = usable in every area of its modules.
    */
   areas?: string[];
+  /**
+   * One of the COMMON fields — available in every module, whichever role
+   * the template is for. The editors pin these to the top of the panel.
+   */
+  common?: boolean;
+  /**
+   * Still resolves when a template uses it (so older templates keep
+   * working) but is not listed in the editors' field panels — an older
+   * name for a canonical field.
+   */
+  hidden?: boolean;
+  /** For a hidden alias: the canonical token to use instead. */
+  aliasOf?: string;
 }
 
 const CRM_LIKE: MergeFieldModule[] = ['crm', 'kyc_aml'];
-const ALL_CONTRACT: MergeFieldModule[] = ['crm', 'kyc_aml', 'grc'];
 
 export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
-  // ── Shared across CRM / KYC / GRC deal contracts ─────────────
-  {
-    token: 'title',
-    label: 'Contract title',
-    description: 'The contract title as entered on the drafting form',
-    group: 'Contract',
-    input: 'text',
-    example: 'Share Purchase Agreement — Project Atlas',
-    modules: ALL_CONTRACT,
-    source: 'form',
-  },
-  {
-    token: 'counterpartyName',
-    label: 'Counterparty name',
-    description:
-      "The party the contract is with: a registered client's name, a registered vendor's contact (falling back to its legal name), a deal party, or an external party's typed name",
-    group: 'Parties',
-    input: 'text',
-    example: 'Roselyn Designs Ltd',
-    modules: ALL_CONTRACT,
-    source: 'form',
-  },
-  {
-    token: 'recipientName',
-    label: 'Recipient name',
-    description:
-      'Alias of counterparty name — reads more naturally when addressing a person directly, e.g. "Dear {{recipientName}},"',
-    group: 'Parties',
-    input: 'text',
-    example: 'Roselyn Designs Ltd',
-    modules: ALL_CONTRACT,
-    source: 'form',
-  },
-  {
-    token: 'recipientEmail',
-    label: 'Recipient email',
-    description: "The counterparty's email address",
-    group: 'Parties',
-    input: 'text',
-    example: 'legal@roselyn.example',
-    modules: ALL_CONTRACT,
-    source: 'form',
-  },
-  {
-    token: 'tenantCompanyName',
-    label: 'Our company name',
-    description: "This workspace's own registered business name",
-    group: 'Parties',
-    input: 'text',
-    example: 'Wekraft Ltd',
-    modules: [...ALL_CONTRACT, 'hr'],
-    source: 'auto',
-  },
-  {
-    token: 'scopeOfWork',
-    label: 'Scope of work',
-    description:
-      "Free-text deliverables entered on the drafting form (one per line) — expands into a real numbered list. Insert this once; don't repeat it per item and don't hand-number the items.",
-    group: 'Engagement',
-    input: 'textarea',
-    example: 'Draft the transaction documents\nCoordinate due diligence',
-    modules: [...ALL_CONTRACT, 'hr'],
-    singleUse: true,
-    source: 'form',
-  },
-  {
-    token: 'contractValue',
-    label: 'Contract value',
-    description: 'The contract value entered on the drafting form',
-    group: 'Commercial',
-    input: 'number',
-    example: '250000',
-    modules: ALL_CONTRACT,
-    source: 'form',
-  },
-  {
-    token: 'contractCurrency',
-    label: 'Contract currency',
-    description: 'The contract currency entered on the drafting form',
-    group: 'Commercial',
-    input: 'currency',
-    example: 'USD',
-    modules: ALL_CONTRACT,
-    source: 'form',
-  },
-  {
-    token: 'effectiveDate',
-    label: 'Effective date',
-    description:
-      "Today's date, used as the contract's effective date (for HR letters: the date entered on the generate form)",
-    group: 'Dates',
-    input: 'date',
-    example: '2026-11-02',
-    modules: [...ALL_CONTRACT, 'hr'],
-    source: 'auto',
-  },
-  {
-    token: 'expiryDate',
-    label: 'Expiry date',
-    description: 'The expiry date entered on the drafting form',
-    group: 'Dates',
-    input: 'date',
-    example: '2027-11-02',
-    modules: ALL_CONTRACT,
-    source: 'form',
-  },
-  {
-    token: 'todayDate',
-    label: "Today's date",
-    description: 'The date the contract was drafted',
-    group: 'Dates',
-    input: 'date',
-    example: '2026-11-02',
-    modules: [...ALL_CONTRACT, 'hr'],
-    source: 'auto',
-  },
+  // Common fields first — available in every module (see contract-merge-common-fields.ts)
+  ...COMMON_FIELDS,
+  ...LEGACY_ALIAS_FIELDS,
 
-  // ── CRM / KYC engagement-letter fields ───────────────────────
-  {
-    token: 'tenantCompanyJurisdiction',
-    label: 'Our jurisdiction',
-    description:
-      'The firm\'s own jurisdiction of incorporation, as typed on the drafting form (e.g. "the Republic of Rwanda")',
-    group: 'Parties',
-    input: 'text',
-    example: 'the Republic of Rwanda',
-    modules: CRM_LIKE,
-    source: 'form',
-  },
+  // ── Module-specific fields ───────────────────────────────────
   {
     token: 'clientJurisdiction',
     label: 'Counterparty jurisdiction',
     description:
       "The counterparty's jurisdiction of incorporation, as typed on the drafting form",
-    group: 'Parties',
+    group: 'Engagement',
     input: 'text',
     example: 'the Republic of Kenya',
-    modules: CRM_LIKE,
-    source: 'form',
-  },
-  {
-    token: 'leadProfessionalName',
-    label: 'Lead professional',
-    description:
-      "The individual leading this engagement on the firm's side, as typed on the drafting form",
-    group: 'Parties',
-    input: 'text',
-    example: 'Amina Uwase',
-    modules: CRM_LIKE,
-    source: 'form',
-  },
-  {
-    token: 'leadProfessionalTitle',
-    label: 'Lead professional title',
-    description: "That person's title/role",
-    group: 'Parties',
-    input: 'text',
-    example: 'Managing Partner',
-    modules: CRM_LIKE,
-    source: 'form',
-  },
-  {
-    token: 'clientRepresentativeName',
-    label: 'Client representative',
-    description: "The client's authorised representative for this engagement",
-    group: 'Parties',
-    input: 'text',
-    example: 'John Mwangi',
-    modules: CRM_LIKE,
-    source: 'form',
-  },
-  {
-    token: 'clientRepresentativeTitle',
-    label: 'Client representative title',
-    description: "That person's title/role",
-    group: 'Parties',
-    input: 'text',
-    example: 'Chief Executive Officer',
     modules: CRM_LIKE,
     source: 'form',
   },
@@ -255,7 +114,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     label: 'Commencement date',
     description:
       'When the engagement starts — distinct from the effective date (today), since an engagement often starts on a different date than the contract is signed',
-    group: 'Dates',
+    group: 'Engagement',
     input: 'date',
     example: '2026-12-01',
     modules: CRM_LIKE,
@@ -273,28 +132,6 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     source: 'form',
   },
   {
-    token: 'tenantRegisteredAddress',
-    label: 'Our registered address',
-    description:
-      "The firm's own registered office address, as typed on the drafting form",
-    group: 'Parties',
-    input: 'textarea',
-    example: 'KG 7 Ave, Kigali, Rwanda',
-    modules: CRM_LIKE,
-    source: 'form',
-  },
-  {
-    token: 'clientRegisteredAddress',
-    label: 'Counterparty registered address',
-    description:
-      "The counterparty's registered office address, as typed on the drafting form",
-    group: 'Parties',
-    input: 'textarea',
-    example: 'Westlands, Nairobi, Kenya',
-    modules: CRM_LIKE,
-    source: 'form',
-  },
-  {
     token: 'serviceCategory',
     label: 'Service category',
     description:
@@ -305,8 +142,6 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     modules: CRM_LIKE,
     source: 'form',
   },
-
-  // ── GRC deal contracts — filled from the deal itself ─────────
   {
     token: 'dealName',
     label: 'Deal name',
@@ -413,7 +248,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     token: 'dealStartDate',
     label: 'Deal start date',
     description: 'The date the deal opened',
-    group: 'Dates',
+    group: 'Deal dates',
     input: 'date',
     example: '2026-09-01',
     modules: ['grc'],
@@ -423,7 +258,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     token: 'targetCloseDate',
     label: 'Target close date',
     description: "The deal's target completion date",
-    group: 'Dates',
+    group: 'Deal dates',
     input: 'date',
     example: '2026-12-15',
     modules: ['grc'],
@@ -433,7 +268,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     token: 'longstopDate',
     label: 'Longstop date',
     description: 'The date after which the deal can lapse if not completed',
-    group: 'Dates',
+    group: 'Deal dates',
     input: 'date',
     example: '2027-02-28',
     modules: ['grc'],
@@ -443,7 +278,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     token: 'buyerName',
     label: 'Buyer — name',
     description: "First party recorded on the deal's Buyer side",
-    group: 'Parties',
+    group: 'Deal parties',
     input: 'text',
     example: 'Grace Mukamana',
     modules: ['grc'],
@@ -453,7 +288,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     token: 'buyerTitle',
     label: 'Buyer — title',
     description: "That party's title or organisation, as recorded on the deal",
-    group: 'Parties',
+    group: 'Deal parties',
     input: 'text',
     example: 'Director, Atlas Holdings',
     modules: ['grc'],
@@ -463,7 +298,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     token: 'buyerEmail',
     label: 'Buyer — email',
     description: "That party's email address",
-    group: 'Parties',
+    group: 'Deal parties',
     input: 'text',
     example: 'grace@atlas.example',
     modules: ['grc'],
@@ -473,7 +308,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     token: 'sellerName',
     label: 'Seller — name',
     description: "First party recorded on the deal's Seller side",
-    group: 'Parties',
+    group: 'Deal parties',
     input: 'text',
     example: 'Peter Okello',
     modules: ['grc'],
@@ -483,7 +318,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     token: 'sellerTitle',
     label: 'Seller — title',
     description: "That party's title or organisation, as recorded on the deal",
-    group: 'Parties',
+    group: 'Deal parties',
     input: 'text',
     example: 'Founder, Meridian Capital',
     modules: ['grc'],
@@ -493,7 +328,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     token: 'sellerEmail',
     label: 'Seller — email',
     description: "That party's email address",
-    group: 'Parties',
+    group: 'Deal parties',
     input: 'text',
     example: 'peter@meridian.example',
     modules: ['grc'],
@@ -504,7 +339,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     label: 'All parties (list)',
     description:
       'Every party recorded on the deal as a list — name, title and side. Insert this once; it expands into a whole list.',
-    group: 'Parties',
+    group: 'Deal parties',
     input: 'textarea',
     example: 'Grace Mukamana — Director, Atlas Holdings (Buyer)',
     modules: ['grc'],
@@ -603,8 +438,6 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     singleUse: true,
     source: 'record',
   },
-
-  // ── HR employment contracts & letters ────────────────────────
   {
     token: 'employeeName',
     label: 'Employee name',
@@ -630,7 +463,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     token: 'startDate',
     label: 'Start date',
     description: "The employee's start date — blank for a candidate",
-    group: 'Dates',
+    group: 'Employment',
     input: 'date',
     example: '2026-12-01',
     modules: ['hr'],
@@ -640,7 +473,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     token: 'salary',
     label: 'Salary',
     description: "The employee's salary amount — blank for a candidate",
-    group: 'Commercial',
+    group: 'Pay',
     input: 'number',
     example: '3500000',
     modules: ['hr'],
@@ -650,7 +483,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     token: 'salaryCurrency',
     label: 'Salary currency',
     description: "The employee's salary currency",
-    group: 'Commercial',
+    group: 'Pay',
     input: 'currency',
     example: 'RWF',
     modules: ['hr'],
@@ -836,7 +669,7 @@ for (const f of MERGE_FIELD_REGISTRY) {
       if (existing) {
         // A field the system already fills: keep its definition, just make
         // it available to the module the product owner lists it under.
-        // (copy first — several entries share the CRM_LIKE / ALL_CONTRACT arrays)
+        // (copy first — several entries share the CRM_LIKE array)
         for (const m of sec.modules)
           if (!existing.modules.includes(m))
             existing.modules = [...existing.modules, m];

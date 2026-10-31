@@ -14,21 +14,13 @@ import {
   CPStatus,
 } from '../schemas';
 import {
-  Clause,
-  ClauseDocument,
-  Precedent,
-  PrecedentDocument,
-} from '../schemas';
-import {
   CreateDealDto,
   SetStageDto,
   SetStatusDto,
   UpdateTermSheetDto,
   AddDDItemDto,
   UpdateDDItemDto,
-  CreateContractDto,
   RenameContractDto,
-  AddContractSectionDto,
   UpdateContractSectionBodyDto,
   AddContractCommentDto,
   SetContractVariableDto,
@@ -41,7 +33,6 @@ import {
   UpdatePartyDto,
   AddPartyDto,
   SubmitReviewDto,
-  AddContractSectionFromPrecedentDto,
   AddRedlineDto,
   UpdateCommercialTermsDto,
 } from '../dtos';
@@ -52,16 +43,17 @@ import { randomBytes } from 'crypto';
 import * as PDFKitImport from 'pdfkit';
 import { User, UserDocument } from 'src/modules/auth/schemas';
 import { htmlToParagraphs } from 'src/common/utils/html-to-paragraphs.util';
+import {
+  describeContractFields,
+  normalizeFieldValue,
+  renderDealContractBody,
+} from '../../../../common/utils/deal.contract.util';
 const PDFDocument = ((PDFKitImport as any).default ?? PDFKitImport) as any;
 
 @Injectable()
 export class DealService {
   constructor(
     @InjectModel(Deal.name) private readonly model: Model<DealDocument>,
-    @InjectModel(Clause.name)
-    private readonly clauseModel: Model<ClauseDocument>,
-    @InjectModel(Precedent.name)
-    private readonly precedentModel: Model<PrecedentDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly emailService: EmailService,
   ) {}
@@ -96,10 +88,19 @@ export class DealService {
       cpsProgress: this.cpsProgress(deal),
       contracts: (deal.contracts ?? []).map((c: any) => ({
         ...c,
-        sections: (c.sections ?? []).map((s: any) => ({
-          ...s,
-          lines: htmlToParagraphs(s.body),
-        })),
+        // Merge fields resolved — what the document actually reads as. The
+        // stored body keeps {{token}} so a field can be changed later.
+        sections: (c.sections ?? []).map((s: any) => {
+          const renderedBody = renderDealContractBody(c.variables, s.body);
+          return {
+            ...s,
+            renderedBody,
+            // Redlines anchor to these lines, so they come from the
+            // resolved text — what every reader (and the PDF) sees.
+            lines: htmlToParagraphs(renderedBody),
+          };
+        }),
+        fields: describeContractFields(c),
       })),
     };
   }
@@ -348,23 +349,6 @@ export class DealService {
     return contract;
   }
 
-  async createContract(
-    tenantId: string,
-    dealId: string,
-    dto: CreateContractDto,
-  ) {
-    const deal = await this.getRawDoc(tenantId, dealId);
-    deal.contracts.push({
-      name: dto.name,
-      sections: [],
-      variables: {},
-      reviewLoop: { tokens: [], responses: [] },
-      pdfUrl: null,
-    } as any);
-    await deal.save();
-    return deal;
-  }
-
   async renameContract(
     tenantId: string,
     dealId: string,
@@ -382,51 +366,6 @@ export class DealService {
     const deal = await this.getRawDoc(tenantId, dealId);
     const contract = this.getContractOrThrow(deal, contractId);
     contract.deleteOne();
-    await deal.save();
-    return deal;
-  }
-
-  async addContractSection(
-    tenantId: string,
-    dealId: string,
-    contractId: string,
-    dto: AddContractSectionDto,
-  ) {
-    const deal = await this.getRawDoc(tenantId, dealId);
-    const contract = this.getContractOrThrow(deal, contractId);
-    const clause = await this.clauseModel
-      .findOne({ _id: dto.clauseId, tenantId: new Types.ObjectId(tenantId) })
-      .lean();
-    if (!clause) throw new NotFoundException('Clause not found');
-    contract.sections.push({
-      clauseId: clause._id,
-      title: clause.title,
-      body: clause.body,
-      comments: [],
-    } as any);
-    await deal.save();
-    return deal;
-  }
-
-  async addContractSectionFromPrecedent(
-    tenantId: string,
-    dealId: string,
-    contractId: string,
-    dto: AddContractSectionFromPrecedentDto,
-  ) {
-    const deal = await this.getRawDoc(tenantId, dealId);
-    const contract = this.getContractOrThrow(deal, contractId);
-    const precedent = await this.precedentModel
-      .findOne({ _id: dto.precedentId, tenantId: new Types.ObjectId(tenantId) })
-      .lean();
-    if (!precedent) throw new NotFoundException('Precedent not found');
-    contract.sections.push({
-      clauseId: null,
-      precedentId: precedent._id,
-      title: precedent.name,
-      body: precedent.content,
-      comments: [],
-    } as any);
     await deal.save();
     return deal;
   }
@@ -514,7 +453,9 @@ export class DealService {
     const contract = this.getContractOrThrow(deal, contractId);
     const section = contract.sections[sectionIndex];
     if (!section) throw new NotFoundException('Section not found');
-    const lines = htmlToParagraphs(section.body);
+    const lines = htmlToParagraphs(
+      renderDealContractBody(contract.variables, section.body),
+    );
     const quotedText = lines[dto.lineIndex] ?? '';
     section.redlines.push({
       lineIndex: dto.lineIndex,
@@ -549,7 +490,9 @@ export class DealService {
     );
     const section = contract.sections[sectionIndex];
     if (!section) throw new NotFoundException('Section not found');
-    const lines = htmlToParagraphs(section.body);
+    const lines = htmlToParagraphs(
+      renderDealContractBody(contract.variables, section.body),
+    );
     const quotedText = lines[dto.lineIndex] ?? '';
     section.redlines.push({
       lineIndex: dto.lineIndex,
@@ -572,7 +515,11 @@ export class DealService {
   ) {
     const deal = await this.getRawDoc(tenantId, dealId);
     const contract = this.getContractOrThrow(deal, contractId);
-    contract.variables[dto.key] = dto.value;
+    const value = normalizeFieldValue(dto.key, dto.value.trim());
+    // A blank value puts the field back to "not filled in yet": it shows
+    // as {{token}} again rather than leaving an empty gap in the text.
+    if (value) contract.variables[dto.key] = value;
+    else delete contract.variables[dto.key];
     contract.markModified('variables');
     await deal.save();
     return deal;
@@ -930,7 +877,9 @@ export class DealService {
       sections: contract.sections.map((s: any, i: number) => ({
         index: i,
         title: s.title,
-        lines: htmlToParagraphs(s.body),
+        lines: htmlToParagraphs(
+          renderDealContractBody(contract.variables, s.body),
+        ),
         redlines: s.redlines ?? [],
       })),
     };
@@ -993,9 +942,7 @@ export class DealService {
     contract: { variables: Record<string, string> },
     body: string,
   ): string {
-    return body.replace(/\[([A-Z_]+)\]/g, (_, k) =>
-      contract.variables[k] ? contract.variables[k] : `[${k}]`,
-    );
+    return renderDealContractBody(contract.variables, body);
   }
 
   private generateContractPdf(

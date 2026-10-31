@@ -248,10 +248,6 @@ export class GenerateFromTemplateDto {
   @IsOptional()
   @IsEnum(['crm', 'kyc_onboarding', 'vendor'])
   origin?: 'crm' | 'kyc_onboarding' | 'vendor';
-  // A deal's own link/fields are never accepted from a client request —
-  // they are set server-side by DealContractService (see
-  // GenerateFromTemplateOptions), so the public DTO deliberately has no
-  // dealId or extra-field properties.
   // Real link to the vendor this contract is with — when set,
   // counterparty name/email are derived from the real vendor
   // record server-side, same rule as clientId.

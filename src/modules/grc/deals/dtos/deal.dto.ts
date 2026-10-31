@@ -10,6 +10,7 @@ import {
   IsEmail,
   IsBoolean,
   IsInt,
+  Matches,
 } from 'class-validator';
 import { DealPartySide, DealType } from '../schemas';
 import {
@@ -76,10 +77,6 @@ export class UpdateDDItemDto {
   materiality?: Materiality;
 }
 
-export class AddContractSectionDto {
-  @ApiProperty() @IsString() clauseId: string;
-}
-
 export class UpdateContractSectionBodyDto {
   @ApiProperty() @IsString() body: string;
 }
@@ -90,7 +87,7 @@ export class AddContractCommentDto {
 }
 
 export class SetContractVariableDto {
-  @ApiProperty() @IsString() key: string;
+  @ApiProperty() @IsString() @Matches(/^\w+$/) key: string;
   @ApiProperty() @IsString() value: string;
 }
 
@@ -161,15 +158,8 @@ export class SubmitReviewDto {
   @ApiPropertyOptional() @IsOptional() @IsString() comment?: string;
 }
 
-export class CreateContractDto {
-  @ApiProperty() @IsString() name: string;
-}
 export class RenameContractDto {
   @ApiProperty() @IsString() name: string;
-}
-
-export class AddContractSectionFromPrecedentDto {
-  @ApiProperty() @IsString() precedentId: string;
 }
 
 export class AddRedlineDto {

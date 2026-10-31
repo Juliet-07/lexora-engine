@@ -257,6 +257,13 @@ export const ReviewLoopSchema = SchemaFactory.createForClass(ReviewLoop);
 @Schema({ timestamps: true })
 export class Contract {
   @Prop({ required: true, trim: true }) name: string;
+  // Contracts are generated from a published template. These record which
+  // one, and the contract's own reference. (Contracts made before templates
+  // existed — assembled from the clause library — have none of these.)
+  @Prop({ type: Types.ObjectId, default: null })
+  templateId: Types.ObjectId | null;
+  @Prop({ default: '' }) templateName: string;
+  @Prop({ default: '' }) reference: string;
   @Prop({ type: [ContractSectionSchema], default: [] })
   sections: ContractSection[];
   @Prop({ type: Object, default: {} }) variables: Record<string, string>;

@@ -22,9 +22,6 @@ export enum ContractType {
   // Management onboarding flow, mirroring the KYC onboarding
   // engagement letter but for a director rather than a client.
   BOARD_APPOINTMENT = 'Board appointment',
-  // A contract drafted inside a GRC deal (SPA, shareholders' agreement,
-  // facility agreement…) from a Super-Admin-published GRC template.
-  DEAL_AGREEMENT = 'Deal agreement',
 }
 
 export enum ContractStage {
@@ -311,27 +308,11 @@ export class ToolContract {
   // client. 'board_onboarding' is the same idea for a board member's
   // appointment letter, generated directly by BoardMemberService.
   @Prop({
-    enum: ['crm', 'kyc_onboarding', 'vendor', 'board_onboarding', 'grc_deal'],
+    enum: ['crm', 'kyc_onboarding', 'vendor', 'board_onboarding'],
     default: 'crm',
     index: true,
   })
-  origin: 'crm' | 'kyc_onboarding' | 'vendor' | 'board_onboarding' | 'grc_deal';
-
-  // Set only for a contract drafted inside a GRC deal ('grc_deal'
-  // origin). The contract lives in Contract Management like any other —
-  // sending, signing, negotiation, amendments — and this is the link
-  // back to the deal it belongs to. dealName is a denormalised label so
-  // lists can show it without a second lookup.
-  @Prop({ type: Types.ObjectId, ref: 'Deal', default: null, index: true })
-  dealId: Types.ObjectId | null;
-  @Prop({ default: '' }) dealName: string;
-
-  // Values for tokens that only a deal contract has (dealName, buyerName,
-  // termSheet…, partiesList…), saved at generation so "Resync merge
-  // fields" can fill any that are still blank — the same job the saved
-  // scopeOfWork/jurisdiction fields do for the CRM tokens.
-  @Prop({ type: Object, default: {} })
-  extraMergeFields: Record<string, string>;
+  origin: 'crm' | 'kyc_onboarding' | 'vendor' | 'board_onboarding';
 
   // Real link back to the vendor this contract is with, set only
   // by the vendor-management flow — parallels mandateId below.

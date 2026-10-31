@@ -39,6 +39,11 @@ import {
   IssueLetterDto,
 } from '../dtos/contract.dto';
 import { ContractPdfService } from './contract-pdf.service';
+import {
+  buildCommonMergeFields,
+  overlayNonEmpty,
+  type TenantCompany,
+} from '../../../common/utils/contract-common-fields';
 
 const DEFAULT_EXPIRY_HOURS = 168; // 7 days
 
@@ -66,7 +71,7 @@ export class ContractService {
   // the mistake this categorization exists to prevent.
   async generateFromCandidate(
     tenantId: string,
-    tenantCompanyName: string,
+    tenant: TenantCompany,
     dto: GenerateContractFromCandidateDto,
   ): Promise<ContractDocument> {
     const tId = new Types.ObjectId(tenantId);
@@ -96,13 +101,23 @@ export class ContractService {
       );
     }
 
-    const fields = buildMergeFieldsForCandidate({
-      candidateName: candidate.name,
-      roleAppliedFor: candidate.roleAppliedFor,
-      workerCategory: candidate.workerCategory,
-      tenantCompanyName,
-      scopeOfWork: dto.scopeOfWork,
-    });
+    // Common fields (Party A = us, Party B = the candidate, our company's
+    // profile details…) first; the HR-specific values win where present.
+    const fields = overlayNonEmpty(
+      buildCommonMergeFields({
+        tenant,
+        title: template.title,
+        scopeOfWork: dto.scopeOfWork,
+        partyB: { name: candidate.name, email: candidate.email },
+      }),
+      buildMergeFieldsForCandidate({
+        candidateName: candidate.name,
+        roleAppliedFor: candidate.roleAppliedFor,
+        workerCategory: candidate.workerCategory,
+        tenantCompanyName: tenant.name,
+        scopeOfWork: dto.scopeOfWork,
+      }),
+    );
 
     return this.contractModel.create({
       tenantId: tId,
@@ -120,7 +135,7 @@ export class ContractService {
 
   async generateForEmployee(
     tenantId: string,
-    tenantCompanyName: string,
+    tenant: TenantCompany,
     dto: GenerateContractForEmployeeDto,
   ): Promise<ContractDocument> {
     const tId = new Types.ObjectId(tenantId);
@@ -148,21 +163,35 @@ export class ContractService {
       );
     }
 
-    const fields = buildMergeFieldsForEmployee({
-      employeeName: `${employee.firstName} ${employee.lastName}`,
-      jobTitle: employee.jobTitle,
-      startDate: employee.startDate
-        ? new Date(employee.startDate).toISOString().slice(0, 10)
-        : '',
-      salary: employee.salary,
-      salaryCurrency: employee.salaryCurrency,
-      workerCategory: employeeCategory,
-      tenantCompanyName,
-      reason: dto.reason,
-      effectiveDate: dto.effectiveDate,
-      endDate: dto.endDate,
-      scopeOfWork: dto.scopeOfWork,
-    });
+    const fields = overlayNonEmpty(
+      buildCommonMergeFields({
+        tenant,
+        title: template.title,
+        scopeOfWork: dto.scopeOfWork,
+        partyB: {
+          name: `${employee.firstName} ${employee.lastName}`,
+          email: employee.email,
+          representativeTitle: employee.jobTitle,
+        },
+        effectiveDate: dto.effectiveDate,
+        expiryDate: dto.endDate,
+      }),
+      buildMergeFieldsForEmployee({
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        jobTitle: employee.jobTitle,
+        startDate: employee.startDate
+          ? new Date(employee.startDate).toISOString().slice(0, 10)
+          : '',
+        salary: employee.salary,
+        salaryCurrency: employee.salaryCurrency,
+        workerCategory: employeeCategory,
+        tenantCompanyName: tenant.name,
+        reason: dto.reason,
+        effectiveDate: dto.effectiveDate,
+        endDate: dto.endDate,
+        scopeOfWork: dto.scopeOfWork,
+      }),
+    );
 
     return this.contractModel.create({
       tenantId: tId,

@@ -69,6 +69,12 @@ export class PlatformContractTemplateController {
     description:
       "Narrow to one area of the module, e.g. 'deals' for GRC deal contracts",
   })
+  @ApiQuery({
+    name: 'compact',
+    required: false,
+    description:
+      "'true' returns just token, label and group (plus common / hidden / aliasOf) — a slim index of the fields, for telling a real field from a typo without downloading every description",
+  })
   @ApiOperation({
     summary:
       'The merge-field registry — every {{token}} a template can use, with label, group, description and a sample value. The single source of truth the template editor reads.',
@@ -76,8 +82,18 @@ export class PlatformContractTemplateController {
   getMergeFields(
     @Query('moduleKey') moduleKey?: string,
     @Query('areaKey') areaKey?: string,
+    @Query('compact') compact?: string,
   ) {
-    return getMergeFieldRegistry(moduleKey, areaKey);
+    const fields = getMergeFieldRegistry(moduleKey, areaKey);
+    if (compact !== 'true') return fields;
+    return fields.map((f) => ({
+      token: f.token,
+      label: f.label,
+      group: f.group,
+      ...(f.common ? { common: true } : {}),
+      ...(f.hidden ? { hidden: true } : {}),
+      ...(f.aliasOf ? { aliasOf: f.aliasOf } : {}),
+    }));
   }
 
   @Get(':id')

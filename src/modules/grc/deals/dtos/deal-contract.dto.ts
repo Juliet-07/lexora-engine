@@ -1,20 +1,33 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsDateString,
   IsEmail,
-  IsEnum,
   IsMongoId,
   IsNumber,
   IsOptional,
   IsString,
   MinLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
-import { ContractType } from 'src/modules/crm/tools/schemas/contract.schema';
+
+// One side of the contract. Party A defaults to the workspace's own
+// company, so only Party B is required.
+export class ContractPartyDto {
+  @ApiProperty() @IsString() @MinLength(1) name: string;
+  @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() address?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() representative?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  representativeTitle?: string;
+}
 
 // Generating a contract inside a deal. Everything about the deal itself
-// (parties, term sheet, dates, jurisdiction…) is read from the deal on
-// the server — the form only carries what the deal can't know.
+// (parties, term sheet, dates, jurisdiction…) and about our own company is
+// read on the server — the form only carries what they can't know.
 export class GenerateDealContractDto {
   @ApiProperty({ description: 'A published GRC "Deals" platform template' })
   @IsMongoId()
@@ -22,21 +35,22 @@ export class GenerateDealContractDto {
 
   @ApiProperty() @IsString() @MinLength(1) title: string;
 
-  @ApiPropertyOptional({ enum: ContractType })
+  @ApiPropertyOptional({ description: 'Defaults to our own company' })
   @IsOptional()
-  @IsEnum(ContractType)
-  type?: ContractType;
+  @ValidateNested()
+  @Type(() => ContractPartyDto)
+  partyA?: ContractPartyDto;
 
-  // Who the contract is with / goes to for signature. Picked from the
-  // deal's own parties in the UI, or typed for someone not on the deal.
-  @ApiProperty() @IsString() @MinLength(1) counterparty: string;
-  @ApiProperty() @IsEmail() counterpartyEmail: string;
+  @ApiProperty()
+  @ValidateNested()
+  @Type(() => ContractPartyDto)
+  partyB: ContractPartyDto;
 
-  // Default to the deal's own value and currency when omitted.
+  // Default to the deal's own value, currency and jurisdiction when omitted.
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) value?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
-
+  @ApiPropertyOptional() @IsOptional() @IsString() governingLaw?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() scopeOfWork?: string;
-  @ApiProperty() @IsDateString() expiresOn: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() effectiveDate?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() expiresOn?: string;
 }
