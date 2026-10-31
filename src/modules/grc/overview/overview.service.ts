@@ -24,11 +24,7 @@ import {
   AuditService,
   RegulatoryChangeService,
 } from '../compliance/services';
-import {
-  DealService,
-  ClauseService,
-  PrecedentService,
-} from '../deals/services';
+import { DealService } from '../deals/services';
 import {
   ValuationService,
   PortfolioService,
@@ -82,8 +78,6 @@ export class OverviewService {
     private readonly regulatoryChangeService: RegulatoryChangeService,
     // Deals
     private readonly dealService: DealService,
-    private readonly clauseService: ClauseService,
-    private readonly precedentService: PrecedentService,
     // Deal Intelligence
     private readonly valuationService: ValuationService,
     private readonly portfolioService: PortfolioService,
@@ -196,12 +190,8 @@ export class OverviewService {
   }
 
   private async getDeals(tenantId: string) {
-    const [deals, clauses, precedents] = await Promise.all([
-      this.dealService.getAll(tenantId),
-      this.clauseService.getAll(tenantId),
-      this.precedentService.getAll(tenantId),
-    ]);
-    return { deals, clauses, precedents };
+    const deals = await this.dealService.getAll(tenantId);
+    return { deals };
   }
 
   private async getDealIntelligence(tenantId: string) {

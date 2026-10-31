@@ -19,10 +19,6 @@ import {
   PortfolioRiskSchema,
 } from 'src/modules/crm/projects/schemas/portfolio-risk.schema';
 import {
-  Clause,
-  ClauseSchema,
-} from 'src/modules/grc/deals/schemas/clause.schema';
-import {
   Contact,
   ContactSchema,
 } from 'src/modules/crm/crm/schemas/contact.schema';
@@ -127,7 +123,6 @@ import {
       { name: User.name, schema: UserSchema },
       { name: ClientProfileRecord.name, schema: ClientProfileSchema },
       { name: PortfolioRisk.name, schema: PortfolioRiskSchema },
-      { name: Clause.name, schema: ClauseSchema },
       {
         name: TenantContractTemplate.name,
         schema: TenantContractTemplateSchema,

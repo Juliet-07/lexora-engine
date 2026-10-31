@@ -192,18 +192,6 @@ export class ContractController {
     );
   }
 
-  @Get('clause-library')
-  @ApiOperation({
-    summary:
-      'Real clause library — same tenant-scoped collection the Deals module manages',
-  })
-  getClauseLibrary(
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.getClauseLibrary(t || u);
-  }
-
   @Get('vendor/:vendorId')
   @ApiOperation({ summary: "One vendor's own contracts" })
   getVendorContracts(

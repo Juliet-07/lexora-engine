@@ -82,10 +82,6 @@ import {
   PortfolioRisk,
   PortfolioRiskDocument,
 } from 'src/modules/crm/projects/schemas/portfolio-risk.schema';
-import {
-  Clause,
-  ClauseDocument,
-} from 'src/modules/grc/deals/schemas/clause.schema';
 
 const DEFAULT_SIGNING_EXPIRY_HOURS = 168; // 7 days
 
@@ -302,8 +298,6 @@ export class ContractService {
     private readonly emailService: EmailService,
     @InjectModel(PortfolioRisk.name)
     private readonly portfolioRiskModel: Model<PortfolioRiskDocument>,
-    @InjectModel(Clause.name)
-    private readonly clauseModel: Model<ClauseDocument>,
     @InjectModel(Vendor.name)
     private readonly vendorModel: Model<VendorDocument>,
     private readonly eventEmitter: EventEmitter2,
@@ -750,21 +744,6 @@ export class ContractService {
     c.markModified('approvalChain');
     await c.save();
     return c.toObject();
-  }
-
-  // Real clause library — the same tenant-scoped collection the
-  // Deals & Transactions module manages, exposed here under a
-  // CRM-gated route so a tenant without the Deals module enabled
-  // can still browse it when drafting a contract. Queries the model
-  // directly rather than depending on ClauseService as an injected
-  // provider, since that requires DealsModule's exports to reach
-  // this module cleanly — a real dependency to avoid when a direct,
-  // read-only query does the same job.
-  async getClauseLibrary(tenantId: string) {
-    return this.clauseModel
-      .find({ tenantId: new Types.ObjectId(tenantId) })
-      .sort({ category: 1, title: 1 })
-      .lean();
   }
 
   // Real, live-computed views — never separately stored, so they

@@ -1,27 +1,8 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import {
-  Clause,
-  ClauseSchema,
-  Deal,
-  DealSchema,
-  Precedent,
-  PrecedentFolder,
-  PrecedentFolderSchema,
-  PrecedentSchema,
-} from './schemas';
-import {
-  ClauseService,
-  DealContractService,
-  DealService,
-  PrecedentService,
-} from './services';
-import {
-  ClauseController,
-  DealContractController,
-  DealController,
-  PrecedentController,
-} from './controllers';
+import { Deal, DealSchema } from './schemas';
+import { DealContractService, DealService } from './services';
+import { DealContractController, DealController } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 // Deal contracts live inside the deal (Deal.contracts[]) and are generated
@@ -35,9 +16,6 @@ import {
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: Clause.name, schema: ClauseSchema },
-      { name: Precedent.name, schema: PrecedentSchema },
-      { name: PrecedentFolder.name, schema: PrecedentFolderSchema },
       { name: Deal.name, schema: DealSchema },
       { name: User.name, schema: UserSchema },
       {
@@ -46,19 +24,8 @@ import {
       },
     ]),
   ],
-  providers: [
-    ClauseService,
-    PrecedentService,
-    DealService,
-    DealContractService,
-    EmailService,
-  ],
-  controllers: [
-    ClauseController,
-    PrecedentController,
-    DealController,
-    DealContractController,
-  ],
-  exports: [ClauseService, PrecedentService, DealService],
+  providers: [DealService, DealContractService, EmailService],
+  controllers: [DealController, DealContractController],
+  exports: [DealService],
 })
 export class DealsModule {}

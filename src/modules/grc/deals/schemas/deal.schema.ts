@@ -1,6 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
-import { DealType } from './clause.schema';
 
 export type DealDocument = Deal & Document;
 
@@ -15,6 +14,15 @@ export const DEAL_STAGES = [
   'Post-Completion',
 ] as const;
 export type DealStage = (typeof DEAL_STAGES)[number];
+
+export enum DealType {
+  MA = 'M&A',
+  JV = 'JV',
+  RESTRUCTURE = 'Restructure',
+  CAPITAL_RAISE = 'Capital Raise',
+  DISPOSAL = 'Disposal',
+  SPIN_OFF = 'Spin-off',
+}
 
 export enum DealStatus {
   ACTIVE = 'Active',
@@ -132,10 +140,6 @@ export const RedlineSchema = SchemaFactory.createForClass(Redline);
 
 @Schema({ _id: false })
 export class ContractSection {
-  @Prop({ type: Types.ObjectId, ref: 'Clause', default: null })
-  clauseId: Types.ObjectId | null;
-  @Prop({ type: Types.ObjectId, ref: 'Precedent', default: null })
-  precedentId: Types.ObjectId | null;
   @Prop({ required: true }) title: string;
   @Prop({ required: true }) body: string;
   @Prop({ type: [ContractCommentSchema], default: [] })
@@ -259,7 +263,7 @@ export class Contract {
   @Prop({ required: true, trim: true }) name: string;
   // Contracts are generated from a published template. These record which
   // one, and the contract's own reference. (Contracts made before templates
-  // existed — assembled from the clause library — have none of these.)
+  // existed have none of these.)
   @Prop({ type: Types.ObjectId, default: null })
   templateId: Types.ObjectId | null;
   @Prop({ default: '' }) templateName: string;
