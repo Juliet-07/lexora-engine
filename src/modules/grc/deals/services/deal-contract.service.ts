@@ -145,7 +145,7 @@ export class DealContractService {
     const out: {
       token: string;
       label: string;
-      source: 'deal' | 'auto' | 'form' | 'unavailable' | 'unknown';
+      source: 'deal' | 'auto' | 'form' | 'clause' | 'unavailable' | 'unknown';
       value: string;
       filled: boolean;
     }[] = [];
@@ -161,7 +161,9 @@ export class DealContractService {
             ? 'deal'
             : def.source === 'auto'
               ? 'auto'
-              : 'form';
+              : def.source === 'clause'
+                ? 'clause'
+                : 'form';
         const value = source === 'deal' ? (dealFields[token] ?? '') : '';
         out.push({
           token,
@@ -175,7 +177,13 @@ export class DealContractService {
         out.push({
           token,
           label: known?.label ?? token,
-          source: known ? 'unavailable' : 'unknown',
+          // A clause-level field the product owner lists under another module
+          // is still just a detail to complete on the contract.
+          source: known
+            ? known.source === 'clause'
+              ? 'clause'
+              : 'unavailable'
+            : 'unknown',
           value: '',
           filled: false,
         });

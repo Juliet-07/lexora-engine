@@ -63,12 +63,21 @@ export class PlatformContractTemplateController {
     description:
       'crm | kyc_aml | hr | grc — the fields a template for that module can use. Omit for every field.',
   })
+  @ApiQuery({
+    name: 'areaKey',
+    required: false,
+    description:
+      "Narrow to one area of the module, e.g. 'deals' for GRC deal contracts",
+  })
   @ApiOperation({
     summary:
       'The merge-field registry — every {{token}} a template can use, with label, group, description and a sample value. The single source of truth the template editor reads.',
   })
-  getMergeFields(@Query('moduleKey') moduleKey?: string) {
-    return getMergeFieldRegistry(moduleKey);
+  getMergeFields(
+    @Query('moduleKey') moduleKey?: string,
+    @Query('areaKey') areaKey?: string,
+  ) {
+    return getMergeFieldRegistry(moduleKey, areaKey);
   }
 
   @Get(':id')

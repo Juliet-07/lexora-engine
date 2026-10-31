@@ -635,7 +635,10 @@ export class TenantContractTemplateController {
       "The merge-field registry — labels, groups and input kinds for every {{token}}, so the contract editor's Merge Fields panel names deal and engagement fields the same way the template editor does",
   })
   getMergeFields() {
-    return getMergeFieldRegistry();
+    // Clause-level fields from the product owner's list (thousands of them)
+    // have no system value and are labelled the same way from their name by
+    // the tenant app, so they are left out to keep this response small.
+    return getMergeFieldRegistry().filter((f) => f.source !== 'clause');
   }
 
   @Get('folders')

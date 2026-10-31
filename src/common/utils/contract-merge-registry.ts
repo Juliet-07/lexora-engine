@@ -20,7 +20,9 @@
 // is never silent.
 // ═══════════════════════════════════════════════════════════════
 
-export type MergeFieldModule = 'crm' | 'kyc_aml' | 'hr' | 'grc';
+import { PO_FIELDS, type PoFieldSection } from './contract-merge-po-fields';
+
+export type MergeFieldModule = 'crm' | 'kyc_aml' | 'hr' | 'grc' | 'finance';
 
 export type MergeFieldInput =
   | 'text'
@@ -46,8 +48,21 @@ export interface MergeFieldDefinition {
    * placing it more than once in a template repeats the entire block.
    */
   singleUse?: boolean;
-  /** Where the value comes from when a contract is generated. */
-  source: 'form' | 'auto' | 'record';
+  /**
+   * Where the value comes from when a contract is generated:
+   *  - record: read from the deal / client / employee record
+   *  - auto:   filled by the system (our company name, today's date)
+   *  - form:   typed on the generate form
+   *  - clause: a clause-level variable of the template library (from the
+   *            product owner's field list) — no system value; it stays a
+   *            visible {{token}} until filled in on the contract itself
+   */
+  source: 'form' | 'auto' | 'record' | 'clause';
+  /**
+   * Template areas (within a module) this field belongs to, e.g. 'deals'
+   * for GRC. Omitted = usable in every area of its modules.
+   */
+  areas?: string[];
 }
 
 const CRM_LIKE: MergeFieldModule[] = ['crm', 'kyc_aml'];
@@ -103,7 +118,7 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
     description: "This workspace's own registered business name",
     group: 'Parties',
     input: 'text',
-    example: 'Lexora Africa',
+    example: 'Wekraft Ltd',
     modules: [...ALL_CONTRACT, 'hr'],
     source: 'auto',
   },
@@ -685,6 +700,165 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
   },
 ];
 
+// ───────────────────────────────────────────────────────────────
+// Product owner's field list → registry entries
+// ───────────────────────────────────────────────────────────────
+
+const ACRONYMS = new Set([
+  'aml',
+  'kyc',
+  'cdd',
+  'ip',
+  'hr',
+  'it',
+  'ict',
+  'ceo',
+  'cfo',
+  'coo',
+  'esop',
+  'jv',
+  'lp',
+  'dscr',
+  'bcm',
+  'bia',
+  'agm',
+  'egm',
+  'id',
+  'poa',
+  'cctv',
+  'vat',
+  'gdpr',
+  'nda',
+  'ppp',
+  'spa',
+  'mou',
+  'loi',
+  'cp',
+  'cps',
+  'ai',
+  'kpi',
+  'sla',
+  'roi',
+  'ebitda',
+  'dpa',
+  'tin',
+  'uk',
+  'us',
+  'usd',
+  'rwf',
+  'eu',
+  'ngo',
+  'sme',
+  'api',
+  'sso',
+  'url',
+  'pdf',
+  'ui',
+  'ux',
+  'sop',
+  'qa',
+  'rfp',
+  'rfq',
+  'tor',
+]);
+
+/**
+ * "annualLeaveNoticeDays" → "Annual leave notice days". Whole-word
+ * acronyms are upper-cased and "Pct" becomes "%". The tenant app has a
+ * port of this (src/lib/crm/merge-fields.ts) so the label a Super Admin
+ * picks in the editor is the one a tenant sees on the contract.
+ */
+export function humanizeMergeToken(token: string): string {
+  const words = token
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .split(/[\s_-]+/)
+    .filter(Boolean);
+  return words
+    .map((w, i) => {
+      const bare = w.toLowerCase().replace(/\d+$/, '');
+      const digits = w.slice(bare.length);
+      if (bare === 'pct') return '%' + digits;
+      if (ACRONYMS.has(bare)) return bare.toUpperCase() + digits;
+      // A lone capital is a party letter ("partyAName" → "Party A name").
+      if (/^[A-Z]$/.test(w)) return w;
+      return i === 0 ? w[0].toUpperCase() + w.slice(1) : w.toLowerCase();
+    })
+    .join(' ');
+}
+
+const SECTIONS: Record<
+  PoFieldSection,
+  { modules: MergeFieldModule[]; group: string; areas?: string[] }
+> = {
+  aml_kyc: { modules: ['kyc_aml'], group: 'AML & KYC clauses' },
+  hr: { modules: ['hr'], group: 'HR clauses' },
+  crm_contracts: {
+    modules: ['crm'],
+    group: 'Contract clauses',
+    areas: ['contracts'],
+  },
+  crm_adr: {
+    modules: ['crm'],
+    group: 'Dispute resolution & ADR clauses',
+    areas: ['adr-litigation'],
+  },
+  finance: { modules: ['finance'], group: 'Finance clauses' },
+  grc_governance: {
+    modules: ['grc'],
+    group: 'Governance, risk & compliance clauses',
+    areas: ['compliance', 'risk'],
+  },
+  grc_deals: {
+    modules: ['grc'],
+    group: 'Deal & transaction clauses',
+    areas: ['deals'],
+  },
+};
+
+const guessInput = (token: string): MergeFieldInput =>
+  /Date$/.test(token) ? 'date' : 'text';
+
+// Fields the system fills itself that only make sense on a deal.
+for (const f of MERGE_FIELD_REGISTRY) {
+  if (f.modules.length === 1 && f.modules[0] === 'grc') f.areas = ['deals'];
+}
+
+{
+  const byToken = new Map(MERGE_FIELD_REGISTRY.map((f) => [f.token, f]));
+  for (const [key, tokens] of Object.entries(PO_FIELDS) as [
+    PoFieldSection,
+    string[],
+  ][]) {
+    const sec = SECTIONS[key];
+    for (const token of tokens) {
+      const existing = byToken.get(token);
+      if (existing) {
+        // A field the system already fills: keep its definition, just make
+        // it available to the module the product owner lists it under.
+        // (copy first — several entries share the CRM_LIKE / ALL_CONTRACT arrays)
+        for (const m of sec.modules)
+          if (!existing.modules.includes(m))
+            existing.modules = [...existing.modules, m];
+        continue;
+      }
+      const def: MergeFieldDefinition = {
+        token,
+        label: humanizeMergeToken(token),
+        description: '',
+        group: sec.group,
+        input: guessInput(token),
+        example: '',
+        modules: [...sec.modules],
+        source: 'clause',
+        areas: sec.areas ? [...sec.areas] : undefined,
+      };
+      MERGE_FIELD_REGISTRY.push(def);
+      byToken.set(token, def);
+    }
+  }
+}
+
 /** kyc_aml and crm are one pipeline (ContractService.generateFromTemplate). */
 export function isMergeFieldModule(
   moduleKey: string | undefined | null,
@@ -693,16 +867,23 @@ export function isMergeFieldModule(
     moduleKey === 'crm' ||
     moduleKey === 'kyc_aml' ||
     moduleKey === 'hr' ||
-    moduleKey === 'grc'
+    moduleKey === 'grc' ||
+    moduleKey === 'finance'
   );
 }
 
 /** Fields usable in a template for `moduleKey`; every field for an unknown/unset module. */
 export function getMergeFieldRegistry(
   moduleKey?: string | null,
+  areaKey?: string | null,
 ): MergeFieldDefinition[] {
   if (!isMergeFieldModule(moduleKey)) return MERGE_FIELD_REGISTRY;
-  return MERGE_FIELD_REGISTRY.filter((f) => f.modules.includes(moduleKey));
+  return MERGE_FIELD_REGISTRY.filter(
+    (f) =>
+      f.modules.includes(moduleKey) &&
+      // A field tied to areas is only offered in those areas.
+      (!areaKey || !f.areas || f.areas.includes(areaKey)),
+  );
 }
 
 /** Fields whose value is a whole HTML block (list) — placed in a <div>, once. */
