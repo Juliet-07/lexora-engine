@@ -42,6 +42,13 @@ import { BoardMemberService } from 'src/modules/grc/governance/services';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { resolveBusinessName } from 'src/common/utils/resolve-business-name.util';
+import { loadTenantCompany } from 'src/common/utils/contract-common-fields';
+import {
+  buildPolicyMergeFields,
+  renderPolicyContent,
+  renderPolicyTitle,
+  setPolicyFieldValues,
+} from 'src/common/utils/policy-merge-fields';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   BOARD_NOTIFICATION_EVENT,
@@ -273,11 +280,29 @@ export class PolicyService implements OnModuleInit {
     const count = await this.model.countDocuments({ tenantId: tId });
     const documentReference = `POL-${prefix}-${String(count + 1).padStart(3, '0')}`;
 
+    // Merge fields in the template ({{tenantCompanyName}}, {{policyOwner}}…)
+    // are filled where the system knows the value and left as visible
+    // {{tokens}} where it doesn't — the editor's Merge Fields panel finishes
+    // the job. Each field is wrapped so the panel can find it again.
+    const reference = documentReference;
+    const company = await loadTenantCompany(this.userModel, tenantId);
+    const mergeValues = buildPolicyMergeFields({
+      company,
+      policy: {
+        title: dto.title,
+        category,
+        owner: dto.owner,
+        approvalAuthority: dto.approvalAuthority,
+        reviewFrequency: dto.reviewFrequency ?? ReviewFrequency.ANNUAL,
+        version: 'v1',
+        documentReference: reference,
+      },
+    });
     const sections = template
       ? template.sections.map((s, i) => ({
           id: `s${i + 1}`,
-          title: s.title,
-          content: s.content ?? '',
+          title: renderPolicyTitle(s.title, mergeValues),
+          content: renderPolicyContent(s.content ?? '', mergeValues),
           order: i,
         }))
       : [];
@@ -481,6 +506,24 @@ export class PolicyService implements OnModuleInit {
     if (!section) throw new NotFoundException('Section not found');
     if (dto.title !== undefined) section.title = dto.title;
     if (dto.content !== undefined) section.content = dto.content;
+    p.markModified('sections');
+    await p.save();
+    return p;
+  }
+
+  /**
+   * The editor's Merge Fields panel: sets the value of one or more fields
+   * everywhere they appear in the policy, across every section at once.
+   */
+  async setMergeFieldValues(
+    tenantId: string,
+    id: string,
+    values: Record<string, string>,
+  ) {
+    const p = await this.getRawDoc(tenantId, id);
+    for (const section of p.sections) {
+      section.content = setPolicyFieldValues(section.content ?? '', values);
+    }
     p.markModified('sections');
     await p.save();
     return p;

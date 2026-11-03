@@ -34,6 +34,11 @@ import {
   BoardNotificationEvent,
   BoardNotificationType,
 } from 'src/modules/board/board-notification.event';
+import { loadTenantCompany } from 'src/common/utils/contract-common-fields';
+import {
+  buildPolicyMergeFields,
+  renderPolicyContent,
+} from 'src/common/utils/policy-merge-fields';
 
 @Injectable()
 export class GovernanceCodeService {
@@ -70,7 +75,17 @@ export class GovernanceCodeService {
         appliesTo: PolicyTemplateAppliesTo.GOVERNANCE_CODE,
       });
       if (template) {
-        body = this.sectionsToBody(dto.title, template.sections);
+        // Template fields ({{tenantCompanyName}}…) are filled from the
+        // workspace profile; the rest stay visible as {{tokens}}.
+        const company = await loadTenantCompany(this.userModel, tenantId);
+        const values = buildPolicyMergeFields({
+          company,
+          policy: { title: dto.title, category: dto.category },
+        });
+        body = renderPolicyContent(
+          this.sectionsToBody(dto.title, template.sections),
+          values,
+        );
         templateId = template._id as Types.ObjectId;
       }
     }

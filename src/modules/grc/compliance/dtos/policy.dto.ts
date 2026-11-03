@@ -6,6 +6,7 @@ import {
   IsArray,
   IsDateString,
   IsBoolean,
+  IsObject,
 } from 'class-validator';
 import {
   PolicyType,
@@ -90,6 +91,14 @@ export class UpdatePolicyPropertiesDto {
 export class UpsertSectionDto {
   @ApiPropertyOptional() @IsOptional() @IsString() title?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() content?: string;
+}
+
+// The editor's Merge Fields panel: field token → the value to put wherever
+// that field appears in the policy.
+export class SetPolicyMergeFieldsDto {
+  @ApiProperty({ type: 'object', additionalProperties: { type: 'string' } })
+  @IsObject()
+  values: Record<string, string>;
 }
 
 export class SetPolicyStatusDto {

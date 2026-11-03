@@ -41,7 +41,15 @@ export class CreateContractDto {
   @ApiPropertyOptional() @IsOptional() @IsMongoId() clientId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() counterparty?: string;
   @ApiPropertyOptional() @IsOptional() @IsEmail() counterpartyEmail?: string;
-  @ApiProperty({ enum: ContractType }) @IsEnum(ContractType) type: ContractType;
+  // No longer asked on the form — when left out it is worked out from the
+  // title / category (see inferContractType) and who the contract is with.
+  @ApiPropertyOptional({ enum: ContractType })
+  @IsOptional()
+  @IsEnum(ContractType)
+  type?: ContractType;
+  // Real link to a registered, approved vendor — name/email come from the
+  // vendor record server-side, same rule as clientId.
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() vendorId?: string;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) value?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiProperty() @IsDateString() expiresOn: string;
@@ -178,12 +186,13 @@ export class GenerateFromTemplateDto {
   @IsEnum(['platform', 'tenant'])
   templateSource: 'platform' | 'tenant';
   @ApiProperty() @IsString() title: string;
-  // Explicit, not inferred from the template — platform templates
-  // use a category enum (Employment/Commercial/...) while
-  // ToolContract uses a different type enum (MSA/SOW/...); rather
-  // than guess a mapping between two enums that only partially
-  // overlap, the person picks the real contract type directly.
-  @ApiProperty({ enum: ContractType }) @IsEnum(ContractType) type: ContractType;
+  // Optional now: the form no longer asks for it. Worked out from the
+  // template's category and title, and who the contract is with, when left
+  // out (see inferContractType); a caller that does pass one still wins.
+  @ApiPropertyOptional({ enum: ContractType })
+  @IsOptional()
+  @IsEnum(ContractType)
+  type?: ContractType;
   // Real link to a registered client — when set, name/email are
   // derived from the real client record server-side. When not set,
   // both fields below are required (an external party).

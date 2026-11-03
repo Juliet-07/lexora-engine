@@ -1,3 +1,4 @@
+import { inferContractType } from 'src/common/utils/contract-type.util';
 import {
   refreshTableOfContents,
   renderTemplateDocument,
@@ -408,7 +409,7 @@ export class ContractService {
     const { counterparty, counterpartyEmail } = await this.resolveCounterparty(
       tenantId,
       dto.clientId,
-      undefined,
+      dto.vendorId,
       dto.counterparty,
       dto.counterpartyEmail,
     );
@@ -419,13 +420,17 @@ export class ContractService {
       title: dto.title,
       counterparty,
       counterpartyEmail,
-      type: dto.type,
+      type:
+        dto.type ??
+        inferContractType({ title: dto.title, withVendor: !!dto.vendorId }),
       value: dto.value ?? 0,
       currency: dto.currency ?? 'USD',
       expiresOn: new Date(dto.expiresOn),
       autoRenew: dto.autoRenew ?? false,
       owner: dto.owner ?? '',
       clientId: dto.clientId ? new Types.ObjectId(dto.clientId) : null,
+      vendorId: dto.vendorId ? new Types.ObjectId(dto.vendorId) : null,
+      origin: dto.vendorId ? 'vendor' : 'crm',
       mandateId: dto.mandateId ? new Types.ObjectId(dto.mandateId) : null,
       mandateName: dto.mandateName ?? '',
       // Real, directly-authored content — a contract doesn't need a
@@ -969,7 +974,14 @@ export class ContractService {
       title: dto.title,
       counterparty,
       counterpartyEmail,
-      type: dto.type,
+      type:
+        dto.type ??
+        inferContractType({
+          title: dto.title,
+          templateTitle: template.title,
+          templateCategory: template.category,
+          withVendor: !!dto.vendorId,
+        }),
       stage: ContractStage.DRAFT,
       value: dto.value ?? 0,
       currency: dto.currency ?? 'USD',

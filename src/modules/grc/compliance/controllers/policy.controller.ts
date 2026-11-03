@@ -24,6 +24,7 @@ import {
   CreatePolicyDto,
   UpdatePolicyPropertiesDto,
   UpsertSectionDto,
+  SetPolicyMergeFieldsDto,
   SetPolicyStatusDto,
   PublishPolicyDto,
   DecideBoardApprovalDto,
@@ -135,6 +136,16 @@ export class PolicyController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.updateProperties(t || u, id, dto);
+  }
+
+  @Patch(':id/merge-fields')
+  setMergeFields(
+    @Param('id') id: string,
+    @Body() dto: SetPolicyMergeFieldsDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.setMergeFieldValues(t || u, id, dto.values);
   }
 
   @Post(':id/sections')
