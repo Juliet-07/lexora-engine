@@ -1,3 +1,4 @@
+export * from './bcp-comms.controller';
 export * from './bcp.controller';
 export * from './control.controller';
 export * from './emerging-risk.controller';

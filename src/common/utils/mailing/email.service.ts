@@ -186,6 +186,10 @@ import {
   hrNoticeTemplate,
 } from './templates/hr-notice.template';
 import {
+  BcpStakeholderNoticeEmailData,
+  bcpStakeholderNoticeTemplate,
+} from './templates/bcp-stakeholder-notice.template';
+import {
   BoardMemberAppointedEmailData,
   boardMemberAppointedTemplate,
 } from './templates/board-member-appointed.template';
@@ -898,6 +902,20 @@ export class EmailService {
     const { subject, html } = hrNoticeTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  // A crisis-communication notice to one stakeholder (BCP/DR). The
+  // sender shown is the tenant's own business, not the platform.
+  async sendBcpStakeholderNotice(
+    data: BcpStakeholderNoticeEmailData,
+  ): Promise<void> {
+    const { subject, html } = bcpStakeholderNoticeTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${data.businessName.replace(/"/g, '')}" <${process.env.SMTP_FROM}>`,
       to: data.to,
       subject,
       html,

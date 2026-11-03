@@ -33,6 +33,16 @@ import {
   BcpReportSchema,
   BcpTestFinding,
   BcpTestFindingSchema,
+  CommsGroup,
+  CommsGroupSchema,
+  CommsContact,
+  CommsContactSchema,
+  CommsTemplate,
+  CommsTemplateSchema,
+  CommsMessage,
+  CommsMessageSchema,
+  CommsSettings,
+  CommsSettingsSchema,
   EmergingRisk,
   EmergingRiskSchema,
 } from './schemas';
@@ -41,6 +51,8 @@ import {
   Employee,
   EmployeeSchema,
 } from 'src/modules/hr/schemas/employee.schema';
+import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
+import { EmailService } from 'src/common/utils/mailing/email.service';
 import {
   Vendor as CrmVendor,
   VendorSchema as CrmVendorSchema,
@@ -52,6 +64,7 @@ import {
   TreatmentPlanService,
   IncidentService,
   BcpService,
+  BcpCommsService,
   EmergingRiskService,
   TestPlanService,
   DeficiencyService,
@@ -63,6 +76,7 @@ import {
   TreatmentPlanController,
   IncidentController,
   BcpController,
+  BcpCommsController,
   EmergingRiskController,
 } from './controllers';
 
@@ -89,6 +103,12 @@ import {
       { name: HrTeam.name, schema: HrTeamSchema },
       { name: Employee.name, schema: EmployeeSchema },
       { name: CrmVendor.name, schema: CrmVendorSchema },
+      { name: User.name, schema: UserSchema },
+      { name: CommsGroup.name, schema: CommsGroupSchema },
+      { name: CommsContact.name, schema: CommsContactSchema },
+      { name: CommsTemplate.name, schema: CommsTemplateSchema },
+      { name: CommsMessage.name, schema: CommsMessageSchema },
+      { name: CommsSettings.name, schema: CommsSettingsSchema },
     ]),
   ],
   providers: [
@@ -98,6 +118,8 @@ import {
     TreatmentPlanService,
     IncidentService,
     BcpService,
+    BcpCommsService,
+    EmailService,
     EmergingRiskService,
     TestPlanService,
     DeficiencyService,
@@ -109,6 +131,7 @@ import {
     TreatmentPlanController,
     IncidentController,
     BcpController,
+    BcpCommsController,
     EmergingRiskController,
   ],
   exports: [

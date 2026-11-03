@@ -24,6 +24,8 @@ import {
   UpdateBiaProcessDto,
   CreateVendorResilienceDto,
   DeclareBcpIncidentDto,
+  UpdateBcpIncidentDto,
+  ResolveBcpIncidentDto,
   CreateBcpReportDto,
   CreateBcpTestFindingDto,
 } from '../dtos';
@@ -263,15 +265,25 @@ export class BcpController {
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.bcpService.declareIncident(t || u, dto);
+    return this.bcpService.declareIncident(t || u, dto, u);
   }
   @Patch('incidents/:id/resolve')
   resolveIncident(
     @Param('id') id: string,
+    @Body() dto: ResolveBcpIncidentDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.bcpService.resolveIncident(t || u, id);
+    return this.bcpService.resolveIncident(t || u, id, dto);
+  }
+  @Patch('incidents/:id')
+  updateIncident(
+    @Param('id') id: string,
+    @Body() dto: UpdateBcpIncidentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.bcpService.updateIncident(t || u, id, dto);
   }
   @Get('incidents')
   getAllIncidents(

@@ -4,6 +4,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Model, Types } from 'mongoose';
 import {
   BcpPlan,
@@ -45,9 +46,12 @@ import {
   UpdateBiaProcessDto,
   CreateVendorResilienceDto,
   DeclareBcpIncidentDto,
+  UpdateBcpIncidentDto,
+  ResolveBcpIncidentDto,
   CreateBcpReportDto,
   CreateBcpTestFindingDto,
 } from '../dtos';
+import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { HrTeam, HrTeamDocument } from 'src/modules/hr/schemas/hr.schema';
 import {
   Employee,
@@ -85,6 +89,9 @@ export class BcpService {
     private readonly employeeModel: Model<EmployeeDocument>,
     @InjectModel(CrmVendor.name)
     private readonly crmVendorModel: Model<CrmVendorDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async createPlan(tenantId: string, dto: CreateBcpPlanDto) {
@@ -489,23 +496,143 @@ export class BcpService {
       .lean();
   }
 
-  async declareIncident(tenantId: string, dto: DeclareBcpIncidentDto) {
+  // Like resolveEmployeeName, but a person that was asked for and does
+  // not exist is an error rather than a silently empty field.
+  private async requireEmployee(
+    tenantId: string,
+    employeeId: string | undefined,
+    label: string,
+  ) {
+    if (!employeeId) return { id: null as Types.ObjectId | null, name: '' };
+    if (!Types.ObjectId.isValid(employeeId)) {
+      throw new BadRequestException(`${label} was not found`);
+    }
+    const r = await this.resolveEmployeeName(tenantId, employeeId);
+    if (!r.id) throw new BadRequestException(`${label} was not found`);
+    return r;
+  }
+
+  async declareIncident(
+    tenantId: string,
+    dto: DeclareBcpIncidentDto,
+    actorUserId?: string,
+  ) {
     const count = await this.incidentModel.countDocuments({
       tenantId: new Types.ObjectId(tenantId),
     });
     const code = `INC-${String(count + 1).padStart(3, '0')}`;
-    return this.incidentModel.create({
+    const spokesperson = await this.requireEmployee(
+      tenantId,
+      dto.spokespersonEmployeeId,
+      'The spokesperson',
+    );
+    let declaredByName = '';
+    if (actorUserId) {
+      const u = await this.userModel
+        .findById(actorUserId)
+        .select('firstName lastName email')
+        .lean();
+      declaredByName =
+        [u?.firstName, u?.lastName].filter(Boolean).join(' ') || u?.email || '';
+    }
+    const incident = await this.incidentModel.create({
       tenantId: new Types.ObjectId(tenantId),
       code,
       description: dto.description,
       severity: dto.severity,
       declaredAt: new Date(),
+      title: dto.title?.trim() ?? '',
+      type: dto.type ?? '',
+      clientImpact: !!dto.clientImpact,
+      mediaInterest: !!dto.mediaInterest,
+      spokespersonEmployeeId: spokesperson.id,
+      spokespersonName: spokesperson.name,
+      nextUpdateAt: dto.nextUpdateAt ? new Date(dto.nextUpdateAt) : null,
+      declaredByName,
     });
+    // The stakeholder communications plan reads this and alerts the owner.
+    this.eventEmitter.emit('grc.bcp.incident_declared', {
+      tenantId,
+      incidentId: String(incident._id),
+    });
+    return incident;
   }
-  async resolveIncident(tenantId: string, id: string) {
+
+  // Re-level or re-classify a live incident. A closed one is a record.
+  async updateIncident(
+    tenantId: string,
+    id: string,
+    dto: UpdateBcpIncidentDto,
+  ) {
+    const tId = new Types.ObjectId(tenantId);
+    const before = await this.incidentModel.findOne({ _id: id, tenantId: tId });
+    if (!before) throw new NotFoundException('Incident not found');
+    if (before.status !== BcpIncidentStatus.ACTIVE) {
+      throw new BadRequestException(
+        'A resolved incident can no longer be changed',
+      );
+    }
+    const snapshot = {
+      severity: before.severity,
+      type: before.type,
+      clientImpact: before.clientImpact,
+      mediaInterest: before.mediaInterest,
+    };
+
+    if (dto.description !== undefined) {
+      if (!dto.description.trim())
+        throw new BadRequestException('Describe what happened');
+      before.description = dto.description.trim();
+    }
+    if (dto.severity !== undefined) before.severity = dto.severity;
+    if (dto.title !== undefined) before.title = dto.title.trim();
+    if (dto.type !== undefined) before.type = dto.type;
+    if (dto.clientImpact !== undefined) before.clientImpact = dto.clientImpact;
+    if (dto.mediaInterest !== undefined)
+      before.mediaInterest = dto.mediaInterest;
+    if (dto.spokespersonEmployeeId !== undefined) {
+      const sp = await this.requireEmployee(
+        tenantId,
+        dto.spokespersonEmployeeId,
+        'The spokesperson',
+      );
+      before.spokespersonEmployeeId = sp.id;
+      before.spokespersonName = sp.name;
+    }
+    if (dto.nextUpdateAt !== undefined) {
+      if (dto.nextUpdateAt === '') {
+        before.nextUpdateAt = null;
+      } else {
+        const d = new Date(dto.nextUpdateAt);
+        if (Number.isNaN(d.getTime()))
+          throw new BadRequestException('Enter a valid next update time');
+        before.nextUpdateAt = d;
+        // A new promised time re-arms the "update overdue" alert.
+      }
+    }
+    await before.save();
+    this.eventEmitter.emit('grc.bcp.incident_updated', {
+      tenantId,
+      incidentId: id,
+      before: snapshot,
+    });
+    return before;
+  }
+
+  async resolveIncident(
+    tenantId: string,
+    id: string,
+    dto?: ResolveBcpIncidentDto,
+  ) {
     return this.incidentModel.findOneAndUpdate(
       { _id: id, tenantId: new Types.ObjectId(tenantId) },
-      { status: BcpIncidentStatus.RESOLVED, resolvedAt: new Date() },
+      {
+        status: BcpIncidentStatus.RESOLVED,
+        resolvedAt: new Date(),
+        ...(dto?.closureNote !== undefined
+          ? { closureNote: dto.closureNote.trim() }
+          : {}),
+      },
       { new: true },
     );
   }

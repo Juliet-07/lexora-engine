@@ -1,3 +1,4 @@
+export * from './bcp-comms.schema';
 export * from './bcp.schema';
 export * from './control.schema';
 export * from './emerging-risk.schema';

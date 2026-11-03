@@ -6,6 +6,8 @@ import {
   IsOptional,
   IsArray,
   IsDateString,
+  IsBoolean,
+  IsIn,
   Min,
   Max,
 } from 'class-validator';
@@ -19,6 +21,7 @@ import {
   AttestationStatus,
   AlternateVendorStatus,
   BcpIncidentSeverity,
+  BCP_INCIDENT_TYPES,
 } from '../schemas';
 
 export class CreateBcpPlanDto {
@@ -216,6 +219,48 @@ export class DeclareBcpIncidentDto {
   @ApiProperty({ enum: BcpIncidentSeverity })
   @IsEnum(BcpIncidentSeverity)
   severity: BcpIncidentSeverity;
+  // What the stakeholder communications plan keys off. All optional so
+  // an incident can still be declared in a hurry with just a summary
+  // and a level; they can be completed afterwards.
+  @ApiPropertyOptional() @IsOptional() @IsString() title?: string;
+  @ApiPropertyOptional({ enum: BCP_INCIDENT_TYPES })
+  @IsOptional()
+  @IsIn([...BCP_INCIDENT_TYPES])
+  type?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() clientImpact?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() mediaInterest?: boolean;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  spokespersonEmployeeId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() nextUpdateAt?: string;
+}
+
+// Re-level or re-classify a live incident. The stakeholder plan follows
+// automatically, so raising the level brings more groups in.
+export class UpdateBcpIncidentDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
+  @ApiPropertyOptional({ enum: BcpIncidentSeverity })
+  @IsOptional()
+  @IsEnum(BcpIncidentSeverity)
+  severity?: BcpIncidentSeverity;
+  @ApiPropertyOptional() @IsOptional() @IsString() title?: string;
+  @ApiPropertyOptional({ enum: BCP_INCIDENT_TYPES })
+  @IsOptional()
+  @IsIn([...BCP_INCIDENT_TYPES, ''])
+  type?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() clientImpact?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() mediaInterest?: boolean;
+  // Empty string clears the spokesperson / next update.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  spokespersonEmployeeId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() nextUpdateAt?: string;
+}
+
+export class ResolveBcpIncidentDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() closureNote?: string;
 }
 
 export class CreateBcpReportDto {

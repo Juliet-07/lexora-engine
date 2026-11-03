@@ -580,6 +580,29 @@ export class TenantNotificationService {
     );
   }
 
+  // BCP/DR stakeholder communications: an incident needs stakeholders
+  // told, a deadline is close or missed, or the level changed. One
+  // in-app record (and the standard notification email) per person.
+  @OnEvent('grc.bcp.comms_alert')
+  async onBcpCommsAlert(e: {
+    tenantId: string;
+    userIds: string[];
+    title: string;
+    description: string;
+    link: string;
+  }) {
+    for (const userId of new Set(e.userIds)) {
+      await this.create(
+        e.tenantId,
+        userId,
+        TenantNotificationType.COMPLIANCE,
+        e.title,
+        e.description,
+        e.link,
+      ).catch(() => undefined);
+    }
+  }
+
   // A published policy is coming due for review (or is overdue). The
   // branded reminder email is already sent by PolicyReviewReminderService,
   // so this only creates the in-app record — skipEmail avoids a duplicate.

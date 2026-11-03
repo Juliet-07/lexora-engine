@@ -259,7 +259,38 @@ export class BcpIncident {
   // MTTR is derived client-side from resolvedAt - declaredAt rather than
   // stored as a destructible duration string.
   @Prop({ default: null }) resolvedAt: Date | null;
+
+  // ── Stakeholder-communication inputs ─────────────────────────
+  // What the crisis communications plan keys off: the level (severity),
+  // the type, and two flags that bring extra stakeholder groups in.
+  // All optional so incidents declared before this existed still load;
+  // they simply match fewer stakeholder triggers.
+  @Prop({ trim: true, default: '' }) title: string;
+  @Prop({ trim: true, default: '' }) type: string;
+  @Prop({ default: false }) clientImpact: boolean;
+  @Prop({ default: false }) mediaInterest: boolean;
+  @Prop({ type: Types.ObjectId, ref: 'Employee', default: null })
+  spokespersonEmployeeId: Types.ObjectId | null;
+  @Prop({ default: '' }) spokespersonName: string;
+  @Prop({ type: Date, default: null }) nextUpdateAt: Date | null;
+  @Prop({ default: '' }) closureNote: string;
+  @Prop({ default: '' }) declaredByName: string;
+  // Keys of the deadline alerts already raised for this incident
+  // ("<groupId>:warning", "<groupId>:overdue", "update:<ms>") so the
+  // scheduler never nags twice about the same thing.
+  @Prop({ type: [String], default: [] }) commsAlerts: string[];
 }
+
+export const BCP_INCIDENT_TYPES = [
+  'System outage',
+  'Data breach',
+  'Cyber attack',
+  'Fraud',
+  'Regulatory breach',
+  'Facilities and natural disaster',
+  'Key person loss',
+  'Reputational',
+] as const;
 export const BcpIncidentSchema = SchemaFactory.createForClass(BcpIncident);
 
 // A log of generated BCP/DR reports — every report is assembled live

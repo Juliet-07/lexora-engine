@@ -1,3 +1,5 @@
+export * from './bcp-comms.constants';
+export * from './bcp-comms.service';
 export * from './bcp.service';
 export * from './control.service';
 export * from './emerging-risk.service';

@@ -1,3 +1,4 @@
+export * from './bcp-comms.dto';
 export * from './bcp.dto';
 export * from './control.dto';
 export * from './emerging-risk.dto';
