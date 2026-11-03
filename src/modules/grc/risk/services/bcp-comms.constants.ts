@@ -32,41 +32,6 @@ export const SEED_GROUPS: SeedGroup[] = [
     contacts: [],
   },
   {
-    key: 'ncsa',
-    name: 'Data protection regulator (NCSA)',
-    icon: 'shield-alert',
-    color: '#c62828',
-    slaHours: 24,
-    statutory: 'Statutory limit is 48 hours from becoming aware of the breach',
-    channel: 'Formal letter and regulator portal',
-    approvalMinLevel: 1,
-    trigger: { types: ['Data breach'] },
-    contacts: [
-      {
-        name: 'Data Protection and Privacy Office',
-        role: 'Supervisory authority',
-        email: 'Submitted through the NCSA portal',
-      },
-    ],
-  },
-  {
-    key: 'bnr',
-    name: 'Licensing regulator (BNR)',
-    icon: 'scale',
-    color: '#0e7490',
-    slaHours: 24,
-    channel: 'Formal letter and supervisory portal',
-    approvalMinLevel: 1,
-    trigger: { minLevel: 3, types: ['Fraud', 'Regulatory breach'] },
-    contacts: [
-      {
-        name: 'Assigned supervisor',
-        role: 'Supervision Department',
-        email: 'Formal letter to the supervisor on record',
-      },
-    ],
-  },
-  {
     key: 'clients',
     name: 'Affected clients',
     icon: 'briefcase-business',
@@ -153,7 +118,7 @@ Yours sincerely,
 
 We are writing to let you know about an incident that may affect personal data we hold for you.
 
-On {{declared_at}} we identified {{impact_summary}}. We contained the incident and notified the data protection regulator.
+On {{declared_at}} we identified {{impact_summary}}. We contained the incident [and notified the data protection regulator, if required in your jurisdiction].
 
 The information involved may include: [categories of personal data].
 
@@ -166,55 +131,6 @@ If you have questions, contact our Data Protection Officer at [contact details].
 We sincerely regret this incident and the concern it may cause.
 
 Yours sincerely,
-{{spokesperson}}
-{{company}}`,
-  },
-  {
-    key: 'breach-regulator',
-    name: 'Data breach notification: regulator',
-    groupKey: 'ncsa',
-    description:
-      'Formal notification of a personal data breach to the supervisory authority',
-    subject:
-      'Notification of personal data breach: {{company}}, {{incident_ref}}',
-    body: `To: Data Protection and Privacy Office, National Cyber Security Authority
-
-Notification of a personal data breach
-
-1. Controller: {{company}}
-2. Date and time the breach was identified: {{declared_at}}
-3. Nature of the breach: {{impact_summary}}
-4. Categories and approximate number of data subjects: [number] clients and [number] records
-5. Likely consequences: [assessment]
-6. Measures taken or proposed: [containment, investigation, notification of data subjects]
-7. Contact: Data Protection Officer, [contact details]
-
-We will provide further information as our investigation progresses.
-
-{{spokesperson}}
-{{company}}`,
-  },
-  {
-    key: 'regulator-report',
-    name: 'Regulator incident report',
-    groupKey: 'bnr',
-    description: 'Formal notification to the licensing supervisor',
-    subject: 'Incident notification: {{incident_ref}}, {{incident_title}}',
-    body: `The Director, Supervision Department
-
-Re: Notification of a material incident
-
-We notify the Bank of an incident declared at {{declared_at}} and classified as {{level}}.
-
-Summary: {{impact_summary}}
-
-Impact on licensed activities: [effect on client services, records and obligations]
-
-Actions taken: [containment, recovery, communications]
-
-Next report: we will provide an update by {{next_update}} and a full incident report within [period].
-
-Yours faithfully,
 {{spokesperson}}
 {{company}}`,
   },

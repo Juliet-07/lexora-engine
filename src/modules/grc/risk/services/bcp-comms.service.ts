@@ -187,7 +187,10 @@ export class BcpCommsService {
       { tenantId: tId, seeded: false },
       { $set: { seeded: true } },
     );
-    if (claimed.modifiedCount !== 1) return;
+    if (claimed.modifiedCount !== 1) {
+      await this.retireRegulatorDefaults(tId);
+      return;
+    }
 
     const idByKey = new Map<string, Types.ObjectId>();
     let order = 0;
@@ -236,6 +239,53 @@ export class BcpCommsService {
         key: t.key,
         edited: false,
       });
+    }
+    await this.retireRegulatorDefaults(tId);
+  }
+
+  // Early builds seeded two country-specific regulator groups (NCSA and
+  // BNR) for every tenant. Remove them once per tenant. A group the
+  // tenant has actually used or filled in is kept as one of their own
+  // groups, so no communication record or contact is lost.
+  private async retireRegulatorDefaults(tId: Types.ObjectId) {
+    const claimed = await this.settingsModel.updateOne(
+      { tenantId: tId, retiredRegulators: { $ne: true } },
+      { $set: { retiredRegulators: true } },
+    );
+    if (claimed.modifiedCount !== 1) return;
+
+    const legacy: any[] = await this.groupModel
+      .find({ tenantId: tId, custom: false, key: { $in: ['ncsa', 'bnr'] } })
+      .lean();
+    for (const g of legacy) {
+      const [used, contacts] = await Promise.all([
+        this.messageModel.exists({ tenantId: tId, groupId: g._id }),
+        this.contactModel.find({ tenantId: tId, groupId: g._id }).lean(),
+      ]);
+      const onlyDefaults = contacts.every((c: any) =>
+        ['Data Protection and Privacy Office', 'Assigned supervisor'].includes(
+          c.name,
+        ),
+      );
+      if (used || !onlyDefaults) {
+        await this.groupModel.updateOne(
+          { _id: g._id },
+          { $set: { custom: true, key: '' } },
+        );
+        continue;
+      }
+      await this.contactModel.deleteMany({ tenantId: tId, groupId: g._id });
+      await this.templateModel.deleteMany({
+        tenantId: tId,
+        groupId: g._id,
+        edited: false,
+      });
+      // Anything the tenant edited stays, available for any stakeholder.
+      await this.templateModel.updateMany(
+        { tenantId: tId, groupId: g._id },
+        { $set: { groupId: null, custom: true } },
+      );
+      await this.groupModel.deleteOne({ _id: g._id });
     }
   }
 

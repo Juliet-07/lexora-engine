@@ -96,8 +96,8 @@ export class CommsContact {
 
   @Prop({ required: true, trim: true }) name: string;
   @Prop({ default: '', trim: true }) role: string;
-  // An email address, or a route such as "Submitted through the NCSA
-  // portal". Only a valid address is ever emailed.
+  // An email address, or a route such as "Submitted through the
+  // regulator portal". Only a valid address is ever emailed.
   @Prop({ default: '', trim: true }) email: string;
   @Prop({ default: '', trim: true }) phone: string;
 }
@@ -207,5 +207,8 @@ export class CommsSettings {
   })
   tenantId: Types.ObjectId;
   @Prop({ default: false }) seeded: boolean;
+  // The Rwanda-specific regulator groups (NCSA, BNR) that early builds
+  // seeded for everyone have been retired for this tenant.
+  @Prop({ default: false }) retiredRegulators: boolean;
 }
 export const CommsSettingsSchema = SchemaFactory.createForClass(CommsSettings);

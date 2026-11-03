@@ -192,7 +192,6 @@ export const ONBOARDING_CHECKLIST_DEFAULTS: {
 export const OFFBOARDING_CHECKLIST_DEFAULTS: string[] = [
   'Resignation / non-renewal letter received or board resolution passed',
   'RDB notification of cessation filed',
-  'BNR notification of directorship change submitted',
   'Committee memberships terminated and replacements identified',
   'Return of confidential materials and company property',
   'Lexora GRC platform access revoked',
