@@ -12,6 +12,7 @@ export * from './job-opening.schema';
 export * from './learning.schema';
 export * from './leave-policy.schema';
 export * from './leave-request.schema';
+export * from './notice.schema';
 export * from './offboarding-record.schema';
 export * from './overtime-policy.schema';
 export * from './payroll.schema';

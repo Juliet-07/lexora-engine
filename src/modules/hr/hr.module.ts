@@ -59,6 +59,9 @@ import {
   TerminationNoticePdfService,
   TerminationNoticeDocxService,
   EmploymentCertificatePdfService,
+  NoticeService,
+  NoticeEmployeeService,
+  NoticeSchedulerService,
 } from './services';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import {
@@ -93,6 +96,8 @@ import {
   ProbationTenantController,
   DisputeTenantController,
   JobOpeningController,
+  NoticeTenantController,
+  NoticeEmployeeController,
 } from './controllers';
 import {
   LeaveRequest,
@@ -165,6 +170,18 @@ import {
   CourseSchema,
   CustomLeaveType,
   CustomLeaveTypeSchema,
+  Notice,
+  NoticeSchema,
+  NoticeRecipient,
+  NoticeRecipientSchema,
+  NoticeActivity,
+  NoticeActivitySchema,
+  NoticeGroup,
+  NoticeGroupSchema,
+  NoticeTemplate,
+  NoticeTemplateSchema,
+  NoticeSettings,
+  NoticeSettingsSchema,
 } from './schemas';
 
 @Module({
@@ -244,6 +261,12 @@ import {
         name: CourseEnrollment.name,
         schema: CourseEnrollmentSchema,
       },
+      { name: Notice.name, schema: NoticeSchema },
+      { name: NoticeRecipient.name, schema: NoticeRecipientSchema },
+      { name: NoticeActivity.name, schema: NoticeActivitySchema },
+      { name: NoticeGroup.name, schema: NoticeGroupSchema },
+      { name: NoticeTemplate.name, schema: NoticeTemplateSchema },
+      { name: NoticeSettings.name, schema: NoticeSettingsSchema },
     ]),
   ],
   controllers: [
@@ -271,6 +294,8 @@ import {
     ProbationTenantController,
     DisputeTenantController,
     JobOpeningController,
+    NoticeTenantController,
+    NoticeEmployeeController,
   ],
   providers: [
     EmployeeService,
@@ -315,6 +340,9 @@ import {
     TerminationNoticePdfService,
     TerminationNoticeDocxService,
     EmploymentCertificatePdfService,
+    NoticeService,
+    NoticeEmployeeService,
+    NoticeSchedulerService,
   ],
   exports: [
     EmployeeService,

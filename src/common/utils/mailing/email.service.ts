@@ -182,6 +182,10 @@ import {
   newCourseTemplate,
 } from './templates/new-course.template';
 import {
+  HrNoticeEmailData,
+  hrNoticeTemplate,
+} from './templates/hr-notice.template';
+import {
   BoardMemberAppointedEmailData,
   boardMemberAppointedTemplate,
 } from './templates/board-member-appointed.template';
@@ -882,6 +886,16 @@ export class EmailService {
 
   async sendNewCourseNotice(data: NewCourseEmailData): Promise<void> {
     const { subject, html } = newCourseTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+    });
+  }
+
+  async sendHrNotice(data: HrNoticeEmailData): Promise<void> {
+    const { subject, html } = hrNoticeTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

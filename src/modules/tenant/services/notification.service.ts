@@ -556,6 +556,30 @@ export class TenantNotificationService {
     );
   }
 
+  // HR Notices: a notice reached an employee, a reminder or escalation
+  // went out, or an employee asked a question. NoticeService already
+  // sends the branded email where one is wanted, so this only creates
+  // the in-app record (skipEmail) — except for tenant staff, who get
+  // no other email when a question lands.
+  @OnEvent('hr.notice.employee')
+  async onHrNoticeEmployee(e: {
+    tenantId: string;
+    userId: string;
+    title: string;
+    description: string;
+    link: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.userId,
+      TenantNotificationType.HR,
+      e.title,
+      e.description,
+      e.link,
+      true,
+    );
+  }
+
   // A published policy is coming due for review (or is overdue). The
   // branded reminder email is already sent by PolicyReviewReminderService,
   // so this only creates the in-app record — skipEmail avoids a duplicate.
