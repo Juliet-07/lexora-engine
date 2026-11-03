@@ -8,6 +8,11 @@ import { join } from 'path';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import * as express from 'express';
+import { installDefaultTimezone } from './common/utils/timezone.util';
+
+// Dates printed by the server (emails, PDFs, notifications) use the platform
+// time zone rather than the host's UTC.
+installDefaultTimezone();
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');

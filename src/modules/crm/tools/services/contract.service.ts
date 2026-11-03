@@ -318,10 +318,40 @@ export class ContractService {
   }
 
   async getAll(tenantId: string) {
-    return this.model
+    const contracts = await this.model
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
+    // A contract's clientId can point at a client or at a board member
+    // (their appointment letter and other contracts with them). Say which,
+    // so the register can offer a clients filter and a board members
+    // filter instead of mixing both people into "clients".
+    const ids = [
+      ...new Set(
+        contracts.filter((c) => c.clientId).map((c) => String(c.clientId)),
+      ),
+    ];
+    const boardIds = new Set<string>();
+    if (ids.length) {
+      const boardUsers = await this.userModel
+        .find({ _id: { $in: ids }, userType: UserType.BOARD_MEMBER })
+        .select('_id')
+        .lean();
+      for (const u of boardUsers) boardIds.add(String(u._id));
+    }
+    return contracts.map((c) => ({
+      ...c,
+      partyKind: this.partyKind(c, boardIds),
+    }));
+  }
+
+  private partyKind(
+    c: { clientId?: unknown; origin?: string },
+    boardIds: Set<string>,
+  ): 'client' | 'board_member' | 'external' {
+    if (c.clientId && boardIds.has(String(c.clientId))) return 'board_member';
+    if (c.origin === 'board_onboarding') return 'board_member';
+    return c.clientId ? 'client' : 'external';
   }
 
   // Real, filtered list for the KYC onboarding module's own

@@ -7,8 +7,12 @@ import {
   WEEKDAYS,
 } from '../schemas/availability.schema';
 import { SetAvailabilityDto } from '../dtos/demo-request.dto';
-import { DemoRequest, DemoRequestDocument } from '../schemas/demo-request.schema';
+import {
+  DemoRequest,
+  DemoRequestDocument,
+} from '../schemas/demo-request.schema';
 import { DemoRequestStatus } from '../schemas/demo-request.schema';
+import { formatTime } from 'src/common/utils/timezone.util';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -89,9 +93,9 @@ export class AvailabilityService {
 
       let slots = [...config.slots].sort();
       if (i === 0) {
-        const nowHHmm = `${String(now.getHours()).padStart(2, '0')}:${String(
-          now.getMinutes(),
-        ).padStart(2, '0')}`;
+        // The slots are in the availability's own zone, so "now" has to be
+        // read in that zone too, not the server's.
+        const nowHHmm = formatTime(now, doc.timezone);
         slots = slots.filter((s) => s > nowHHmm);
       }
       slots = slots.filter(

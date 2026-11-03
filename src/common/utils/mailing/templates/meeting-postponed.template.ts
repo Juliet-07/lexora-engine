@@ -1,3 +1,5 @@
+import { formatDateTime } from '../../timezone.util';
+
 export interface MeetingPostponedEmailData {
   to: string;
   attendeeName: string;
@@ -8,6 +10,8 @@ export interface MeetingPostponedEmailData {
   // replacement date yet (a date to be confirmed later).
   newDate: Date | null;
   reason: string;
+  // IANA zone the meeting was scheduled in; both times are printed in it.
+  timezone?: string;
   businessName: string;
 }
 
@@ -31,12 +35,12 @@ export function meetingPostponedTemplate(data: MeetingPostponedEmailData): {
         <tr><td style="padding:32px 48px 32px;">
           <p style="margin:0 0 16px;font-size:15px;color:#2c2c2c;line-height:1.8;">Dear <strong>${data.attendeeName}</strong>,</p>
           <p style="margin:0 0 16px;font-size:15px;color:#2c2c2c;line-height:1.8;">
-            The following meeting, originally scheduled for <strong>${data.originalDate.toLocaleString()}</strong>, has been postponed:
+            The following meeting, originally scheduled for <strong>${formatDateTime(data.originalDate, data.timezone)}</strong>, has been postponed:
           </p>
           <p style="margin:0 0 16px;font-size:17px;color:#2c2c2c;font-weight:bold;">${data.meetingTitle}</p>
           ${
             data.newDate
-              ? `<p style="margin:0 0 16px;font-size:15px;color:#2c2c2c;line-height:1.8;">It has been rescheduled to <strong>${data.newDate.toLocaleString()}</strong>. Please update your calendar.</p>`
+              ? `<p style="margin:0 0 16px;font-size:15px;color:#2c2c2c;line-height:1.8;">It has been rescheduled to <strong>${formatDateTime(data.newDate, data.timezone)}</strong>. Please update your calendar.</p>`
               : `<p style="margin:0 0 16px;font-size:15px;color:#2c2c2c;line-height:1.8;">A new date and time will be confirmed in a follow-up notice.</p>`
           }
           <p style="margin:0 0 8px;font-size:14px;color:#2c2c2c;font-weight:bold;">Reason</p>

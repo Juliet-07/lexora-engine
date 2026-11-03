@@ -80,6 +80,12 @@ import { buildReportPdf } from 'src/common/utils/pdf/report-builder.util';
 import * as PDFKitImport from 'pdfkit';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import {
+  formatDate,
+  formatDateTime,
+  formatTime,
+  parseInZone,
+} from 'src/common/utils/timezone.util';
+import {
   BOARD_NOTIFICATION_EVENT,
   BoardNotificationEvent,
   BoardNotificationType,
@@ -127,7 +133,7 @@ export class MeetingService {
       tenantId: new Types.ObjectId(tenantId),
       title: dto.title,
       type: dto.type,
-      date: new Date(dto.date),
+      date: parseInZone(dto.date, dto.timezone),
       timezone: dto.timezone,
       mode: dto.mode,
       venue: dto.venue ?? null,
@@ -771,6 +777,7 @@ export class MeetingService {
               attendeeName: r.name,
               meetingTitle: meeting.title,
               date: meeting.date,
+              timezone: meeting.timezone,
               location: meeting.location,
               chair: meeting.chair,
               notes: meeting.notes,
@@ -1030,7 +1037,10 @@ export class MeetingService {
     }
 
     const originalDate = meeting.date;
-    const parsedNewDate = newDate ? new Date(newDate) : null;
+    // A time typed without a zone is the meeting's own wall-clock time.
+    const parsedNewDate = newDate
+      ? parseInZone(newDate, meeting.timezone)
+      : null;
     meeting.status = MeetingStatus.POSTPONED;
     meeting.postponementReason = reason.trim();
     meeting.postponedAt = new Date();
@@ -1072,6 +1082,7 @@ export class MeetingService {
             originalDate,
             newDate: parsedNewDate,
             reason: meeting.postponementReason!,
+            timezone: meeting.timezone,
             businessName,
           })
           .catch(() => {}),
@@ -1199,7 +1210,10 @@ export class MeetingService {
     if (dto.minimumDays !== undefined)
       meeting.notice.minimumDays = dto.minimumDays;
     if (dto.rsvpDeadline !== undefined)
-      meeting.notice.rsvpDeadline = new Date(dto.rsvpDeadline);
+      meeting.notice.rsvpDeadline = parseInZone(
+        dto.rsvpDeadline,
+        meeting.timezone,
+      );
     meeting.markModified('notice');
     await meeting.save();
     return meeting;
@@ -1295,6 +1309,7 @@ export class MeetingService {
             attendeeName: r.name,
             meetingTitle: meeting.title,
             date: meeting.date,
+            timezone: meeting.timezone,
             location: meeting.location,
             chair: meeting.chair,
             noticeBody: meeting.notice.body,
@@ -1373,6 +1388,7 @@ export class MeetingService {
             attendeeName: r.name,
             meetingTitle: meeting.title,
             date: meeting.date,
+            timezone: meeting.timezone,
             location: meeting.location,
             chair: meeting.chair,
             noticeBody: meeting.notice.body,
@@ -2835,18 +2851,18 @@ export class MeetingService {
       meeting.attendees.map((a) => [a.email.toLowerCase(), a.role || '—']),
     );
     const dispatched = meeting.notice.dispatchedAt
-      ? new Date(meeting.notice.dispatchedAt).toLocaleString()
+      ? formatDateTime(meeting.notice.dispatchedAt, meeting.timezone)
       : '—';
     return buildReportPdf({
       title: `Meeting Notice — ${meeting.title}`,
-      subtitle: `${new Date(meeting.date).toLocaleString()} · ${meeting.location}`,
+      subtitle: `${formatDateTime(meeting.date, meeting.timezone)} · ${meeting.location}`,
       summary: [
         { label: 'Dispatched', value: dispatched },
         { label: 'Dispatched by', value: meeting.notice.dispatchedBy ?? '—' },
         {
           label: 'RSVP deadline',
           value: meeting.notice.rsvpDeadline
-            ? new Date(meeting.notice.rsvpDeadline).toLocaleDateString()
+            ? formatDate(meeting.notice.rsvpDeadline, meeting.timezone)
             : '—',
         },
         { label: 'Recipients', value: meeting.notice.recipients.length },
@@ -2876,7 +2892,9 @@ export class MeetingService {
             roleByEmail.get(r.email.toLowerCase()) ?? '—',
             r.email,
             dispatched,
-            r.openedAt ? new Date(r.openedAt).toLocaleString() : 'Not opened',
+            r.openedAt
+              ? formatDateTime(r.openedAt, meeting.timezone)
+              : 'Not opened',
             r.rsvp,
           ]),
         },
@@ -2913,7 +2931,7 @@ export class MeetingService {
         .font('Helvetica')
         .fillColor('#555555')
         .text(
-          `${meeting.title} · ${new Date(meeting.date).toLocaleDateString()} · Prepared by the Company Secretary`,
+          `${meeting.title} · ${formatDate(meeting.date, meeting.timezone)} · Prepared by the Company Secretary`,
           { align: 'center' },
         )
         .fillColor('#000000');
@@ -2972,8 +2990,11 @@ export class MeetingService {
         .text(value);
     };
     line('Meeting', meeting.title);
-    line('Date', new Date(meeting.date).toLocaleDateString());
-    line('Time', new Date(meeting.date).toLocaleTimeString());
+    line('Date', formatDate(meeting.date, meeting.timezone));
+    line(
+      'Time',
+      `${formatTime(meeting.date, meeting.timezone)} (${meeting.timezone})`,
+    );
     line(
       'Venue',
       meeting.mode === 'Online'

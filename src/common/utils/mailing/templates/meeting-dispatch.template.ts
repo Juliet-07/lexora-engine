@@ -1,8 +1,12 @@
+import { formatDateTime } from '../../timezone.util';
+
 export interface MeetingDispatchEmailData {
   to: string;
   attendeeName: string;
   meetingTitle: string;
   date: Date;
+  // IANA zone the meeting was scheduled in; the time is printed in it.
+  timezone?: string;
   location: string;
   chair: string;
   notes: string;
@@ -47,7 +51,7 @@ export function meetingDispatchTemplate(data: MeetingDispatchEmailData): {
         <tr><td style="padding:32px 48px 32px;">
           <p style="margin:0 0 16px;font-size:15px;color:#2c2c2c;line-height:1.8;">Dear <strong>${data.attendeeName}</strong>,</p>
           <p style="margin:0 0 16px;font-size:14px;color:#555;line-height:1.7;">
-            ${data.date.toLocaleString()} · ${data.location} · Chair: ${data.chair}
+            ${formatDateTime(data.date, data.timezone)} · ${data.location} · Chair: ${data.chair}
           </p>
           ${data.notes ? `<p style="margin:0 0 20px;font-size:14px;color:#2c2c2c;line-height:1.7;">${data.notes}</p>` : ''}
           <p style="margin:0 0 8px;font-size:14px;color:#2c2c2c;font-weight:bold;">Agenda</p>
