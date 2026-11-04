@@ -6,7 +6,13 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Deal, DealDocument } from '../schemas';
-import { GenerateDealContractDto } from '../dtos/deal-contract.dto';
+import type { DealDocKind } from '../schemas/deal.schema';
+import {
+  GenerateDealContractDto,
+  GenerateTermSheetDto,
+  TermSheetPartyDto,
+} from '../dtos/deal-contract.dto';
+import { TERM_SHEET_AREA } from 'src/common/utils/contract-merge-term-sheet-fields';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import {
   PlatformContractTemplate,
@@ -31,6 +37,13 @@ import { splitTemplateIntoSections } from '../../../../common/utils/deal.contrac
 // module "grc", area "deals".
 export const DEAL_TEMPLATE_MODULE = 'grc';
 export const DEAL_TEMPLATE_AREA = 'deals';
+// Term sheets are published under module "grc", area "term_sheets".
+export const TERM_SHEET_TEMPLATE_AREA = TERM_SHEET_AREA;
+
+const areaFor = (kind: DealDocKind) =>
+  kind === 'term_sheet' ? TERM_SHEET_TEMPLATE_AREA : DEAL_TEMPLATE_AREA;
+const kindLabel = (kind: DealDocKind) =>
+  kind === 'term_sheet' ? 'term sheet' : 'contract';
 
 const isoDate = (d: Date | string | null | undefined): string =>
   d ? new Date(d).toISOString().slice(0, 10) : '';
@@ -59,7 +72,8 @@ export class DealContractService {
     return deal;
   }
 
-  // Every token that only a deal contract has, valued from the deal. A
+  // Every token that only a deal document has, valued from the deal. (The
+  // term sheet is its own document now and no longer feeds the contract.) A
   // field the deal has nothing for is an empty string — it stays visible
   // as {{token}} in the document and in the Fields panel, so the tenant
   // sees the gap rather than a silently incomplete agreement.
@@ -67,7 +81,6 @@ export class DealContractService {
     const parties: any[] = deal.parties ?? [];
     const buyer = parties.find((p) => p.side === 'Buyer');
     const seller = parties.find((p) => p.side === 'Seller');
-    const ts = deal.termSheet ?? {};
     const signing = deal.signing ?? {};
     const signatories: any[] = signing.signatories ?? [];
     return {
@@ -103,12 +116,6 @@ export class DealContractService {
             .join(' '),
         ),
       ),
-      termSheetStructure: ts.structure ?? '',
-      termSheetConsideration: ts.consideration ?? '',
-      termSheetConditions: ts.conditions ?? '',
-      termSheetExclusivity: ts.exclusivity ?? '',
-      termSheetConfidentiality: ts.confidentiality ?? '',
-      termSheetTimeline: ts.timeline ?? '',
       signingDate: isoDate(signing.signingDate),
       signingVenue: signing.venue ?? '',
       signatoriesList: formatBulletList(
@@ -172,11 +179,11 @@ export class DealContractService {
   }
 
   // The published templates a deal can draw from.
-  async listTemplates() {
+  async listTemplates(kind: DealDocKind = 'contract') {
     const templates = await this.templateModel
       .find({
         moduleKey: DEAL_TEMPLATE_MODULE,
-        areaKey: DEAL_TEMPLATE_AREA,
+        areaKey: areaFor(kind),
         status: PlatformTemplateStatus.PUBLISHED,
       })
       .sort({ updatedAt: -1 })
@@ -195,7 +202,11 @@ export class DealContractService {
   //             token): it stays as literal {{token}} text
   // Whatever is still empty after generating can be filled in on the
   // contract's Fields tab.
-  describeTokens(content: string, known: Record<string, string>) {
+  describeTokens(
+    content: string,
+    known: Record<string, string>,
+    kind: DealDocKind = 'contract',
+  ) {
     const seen = new Set<string>();
     const out: {
       token: string;
@@ -205,7 +216,7 @@ export class DealContractService {
       value: string;
       filled: boolean;
     }[] = [];
-    const grc = getMergeFieldRegistry(DEAL_TEMPLATE_MODULE, DEAL_TEMPLATE_AREA);
+    const grc = getMergeFieldRegistry(DEAL_TEMPLATE_MODULE, areaFor(kind));
     for (const m of (content ?? '').matchAll(/\{\{(\w+)\}\}/g)) {
       const token = m[1];
       if (seen.has(token)) continue;
@@ -296,7 +307,10 @@ export class DealContractService {
     };
   }
 
-  private async loadDealTemplate(templateId: string) {
+  private async loadDealTemplate(
+    templateId: string,
+    kind: DealDocKind = 'contract',
+  ) {
     const t = Types.ObjectId.isValid(templateId)
       ? await this.templateModel.findById(templateId).lean()
       : null;
@@ -304,15 +318,17 @@ export class DealContractService {
     if (
       t.status !== PlatformTemplateStatus.PUBLISHED ||
       t.moduleKey !== DEAL_TEMPLATE_MODULE ||
-      t.areaKey !== DEAL_TEMPLATE_AREA
+      t.areaKey !== areaFor(kind)
     ) {
       throw new BadRequestException(
-        'This template is not a published deal-contract template.',
+        `This template is not a published ${
+          kind === 'term_sheet' ? 'term-sheet' : 'deal-contract'
+        } template.`,
       );
     }
     if (!(t.content ?? '').trim()) {
       throw new BadRequestException(
-        'This template has no text to build a contract from (it may be an uploaded file).',
+        `This template has no text to build a ${kindLabel(kind)} from (it may be an uploaded file).`,
       );
     }
     return t;
@@ -331,7 +347,8 @@ export class DealContractService {
     const tenant = await loadTenantCompany(this.userModel, tenantId);
 
     const reference = `DC-${String(deal._id).slice(-6).toUpperCase()}-${String(
-      deal.contracts.length + 1,
+      deal.contracts.filter((c) => (c.kind ?? 'contract') === 'contract')
+        .length + 1,
     ).padStart(2, '0')}`;
     const title = dto.title.trim();
     const variables = nonEmpty(
@@ -339,6 +356,7 @@ export class DealContractService {
     );
 
     deal.contracts.push({
+      kind: 'contract',
       name: title,
       templateId: template._id,
       templateName: template.title,
@@ -357,5 +375,177 @@ export class DealContractService {
 
     const created = deal.contracts[deal.contracts.length - 1];
     return { contractId: String(created._id) };
+  }
+
+  // ── Term sheets ──────────────────────────────────────────────
+  // A term sheet is generated exactly like a contract, from a template the
+  // Super Admin published under GRC → Term sheets, and is stored with the
+  // deal's documents (kind 'term_sheet') so it can be edited, reviewed and
+  // exported with the same tools. It has its own tab, its own fields and its
+  // own reference, and never feeds text into a contract.
+
+  private partyFields(
+    side: 'A' | 'B',
+    p: TermSheetPartyDto | undefined,
+  ): Record<string, string> {
+    return {
+      [`party${side}Name`]: p?.name ?? '',
+      [`party${side}EntityType`]: p?.entityType ?? '',
+      [`party${side}Jurisdiction`]: p?.jurisdiction ?? '',
+      [`party${side}RegistrationNumber`]: p?.registrationNumber ?? '',
+      [`party${side}Address`]: p?.address ?? '',
+      [`party${side}Email`]: p?.email ?? '',
+      [`party${side}Signatory`]: p?.signatory ?? '',
+      [`party${side}Title`]: p?.signatoryTitle ?? '',
+      // Notices go to the signatory at the registered address unless a
+      // different contact is entered on the term sheet.
+      [`party${side}NoticePerson`]: p?.signatory ?? '',
+      [`party${side}NoticeAddress`]: p?.address ?? '',
+    };
+  }
+
+  // The deal's own client and counterparty are the two parties to a term
+  // sheet unless the person generating it names others.
+  private termSheetParties(deal: any, dto?: Partial<GenerateTermSheetDto>) {
+    const partyA: TermSheetPartyDto = dto?.partyA ?? {
+      name: deal.client ?? '',
+    };
+    const partyB: TermSheetPartyDto = dto?.partyB ?? {
+      name:
+        deal.counterparty && deal.counterparty !== 'TBD'
+          ? deal.counterparty
+          : '',
+    };
+    return { partyA, partyB };
+  }
+
+  buildTermSheetFields(
+    deal: any,
+    tenant: TenantCompany,
+    input: {
+      title?: string;
+      reference?: string;
+      dto?: Partial<GenerateTermSheetDto>;
+    } = {},
+  ): Record<string, string> {
+    const dto = input.dto ?? {};
+    const { partyA, partyB } = this.termSheetParties(deal, dto);
+    const asParty = (p: TermSheetPartyDto) => ({
+      name: p.name,
+      address: p.address,
+      email: p.email,
+      representative: p.signatory,
+      representativeTitle: p.signatoryTitle,
+    });
+    const typed: Record<string, string> = {};
+    for (const [k, v] of Object.entries(dto.fields ?? {})) {
+      if (/^\w+$/.test(k) && typeof v === 'string' && v.trim())
+        typed[k] = v.trim().slice(0, 4000);
+    }
+    return overlayNonEmpty(
+      buildCommonMergeFields({
+        tenant,
+        title: input.title,
+        reference: input.reference,
+        governingLaw: dto.governingLaw || deal.jurisdiction,
+        partyA: asParty(partyA),
+        partyB: asParty(partyB),
+        effectiveDate: dto.effectiveDate,
+        expiryDate: isoDate(deal.longstopDate),
+        value: deal.value,
+        currency: deal.currency ?? 'USD',
+      }),
+      this.buildDealMergeFields(deal),
+      {
+        // The conditions long-stop and the courts follow the deal.
+        cpLongstopDate: isoDate(deal.longstopDate),
+        governingJurisdiction: deal.jurisdiction ?? '',
+      },
+      this.partyFields('A', partyA),
+      this.partyFields('B', partyB),
+      typed,
+    );
+  }
+
+  // What the "Generate term sheet" dialog opens with.
+  async getTermSheetDraft(
+    tenantId: string,
+    dealId: string,
+    templateId?: string,
+  ) {
+    const deal = await this.getDeal(tenantId, dealId);
+    const tenant = await loadTenantCompany(this.userModel, tenantId);
+    const { partyA, partyB } = this.termSheetParties(deal);
+    const known = this.buildTermSheetFields(deal, tenant);
+    known.contractReference = 'Assigned on creation';
+
+    let template: { _id: string; title: string } | null = null;
+    let fields: ReturnType<typeof this.describeTokens> = [];
+    if (templateId) {
+      const t = await this.loadDealTemplate(templateId, 'term_sheet');
+      template = { _id: String(t._id), title: t.title };
+      fields = this.describeTokens(
+        `${t.coverPage ?? ''}${t.content ?? ''}`,
+        known,
+        'term_sheet',
+      );
+    }
+    return {
+      suggested: {
+        title: template ? `${deal.name} — ${template.title}` : deal.name,
+        governingLaw: deal.jurisdiction ?? '',
+        effectiveDate: new Date().toISOString().slice(0, 10),
+      },
+      partyA,
+      partyB,
+      // People already on the deal, to pick a party's signatory from.
+      dealParties: (deal.parties ?? []).map((p: any) => ({
+        side: p.side,
+        name: p.name,
+        title: p.title,
+        email: p.email,
+      })),
+      template,
+      fields,
+    };
+  }
+
+  async generateTermSheet(
+    tenantId: string,
+    dealId: string,
+    dto: GenerateTermSheetDto,
+  ) {
+    const deal = await this.getDeal(tenantId, dealId);
+    const template = await this.loadDealTemplate(dto.templateId, 'term_sheet');
+    const tenant = await loadTenantCompany(this.userModel, tenantId);
+
+    const reference = `TS-${String(deal._id).slice(-6).toUpperCase()}-${String(
+      deal.contracts.filter((c) => c.kind === 'term_sheet').length + 1,
+    ).padStart(2, '0')}`;
+    const title = dto.title.trim();
+    const variables = nonEmpty(
+      this.buildTermSheetFields(deal, tenant, { title, reference, dto }),
+    );
+
+    deal.contracts.push({
+      kind: 'term_sheet',
+      name: title,
+      templateId: template._id,
+      templateName: template.title,
+      reference,
+      coverPage: template.coverPage ?? '',
+      tocEnabled: !!template.tocEnabled,
+      tocTitle: template.tocTitle || 'Table of Contents',
+      sections: splitTemplateIntoSections(template.content, template.title).map(
+        (s) => ({ ...s, comments: [], redlines: [] }),
+      ),
+      variables,
+      reviewLoop: { tokens: [], responses: [] },
+      pdfUrl: null,
+    } as any);
+    await deal.save();
+
+    const created = deal.contracts[deal.contracts.length - 1];
+    return { termSheetId: String(created._id) };
   }
 }

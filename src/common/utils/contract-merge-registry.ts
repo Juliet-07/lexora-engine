@@ -30,6 +30,10 @@
 
 import { PO_FIELDS, type PoFieldSection } from './contract-merge-po-fields';
 import {
+  TERM_SHEET_AREA,
+  TERM_SHEET_FIELDS,
+} from './contract-merge-term-sheet-fields';
+import {
   COMMON_FIELDS,
   LEGACY_ALIAS_FIELDS,
 } from './contract-merge-common-fields';
@@ -348,63 +352,75 @@ export const MERGE_FIELD_REGISTRY: MergeFieldDefinition[] = [
   },
   {
     token: 'termSheetStructure',
-    label: 'Term sheet — structure',
-    description: "The deal's term-sheet structure section",
+    label: 'Term sheet — structure (older templates)',
+    description:
+      'No longer filled from the deal: a term sheet is now its own document. Older templates that still use this field can type a value on the contract.',
     group: 'Term sheet',
     input: 'textarea',
     example: 'Acquisition of 100% of the issued share capital',
     modules: ['grc'],
-    source: 'record',
+    source: 'clause',
+    hidden: true,
   },
   {
     token: 'termSheetConsideration',
-    label: 'Term sheet — consideration',
-    description: "The deal's term-sheet consideration section",
+    label: 'Term sheet — consideration (older templates)',
+    description:
+      'No longer filled from the deal: a term sheet is now its own document. Older templates that still use this field can type a value on the contract.',
     group: 'Term sheet',
     input: 'textarea',
     example: 'Cash consideration payable on completion',
     modules: ['grc'],
-    source: 'record',
+    source: 'clause',
+    hidden: true,
   },
   {
     token: 'termSheetConditions',
-    label: 'Term sheet — conditions',
-    description: "The deal's term-sheet conditions section",
+    label: 'Term sheet — conditions (older templates)',
+    description:
+      'No longer filled from the deal: a term sheet is now its own document. Older templates that still use this field can type a value on the contract.',
     group: 'Term sheet',
     input: 'textarea',
     example: 'Regulatory approval; satisfactory due diligence',
     modules: ['grc'],
-    source: 'record',
+    source: 'clause',
+    hidden: true,
   },
   {
     token: 'termSheetExclusivity',
-    label: 'Term sheet — exclusivity',
-    description: "The deal's term-sheet exclusivity section",
+    label: 'Term sheet — exclusivity (older templates)',
+    description:
+      'No longer filled from the deal: a term sheet is now its own document. Older templates that still use this field can type a value on the contract.',
     group: 'Term sheet',
     input: 'textarea',
     example: '60 days from signing the term sheet',
     modules: ['grc'],
-    source: 'record',
+    source: 'clause',
+    hidden: true,
   },
   {
     token: 'termSheetConfidentiality',
-    label: 'Term sheet — confidentiality',
-    description: "The deal's term-sheet confidentiality section",
+    label: 'Term sheet — confidentiality (older templates)',
+    description:
+      'No longer filled from the deal: a term sheet is now its own document. Older templates that still use this field can type a value on the contract.',
     group: 'Term sheet',
     input: 'textarea',
     example: 'Terms are confidential to the parties and their advisers',
     modules: ['grc'],
-    source: 'record',
+    source: 'clause',
+    hidden: true,
   },
   {
     token: 'termSheetTimeline',
-    label: 'Term sheet — timeline',
-    description: "The deal's term-sheet timeline section",
+    label: 'Term sheet — timeline (older templates)',
+    description:
+      'No longer filled from the deal: a term sheet is now its own document. Older templates that still use this field can type a value on the contract.',
     group: 'Term sheet',
     input: 'textarea',
     example: 'Signing by 30 Nov; completion by 15 Dec',
     modules: ['grc'],
-    source: 'record',
+    source: 'clause',
+    hidden: true,
   },
   {
     token: 'signingDate',
@@ -645,7 +661,7 @@ const SECTIONS: Record<
   grc_deals: {
     modules: ['grc'],
     group: 'Deal & transaction clauses',
-    areas: ['deals'],
+    areas: ['deals', TERM_SHEET_AREA],
   },
 };
 
@@ -653,8 +669,15 @@ const guessInput = (token: string): MergeFieldInput =>
   /Date$/.test(token) ? 'date' : 'text';
 
 // Fields the system fills itself that only make sense on a deal.
+// A term sheet is generated inside a deal too, so it reads the same deal
+// fields — except the six term-sheet section fields, which belong to the
+// older single-form term sheet and are no longer filled.
 for (const f of MERGE_FIELD_REGISTRY) {
-  if (f.modules.length === 1 && f.modules[0] === 'grc') f.areas = ['deals'];
+  if (f.modules.length === 1 && f.modules[0] === 'grc') {
+    f.areas = f.token.startsWith('termSheet')
+      ? ['deals']
+      : ['deals', TERM_SHEET_AREA];
+  }
 }
 
 {
@@ -689,6 +712,40 @@ for (const f of MERGE_FIELD_REGISTRY) {
       MERGE_FIELD_REGISTRY.push(def);
       byToken.set(token, def);
     }
+  }
+}
+
+// Term-sheet fields (GRC → Term sheets). A token the registry already has
+// (a common party field, or one from the product owner's list) keeps its
+// place and is given the better label and the term-sheet area; the rest
+// are added.
+{
+  const byToken = new Map(MERGE_FIELD_REGISTRY.map((f) => [f.token, f]));
+  for (const def of TERM_SHEET_FIELDS) {
+    const existing = byToken.get(def.token);
+    if (existing && existing.common) {
+      continue; // a common field: already in every module and area
+    }
+    if (existing) {
+      existing.label = def.label;
+      existing.group = def.group;
+      existing.input = def.input;
+      existing.example = def.example;
+      if (def.description) existing.description = def.description;
+      existing.source = def.source;
+      if (!existing.modules.includes('grc'))
+        existing.modules = [...existing.modules, 'grc'];
+      // A field with no areas is already usable in every area of its
+      // modules (an AML/KYC clause); one tied to areas gains this one.
+      if (existing.areas)
+        existing.areas = [...new Set([...existing.areas, TERM_SHEET_AREA])];
+      continue;
+    }
+    MERGE_FIELD_REGISTRY.push({
+      ...def,
+      modules: ['grc'],
+      areas: [TERM_SHEET_AREA],
+    });
   }
 }
 

@@ -84,6 +84,61 @@ export class DealService {
     };
   }
 
+  // Where a document (contract or term sheet) stands with the parties it
+  // has been sent to: each party's latest answer counts.
+  //   draft              not sent yet
+  //   in_review          sent, at least one party has not answered
+  //   changes_requested  a party asked for changes
+  //   approved           every party it was sent to has approved
+  reviewStatus(doc: any): {
+    status: 'draft' | 'in_review' | 'changes_requested' | 'approved';
+    sent: number;
+    approved: number;
+    changesRequested: number;
+    lastSentAt: Date | null;
+    approvedAt: Date | null;
+  } {
+    const tokens: any[] = doc.reviewLoop?.tokens ?? [];
+    const responses: any[] = doc.reviewLoop?.responses ?? [];
+    const latest = new Map<string, any>();
+    for (const r of responses) {
+      const prev = latest.get(r.partyEmail);
+      if (!prev || new Date(r.respondedAt) >= new Date(prev.respondedAt))
+        latest.set(r.partyEmail, r);
+    }
+    const sent = tokens.length;
+    let approved = 0;
+    let changesRequested = 0;
+    for (const t of tokens) {
+      const r = latest.get(t.partyEmail);
+      if (r?.decision === 'Approved') approved++;
+      else if (r?.decision) changesRequested++;
+    }
+    const status =
+      sent === 0
+        ? 'draft'
+        : changesRequested > 0
+          ? 'changes_requested'
+          : approved === sent
+            ? 'approved'
+            : 'in_review';
+    const times = tokens.map((t) => new Date(t.sentAt).getTime());
+    const approvals = [...latest.values()]
+      .filter((r) => r.decision === 'Approved')
+      .map((r) => new Date(r.respondedAt).getTime());
+    return {
+      status,
+      sent,
+      approved,
+      changesRequested,
+      lastSentAt: times.length ? new Date(Math.max(...times)) : null,
+      approvedAt:
+        status === 'approved' && approvals.length
+          ? new Date(Math.max(...approvals))
+          : null,
+    };
+  }
+
   private withComputed(deal: any) {
     return {
       ...deal,
@@ -91,6 +146,9 @@ export class DealService {
       cpsProgress: this.cpsProgress(deal),
       contracts: (deal.contracts ?? []).map((c: any) => ({
         ...c,
+        // Documents made before term sheets were their own are contracts.
+        kind: c.kind ?? 'contract',
+        review: this.reviewStatus(c),
         // Merge fields resolved — what the document actually reads as. The
         // stored body keeps {{token}} so a field can be changed later.
         sections: (c.sections ?? []).map((s: any) => {
@@ -813,10 +871,17 @@ export class DealService {
   ) {
     const deal = await this.getRawDoc(tenantId, dealId);
     const contract = this.getContractOrThrow(deal, contractId);
-    const eligible = deal.parties.filter((p) => p.permissions.contractReview);
+    // A term sheet goes to the parties allowed to review the term sheet /
+    // offer; a contract to those allowed to review contracts.
+    const isTermSheet = contract.kind === 'term_sheet';
+    const eligible = deal.parties.filter((p) =>
+      isTermSheet ? p.permissions.offerReview : p.permissions.contractReview,
+    );
     if (eligible.length === 0)
       throw new BadRequestException(
-        'No party has contract review access enabled.',
+        isTermSheet
+          ? 'No party has term sheet review access enabled. Turn it on for a party in the deal’s Parties.'
+          : 'No party has contract review access enabled.',
       );
 
     const pdfBuffer = await this.generateContractPdf(
@@ -852,7 +917,7 @@ export class DealService {
           to: party.email,
           recipientName: party.name,
           dealName: `${deal.name} — ${contract.name}`,
-          kind: 'contract',
+          kind: isTermSheet ? 'offer' : 'contract',
           reviewLink: link,
           businessName,
         })
@@ -881,6 +946,7 @@ export class DealService {
     return {
       dealName: deal.name,
       contractName: contract.name,
+      kind: contract.kind ?? 'contract',
       pdfUrl: contract.pdfUrl ?? null,
       prefillName: tokenEntry.partyName,
       alreadyResponded: !!already,
@@ -1039,7 +1105,11 @@ export class DealService {
         doc
           .fontSize(14)
           .font('Helvetica-Bold')
-          .text('Parties to this Agreement');
+          .text(
+            contract.kind === 'term_sheet'
+              ? 'Parties to this Term Sheet'
+              : 'Parties to this Agreement',
+          );
         doc.moveDown(0.5);
         for (const side of ['Buyer', 'Seller'] as const) {
           const sideParties = deal.parties.filter((p) => p.side === side);
@@ -1063,24 +1133,6 @@ export class DealService {
         }
         doc.moveDown(1);
 
-        doc.fontSize(14).font('Helvetica-Bold').text('Term Sheet');
-        doc.moveDown(0.5);
-        const tsFields: [string, string][] = [
-          ['Structure', deal.termSheet.structure],
-          ['Consideration', deal.termSheet.consideration],
-          ['Conditions', deal.termSheet.conditions],
-          ['Exclusivity', deal.termSheet.exclusivity],
-          ['Confidentiality', deal.termSheet.confidentiality],
-          ['Timeline', deal.termSheet.timeline],
-        ];
-        tsFields.forEach(([label, value]) => {
-          doc.fontSize(11).font('Helvetica-Bold').text(`${label}:`);
-          doc
-            .fontSize(10)
-            .font('Helvetica')
-            .text(value || '—');
-          doc.moveDown(0.4);
-        });
         doc.moveDown(1);
       }
 

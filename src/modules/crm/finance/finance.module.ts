@@ -406,6 +406,12 @@ import {
     BudgetController,
     ManagementReportingController,
   ],
-  exports: [InvoiceService, WriteOffService, ExpenseClaimService, BillService],
+  exports: [
+    InvoiceService,
+    WriteOffService,
+    ExpenseClaimService,
+    BillService,
+    ReportPackService,
+  ],
 })
 export class FinanceModule {}

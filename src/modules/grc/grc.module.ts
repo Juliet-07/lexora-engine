@@ -6,6 +6,7 @@ import { DealsModule } from './deals/deals.module';
 import { IntelligenceModule } from './intelligence/intelligence.module';
 import { EsgModule } from './esg/esg.module';
 import { OverviewModule } from './overview/overview.module';
+import { HealthScoreModule } from './health-score/health-score.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { OverviewModule } from './overview/overview.module';
     IntelligenceModule,
     EsgModule,
     OverviewModule,
+    HealthScoreModule,
   ],
 })
 export class GrcModule {}

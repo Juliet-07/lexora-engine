@@ -260,9 +260,20 @@ export class ReviewLoop {
 }
 export const ReviewLoopSchema = SchemaFactory.createForClass(ReviewLoop);
 
+// What a document in Deal.contracts[] is. A term sheet is generated from a
+// "Term sheets" template and is reviewed, edited and exported exactly like a
+// contract, but it lives on the deal's Term Sheet tab and never feeds text
+// into a contract.
+export const DEAL_DOC_KINDS = ['contract', 'term_sheet'] as const;
+export type DealDocKind = (typeof DEAL_DOC_KINDS)[number];
+
 @Schema({ timestamps: true })
 export class Contract {
   @Prop({ required: true, trim: true }) name: string;
+  // Missing on documents made before term sheets became their own
+  // document: those are contracts.
+  @Prop({ type: String, enum: DEAL_DOC_KINDS, default: 'contract' })
+  kind: DealDocKind;
   // Contracts are generated from a published template. These record which
   // one, and the contract's own reference. (Contracts made before templates
   // existed have none of these.)

@@ -12,7 +12,10 @@ import {
   UserType,
 } from 'src/common/interfaces/user-role.enum';
 import { DealContractService } from '../services/deal-contract.service';
-import { GenerateDealContractDto } from '../dtos/deal-contract.dto';
+import {
+  GenerateDealContractDto,
+  GenerateTermSheetDto,
+} from '../dtos/deal-contract.dto';
 
 // Generating contracts inside a deal. A deal contract belongs to the deal
 // (Deal.contracts[]) and is managed there — editing, comments, redlines,
@@ -66,5 +69,49 @@ export class DealContractController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.generate(t || u, id, dto);
+  }
+
+  // ── Term sheets ──────────────────────────────────────────────
+
+  @Get(':id/term-sheet-templates')
+  @ApiOperation({
+    summary:
+      'Term-sheet templates the Super Admin has published (module GRC, area Term sheets)',
+  })
+  listTermSheetTemplates(
+    @Param('id') _id: string,
+    @CurrentUser('sub') _u: string,
+    @CurrentUser('tenantId') _t: string,
+  ) {
+    return this.service.listTemplates('term_sheet');
+  }
+
+  @Get(':id/term-sheet-draft')
+  @ApiQuery({ name: 'templateId', required: false })
+  @ApiOperation({
+    summary:
+      "What the generate-term-sheet dialog opens with: the two parties (the deal's client and counterparty), suggested values, and (with a template) which of its fields the deal can fill",
+  })
+  getTermSheetDraft(
+    @Param('id') id: string,
+    @Query('templateId') templateId: string | undefined,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getTermSheetDraft(t || u, id, templateId || undefined);
+  }
+
+  @Post(':id/term-sheets')
+  @ApiOperation({
+    summary:
+      'Generate a term sheet in this deal from a published template; it is edited, reviewed and exported with the same tools as a contract',
+  })
+  generateTermSheet(
+    @Param('id') id: string,
+    @Body() dto: GenerateTermSheetDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.generateTermSheet(t || u, id, dto);
   }
 }
