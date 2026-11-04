@@ -2854,6 +2854,7 @@ export class MeetingService {
       ? formatDateTime(meeting.notice.dispatchedAt, meeting.timezone)
       : '—';
     return buildReportPdf({
+      companyName: businessName,
       title: `Meeting Notice — ${meeting.title}`,
       subtitle: `${formatDateTime(meeting.date, meeting.timezone)} · ${meeting.location}`,
       summary: [

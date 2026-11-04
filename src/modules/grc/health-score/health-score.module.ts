@@ -27,5 +27,7 @@ import {
   ],
   providers: [HealthScoreService, HealthScoreCollector],
   controllers: [HealthScoreController],
+  // The dashboard and GRC Overview read the same figure from here.
+  exports: [HealthScoreService],
 })
 export class HealthScoreModule {}

@@ -52,7 +52,10 @@ import {
 import { MandateService } from './mandate.service';
 import { TimeEntryService } from './time-entry.service';
 import { LitigationCaseService } from './litigation-case.service';
-import { buildReportPdf } from '../../../../common/utils/pdf/report-builder.util';
+import {
+  buildReportPdf,
+  lookupTenantCompanyName,
+} from '../../../../common/utils/pdf/report-builder.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EmailService } from '../../../../common/utils/mailing/email.service';
 import { User, UserDocument } from '../../../auth/schemas/user.schema';
@@ -169,6 +172,7 @@ export class AdrCaseService {
   async exportReportPdf(tenantId: string): Promise<Buffer> {
     const r = await this.computeReport(tenantId);
     return buildReportPdf({
+      companyName: await lookupTenantCompanyName(this.userModel, tenantId),
       title: 'ADR Case Register',
       subtitle: 'CRM · Alternative Dispute Resolution',
       summary: [
@@ -844,6 +848,7 @@ export class AdrCaseService {
     );
 
     return buildReportPdf({
+      companyName: await lookupTenantCompanyName(this.userModel, tenantId),
       title: `Audit Trail — ${c.title}`,
       subtitle: `${c.ref} · CRM · Alternative Dispute Resolution`,
       summary: [

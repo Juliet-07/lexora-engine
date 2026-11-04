@@ -30,11 +30,7 @@ import {
   PortfolioService,
   ReadinessService,
 } from '../intelligence/services';
-import { RiskStatus } from '../risk/schemas';
-import { ObligationStatus } from '../compliance/schemas';
-import { IncidentStatus } from '../risk/schemas';
-import { DefStatus } from '../risk/schemas';
-import { computeGrcHealthScore } from 'src/common/utils/grc-health-score.util';
+import { HealthScoreService } from '../health-score/health-score.service';
 
 // ─────────────────────────────────────────────────────────────
 // Read-only aggregation across every real GRC submodule. Powers
@@ -82,6 +78,8 @@ export class OverviewService {
     private readonly valuationService: ValuationService,
     private readonly portfolioService: PortfolioService,
     private readonly readinessService: ReadinessService,
+    // The single GRC health score
+    private readonly healthScoreService: HealthScoreService,
   ) {}
 
   private async getGovernance(tenantId: string) {
@@ -203,39 +201,6 @@ export class OverviewService {
     return { valuations, readiness, portfolio };
   }
 
-  // Real GRC Health Score — same formula and shared util as ESG
-  // Dashboard's Governance pillar, so the number on this page and
-  // the number on ESG Dashboard never disagree. Computed from the
-  // same raw Risk/Compliance/Incident/Deficiency data this endpoint
-  // already fetches, so no extra queries beyond what's below.
-  private computeHealthScore(
-    risk: Awaited<ReturnType<OverviewService['getRisk']>>,
-    operations: Awaited<ReturnType<OverviewService['getOperations']>>,
-    compliance: Awaited<ReturnType<OverviewService['getCompliance']>>,
-  ): number {
-    const openRiskBands = risk.risks
-      .filter((r: any) => r.status !== RiskStatus.CLOSED)
-      .map(
-        (r: any) =>
-          r.residualBand ?? this.riskService.scoreToBand(r.residualScore ?? 0),
-      );
-    const overdueObligations = compliance.obligations.filter(
-      (o: any) => o.status === ObligationStatus.OVERDUE,
-    ).length;
-    const openIncidents = operations.incidents.filter(
-      (i: any) => i.status !== IncidentStatus.CLOSED,
-    ).length;
-    const openDeficiencies = risk.deficiencies.filter(
-      (d: any) => d.status !== DefStatus.CLOSED,
-    ).length;
-    return computeGrcHealthScore({
-      openRiskBands,
-      overdueObligations,
-      openIncidents,
-      openDeficiencies,
-    });
-  }
-
   async getOverview(tenantId: string) {
     const [
       governance,
@@ -255,7 +220,10 @@ export class OverviewService {
       this.getDealIntelligence(tenantId),
     ]);
 
-    const healthScore = this.computeHealthScore(risk, operations, compliance);
+    // The one GRC health score — the same figure the Health Score tab,
+    // GRC Reporting and the main dashboard show.
+    const healthScore = (await this.healthScoreService.summary(tenantId))
+      .composite;
 
     return {
       healthScore,

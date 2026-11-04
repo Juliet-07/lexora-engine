@@ -686,6 +686,7 @@ export class ReadinessService {
     const band = this.readinessBand(overall);
 
     const def: ReportDefinition = {
+      companyName: businessName,
       title: 'Investor Readiness Report',
       subtitle: `${businessName} — v${a.version}`,
       summary: [

@@ -402,6 +402,7 @@ export class ValuationService {
     };
 
     const def: ReportDefinition = {
+      companyName: businessName,
       title: 'Company Valuation Report',
       subtitle: businessName,
       summary: [

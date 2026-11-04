@@ -79,10 +79,7 @@ import {
   DeficiencyDocument,
   DefStatus,
 } from '../../grc/risk/schemas/control.schema';
-import {
-  computeGrcHealthScore,
-  scoreToRiskBand,
-} from 'src/common/utils/grc-health-score.util';
+import { HealthScoreService } from '../../grc/health-score/health-score.service';
 
 // Role hierarchy — members can only assign roles below their own level
 const ROLE_HIERARCHY: Record<string, number> = {
@@ -131,6 +128,7 @@ export class TenantService {
     @InjectModel(TimeEntry.name)
     private readonly timeEntryModel: Model<TimeEntryDocument>,
     private readonly mailService: EmailService,
+    private readonly healthScoreService: HealthScoreService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -277,9 +275,7 @@ export class TenantService {
         })
         .select('title regulator status nextDueDate')
         .lean(),
-      // ── GRC: deficiencies — feeds the shared computeGrcHealthScore,
-      // same as GRC Overview's own health score (PO feedback, Oct
-      // 2026: the dashboard's GRC score never counted these before).
+      // ── GRC: open deficiencies — shown on the dashboard's GRC card.
       this.deficiencyModel.countDocuments({
         tenantId: tId,
         status: { $ne: DefStatus.CLOSED },
@@ -400,42 +396,19 @@ export class TenantService {
       (o) => o.status === ObligationStatus.OVERDUE,
     );
 
-    // Each module's score defaults to 100 (nothing onboarded yet means
-    // nothing is unhealthy yet), not 0 — a brand-new tenant with zero
-    // clients/employees/mandates should land at a perfect score, the
-    // same convention GRC's penalty-based formula already followed
-    // (PO feedback, Oct 2026: previously only GRC defaulted to 100,
-    // so a new tenant's blended "Org health" read as a misleadingly
-    // low ~25–50% instead of 100%).
-    const kycScore = kycTotal
-      ? Math.round((kycApproved / kycTotal) * 100)
-      : 100;
-    const hrScore = totalEmployees
-      ? Math.round((activeEmployees / totalEmployees) * 100)
-      : 100;
-    const crmScore = activeMandates.length
-      ? Math.round(
-          (activeMandates.filter((m) => m.rag === 'Green').length /
-            activeMandates.length) *
-            100,
-        )
-      : 100;
-    // Same formula, same weights, same inputs as GRC Overview's own
-    // "GRC Health Score" (OverviewService#getOverview →
-    // computeGrcHealthScore) — previously this was a separate,
-    // looser, flat-count formula that didn't count deficiencies at
-    // all and penalized merely-"Due" obligations as if they were
-    // already overdue, so the dashboard and GRC Overview could (and
-    // did) disagree (PO feedback, Oct 2026).
-    const grcScore = computeGrcHealthScore({
-      openRiskBands: openRisks.map((r) => scoreToRiskBand(residualScore(r))),
-      overdueObligations: trueOverdueObligations.length,
-      openIncidents: openIncidents.length,
-      openDeficiencies,
-    });
-    const overallScore = Math.round(
-      (kycScore + grcScore + crmScore + hrScore) / 4,
-    );
+    // Every score on the dashboard is read from the GRC Health Score — the
+    // one calculation behind the GRC Overview and GRC Reporting — instead of
+    // being worked out again here. The ring is the company score; each
+    // module card shows that module's own score from the same model, so the
+    // dashboard can never disagree with the GRC pages (PO feedback, Nov
+    // 2026). A null module score means nothing in it could be measured yet.
+    const hs = await this.healthScoreService.summary(tenantId);
+    const kycScore = hs.modules.aml?.score ?? null;
+    const hrScore = hs.modules.hr?.score ?? null;
+    const crmScore = hs.modules.crm?.score ?? null;
+    const grcScore = hs.modules.grc?.score ?? null;
+    const financeScore = hs.modules.finance?.score ?? null;
+    const overallScore = hs.composite;
     const atRiskMandates = activeMandates.filter((m) => m.rag !== 'Green');
     const receivables = openInvoices.reduce(
       (s, i) => s + (invoicePayable(i) - (i.paidAmount ?? 0)),
@@ -630,6 +603,15 @@ export class TenantService {
         },
       ],
       overallScore,
+      healthScore: {
+        composite: hs.composite,
+        grade: hs.grade,
+        gradeLabel: hs.gradeLabel,
+        coverage: hs.coverage,
+        periodLabel: hs.periodLabel,
+        modules: hs.modules,
+      },
+      finance: { score: financeScore },
       deliveryPulse: {
         totalHours,
         billableHours,

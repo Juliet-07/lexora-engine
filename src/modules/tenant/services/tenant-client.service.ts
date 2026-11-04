@@ -1477,6 +1477,7 @@ export class TenantClientsService {
     }
 
     return buildReportPdf({
+      companyName: businessName,
       title: `${typeLabel} Client Report`,
       subtitle: `${businessName} · KYC / AML`,
       summary: [

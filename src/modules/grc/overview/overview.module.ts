@@ -4,6 +4,7 @@ import { RiskModule } from '../risk/risk.module';
 import { ComplianceModule } from '../compliance/compliance.module';
 import { DealsModule } from '../deals/deals.module';
 import { IntelligenceModule } from '../intelligence/intelligence.module';
+import { HealthScoreModule } from '../health-score/health-score.module';
 import { OverviewService } from './overview.service';
 import { OverviewController } from './overview.controller';
 
@@ -14,6 +15,7 @@ import { OverviewController } from './overview.controller';
     ComplianceModule,
     DealsModule,
     IntelligenceModule,
+    HealthScoreModule,
   ],
   providers: [OverviewService],
   controllers: [OverviewController],

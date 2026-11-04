@@ -46,7 +46,10 @@ import {
 } from '../dtos';
 import { TimeEntryService } from './time-entry.service';
 import { MandateService } from './mandate.service';
-import { buildReportPdf } from '../../../../common/utils/pdf/report-builder.util';
+import {
+  buildReportPdf,
+  lookupTenantCompanyName,
+} from '../../../../common/utils/pdf/report-builder.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EmailService } from '../../../../common/utils/mailing/email.service';
 import { User, UserDocument } from '../../../auth/schemas/user.schema';
@@ -222,6 +225,7 @@ export class LitigationCaseService {
   async exportReportPdf(tenantId: string): Promise<Buffer> {
     const r = await this.computeReport(tenantId);
     return buildReportPdf({
+      companyName: await lookupTenantCompanyName(this.userModel, tenantId),
       title: 'Litigation Case Register',
       subtitle: 'CRM · Litigation',
       summary: [
@@ -1082,6 +1086,7 @@ export class LitigationCaseService {
     );
 
     return buildReportPdf({
+      companyName: await lookupTenantCompanyName(this.userModel, tenantId),
       title: `Audit Trail — ${c.title}`,
       subtitle: `${c.ref} · CRM · Litigation`,
       summary: [

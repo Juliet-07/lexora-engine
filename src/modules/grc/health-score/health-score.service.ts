@@ -86,7 +86,63 @@ export class HealthScoreService {
     });
   }
 
+  // One calculation feeds every screen that shows the health score — the
+  // GRC Overview, GRC Reporting and the main dashboard — so they can never
+  // disagree. It is held for a few seconds per tenant so the dashboard does
+  // not recompute 45 indicators on every load; saving settings or
+  // commentary clears it at once.
+  private readonly cache = new Map<
+    string,
+    { at: number; value: Awaited<ReturnType<HealthScoreService['compute']>> }
+  >();
+  private static readonly TTL_MS = 30_000;
+
   async get(tenantId: string) {
+    const hit = this.cache.get(tenantId);
+    if (hit && Date.now() - hit.at < HealthScoreService.TTL_MS)
+      return hit.value;
+    const value = await this.compute(tenantId);
+    this.cache.set(tenantId, { at: Date.now(), value });
+    return value;
+  }
+
+  /** The compact form other modules show (dashboard, reports). */
+  async summary(tenantId: string) {
+    const h = await this.get(tenantId);
+    return {
+      composite: h.composite,
+      grade: h.grade,
+      gradeLabel: h.gradeLabel,
+      coverage: h.coverage,
+      periodLabel: h.periodLabel,
+      assessedAt: h.assessedAt,
+      modules: Object.fromEntries(
+        h.modules.map((m) => [
+          m.key,
+          {
+            name: m.name,
+            weight: m.weight,
+            score: m.score,
+            grade: m.grade,
+            measured: m.measuredCount,
+            total: m.totalCount,
+          },
+        ]),
+      ) as Record<
+        string,
+        {
+          name: string;
+          weight: number;
+          score: number | null;
+          grade: string | null;
+          measured: number;
+          total: number;
+        }
+      >,
+    };
+  }
+
+  private async compute(tenantId: string) {
     const now = new Date();
     const [st, measured] = await Promise.all([
       this.settings(tenantId),
@@ -180,6 +236,7 @@ export class HealthScoreService {
     dto: UpdateHealthScoreSettingsDto,
   ) {
     const tid = new Types.ObjectId(tenantId);
+    this.cache.delete(tenantId);
     if (dto.reset) {
       await this.settingsModel.updateOne(
         { tenantId: tid },
@@ -251,6 +308,7 @@ export class HealthScoreService {
       }
     }
 
+    this.cache.delete(tenantId);
     await this.settingsModel.updateOne(
       { tenantId: tid },
       {
@@ -286,6 +344,7 @@ export class HealthScoreService {
       { $set: set },
       { upsert: true },
     );
+    this.cache.delete(tenantId);
     const st = await this.settings(tenantId);
     return {
       ceoNote: st?.ceoNote ?? '',

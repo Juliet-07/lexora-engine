@@ -24,6 +24,7 @@ import {
 import { AccountStatus } from '../../../common/interfaces/user-role.enum';
 import {
   buildReportPdf,
+  lookupTenantCompanyName,
   ReportSection,
 } from '../../../common/utils/pdf/report-builder.util';
 
@@ -825,10 +826,13 @@ export class ReportsService {
       'Dec',
     ];
 
+    const companyName = await lookupTenantCompanyName(this.userModel, tenantId);
+
     switch (reportType) {
       case 'operational': {
         const data = await this.getOperationalReport(tenantId);
         return buildReportPdf({
+          companyName,
           title: 'Operational Compliance Report',
           subtitle: 'KYC / AML · Last 30 days',
           summary: [
@@ -890,6 +894,7 @@ export class ReportsService {
           },
         ];
         return buildReportPdf({
+          companyName,
           title: 'Risk Analytics Report',
           subtitle: 'KYC / AML',
           summary: [
@@ -942,6 +947,7 @@ export class ReportsService {
           },
         ];
         return buildReportPdf({
+          companyName,
           title: 'Regulatory Compliance Dashboard',
           subtitle: 'KYC / AML',
           summary: [
@@ -1000,6 +1006,7 @@ export class ReportsService {
           });
 
         return buildReportPdf({
+          companyName,
           title: 'Trend Analysis Report',
           subtitle: 'KYC / AML · Last 6 months',
           sections: [

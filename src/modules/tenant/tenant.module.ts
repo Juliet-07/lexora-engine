@@ -16,6 +16,7 @@ import {
 } from '../super_admin/schemas/subscription.schema';
 import { EmailModule } from 'src/common/utils/mailing/email.module';
 import { ToolsModule } from '../crm/tools/tools.module';
+import { HealthScoreModule } from '../grc/health-score/health-score.module';
 import {
   ClientProfileRecord,
   ClientProfileSchema,
@@ -68,6 +69,7 @@ import { TenantNotificationController } from './controllers';
   imports: [
     EmailModule,
     ToolsModule,
+    HealthScoreModule,
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       {
