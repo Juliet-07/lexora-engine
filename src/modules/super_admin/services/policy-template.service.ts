@@ -31,6 +31,8 @@ export class PolicyTemplateService {
   async create(dto: UpsertPolicyTemplateDto) {
     const created = await this.model.create({
       ...dto,
+      // A body replaces the old section list — never keep both.
+      ...(dto.body !== undefined ? { sections: [] } : {}),
       publishedAt:
         dto.status === PolicyTemplateStatus.PUBLISHED ? new Date() : null,
     });
@@ -41,6 +43,7 @@ export class PolicyTemplateService {
     const existing = await this.model.findById(id);
     if (!existing) throw new NotFoundException('Template not found');
     Object.assign(existing, dto);
+    if (dto.body !== undefined) existing.sections = [];
     if (
       dto.status === PolicyTemplateStatus.PUBLISHED &&
       !existing.publishedAt

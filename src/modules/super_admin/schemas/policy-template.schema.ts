@@ -50,6 +50,13 @@ export class PolicyTemplate {
 
   @Prop({ default: '' }) description: string;
 
+  // The policy as ONE rich-text document (like a contract template). Heading
+  // 1–3 mark its parts: a tenant's policy is split at them into sections, and
+  // the contents page lists them.
+  @Prop({ default: '' }) body: string;
+
+  // Legacy — templates saved before the single body existed. Still read (see
+  // templateBodyHtml) so they keep working; new saves leave it empty.
   @Prop({ type: [PolicyTemplateSectionSchema], default: [] })
   sections: PolicyTemplateSection[];
 
@@ -58,7 +65,7 @@ export class PolicyTemplate {
   // way contract templates carry a cover page.
   @Prop({ default: '' }) coverPage: string;
 
-  // A contents page, built from the section titles at the time the policy
+  // A contents page, built from the body's headings at the time the policy
   // is shown or exported — never typed by hand, so it cannot drift.
   @Prop({ default: false }) tocEnabled: boolean;
   @Prop({ default: 'Table of Contents' }) tocTitle: string;

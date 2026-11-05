@@ -7,7 +7,6 @@ import {
   IsArray,
   ValidateNested,
   MaxLength,
-  ArrayMinSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PolicyTemplateStatus, PolicyTemplateAppliesTo } from '../schemas';
@@ -22,12 +21,24 @@ export class UpsertPolicyTemplateDto {
   @ApiProperty() @IsString() category: string;
   @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
 
-  @ApiProperty({ type: [PolicyTemplateSectionDto] })
+  @ApiPropertyOptional({
+    description:
+      'The whole policy as one rich-text document. Heading 1–3 become the ' +
+      "tenant policy's sections and the table of contents.",
+  })
+  @IsOptional()
+  @IsString()
+  body?: string;
+
+  @ApiPropertyOptional({
+    type: [PolicyTemplateSectionDto],
+    description: 'Legacy. Send `body` instead.',
+  })
+  @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => PolicyTemplateSectionDto)
-  sections: PolicyTemplateSectionDto[];
+  sections?: PolicyTemplateSectionDto[];
 
   @ApiPropertyOptional({
     description:
@@ -38,7 +49,7 @@ export class UpsertPolicyTemplateDto {
   coverPage?: string;
 
   @ApiPropertyOptional({
-    description: 'Add a table of contents page built from the section titles',
+    description: "Add a table of contents page built from the body's headings",
   })
   @IsOptional()
   @IsBoolean()

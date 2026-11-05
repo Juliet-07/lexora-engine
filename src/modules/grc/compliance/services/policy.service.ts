@@ -47,9 +47,12 @@ import { loadTenantCompany } from 'src/common/utils/contract-common-fields';
 import {
   buildPolicyMergeFields,
   renderPolicyContent,
-  renderPolicyTitle,
   setPolicyFieldValues,
 } from 'src/common/utils/policy-merge-fields';
+import {
+  templateBodyHtml,
+  bodyToPolicySections,
+} from 'src/common/utils/policy-template-body';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   BOARD_NOTIFICATION_EVENT,
@@ -299,13 +302,13 @@ export class PolicyService implements OnModuleInit {
         documentReference: reference,
       },
     });
+    // The template is one body; each heading in it becomes a section the
+    // tenant can edit. Fields are filled first so titles read as values.
     const sections = template
-      ? template.sections.map((s, i) => ({
-          id: `s${i + 1}`,
-          title: renderPolicyTitle(s.title, mergeValues),
-          content: renderPolicyContent(s.content ?? '', mergeValues),
-          order: i,
-        }))
+      ? bodyToPolicySections(
+          renderPolicyContent(templateBodyHtml(template), mergeValues),
+          dto.title,
+        )
       : [];
 
     return this.model.create({

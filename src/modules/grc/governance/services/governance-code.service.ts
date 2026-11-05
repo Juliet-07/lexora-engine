@@ -53,12 +53,18 @@ export class GovernanceCodeService {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  private sectionsToBody(
+  // A template is one body now; older ones are still a list of sections,
+  // which keep their numbered headings.
+  private templateToBody(
     title: string,
-    sections: { title: string; content: string }[],
+    template: {
+      body?: string;
+      sections?: { title: string; content?: string }[];
+    },
   ): string {
     const heading = `<h2>${title.toUpperCase()}</h2>`;
-    const body = sections
+    if (template.body?.trim()) return heading + template.body;
+    const body = (template.sections ?? [])
       .map((s, i) => `<h3>${i + 1}. ${s.title}</h3>${s.content || ''}`)
       .join('');
     return heading + body;
@@ -83,7 +89,7 @@ export class GovernanceCodeService {
           policy: { title: dto.title, category: dto.category },
         });
         body = renderPolicyContent(
-          this.sectionsToBody(dto.title, template.sections),
+          this.templateToBody(dto.title, template),
           values,
         );
         templateId = template._id as Types.ObjectId;
