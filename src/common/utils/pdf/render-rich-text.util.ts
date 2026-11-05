@@ -6,7 +6,7 @@ interface TextStyle {
   bold: boolean;
   italic: boolean;
   underline: boolean;
-  align: 'left' | 'center' | 'right';
+  align: 'left' | 'center' | 'right' | 'justify';
   fontCategory: FontCategory;
   // Real point size, already converted from the editor's CSS px —
   // null means "use whatever size the enclosing block chose"
@@ -94,7 +94,9 @@ const PX_TO_PT = 0.75;
 // enclosing block already resolved to.
 function extractInlineStyle(el: HTMLElement, inherited: TextStyle): TextStyle {
   const styleAttr = el.getAttribute?.('style') ?? '';
-  const alignMatch = styleAttr.match(/text-align:\s*(left|center|right)/);
+  const alignMatch = styleAttr.match(
+    /text-align:\s*(left|center|right|justify)/,
+  );
   const sizeMatch = styleAttr.match(/font-size:\s*(\d+(?:\.\d+)?)px/);
   const familyMatch = styleAttr.match(/font-family:\s*([^;]+)/);
   const faceAttr =
@@ -328,11 +330,25 @@ function renderInlineParagraph(
     doc.moveDown(defaultSize > 11 ? 0.3 : 0.5);
     return;
   }
-  if (prefix) {
+  const manual = runs.length > 1 && style.align !== 'left';
+  if (prefix && !manual) {
     doc
       .font(fontFor(style))
       .fontSize(defaultSize)
       .text(prefix, { continued: true, indent: 20, align: style.align });
+  }
+  // pdfkit's own "continued" text mis-places the later pieces of a line
+  // when it is centred, right-aligned or justified and mixes fonts (a bold
+  // word beside normal text), so the words land on top of each other. Those
+  // lines are laid out here instead, word by word.
+  if (manual) {
+    layoutRuns(doc, runs, style.align, defaultSize, prefix ? 20 : 0, prefix);
+    doc.moveDown(
+      Math.max(defaultSize, ...runs.map((r) => r.style.fontSize ?? 0)) > 11
+        ? 0.3
+        : 0.5,
+    );
+    return;
   }
   let largestSize = defaultSize;
   runs.forEach((run, i) => {
@@ -346,6 +362,99 @@ function renderInlineParagraph(
     });
   });
   doc.moveDown(largestSize > 11 ? 0.3 : 0.5);
+}
+
+// Lays a paragraph of mixed-style runs out line by line: words are measured
+// in their own font and size, wrapped to the page width, then each line is
+// placed left, centred, right or justified (extra space shared between the
+// words, except on the paragraph's last line).
+function layoutRuns(
+  doc: PDFKit.PDFDocument,
+  runs: { text: string; style: TextStyle }[],
+  align: TextStyle['align'],
+  defaultSize: number,
+  indent: number,
+  prefix?: string,
+): void {
+  type Atom = {
+    text: string;
+    font: string;
+    size: number;
+    underline: boolean;
+    width: number;
+    space: boolean;
+  };
+  const atoms: Atom[] = [];
+  const push = (text: string, st: TextStyle, size: number) => {
+    const font = fontFor(st);
+    for (const part of text.split(/(\s+)/)) {
+      if (!part) continue;
+      const space = /^\s+$/.test(part);
+      const t = space ? ' ' : part;
+      atoms.push({
+        text: t,
+        font,
+        size,
+        underline: !!st.underline,
+        width: doc.font(font).fontSize(size).widthOfString(t),
+        space,
+      });
+    }
+  };
+  if (prefix) push(prefix, runs[0].style, defaultSize);
+  for (const r of runs) push(r.text, r.style, r.style.fontSize ?? defaultSize);
+
+  const left = doc.page.margins.left + indent;
+  const maxWidth =
+    doc.page.width - doc.page.margins.left - doc.page.margins.right - indent;
+
+  // Greedy wrap.
+  const lines: Atom[][] = [];
+  let line: Atom[] = [];
+  let used = 0;
+  for (const a of atoms) {
+    if (a.space && line.length === 0) continue; // no leading spaces
+    if (!a.space && line.length && used + a.width > maxWidth) {
+      while (line.length && line[line.length - 1].space) line.pop();
+      lines.push(line);
+      line = [];
+      used = 0;
+    }
+    line.push(a);
+    used += a.width;
+  }
+  while (line.length && line[line.length - 1].space) line.pop();
+  if (line.length) lines.push(line);
+
+  lines.forEach((ln, idx) => {
+    const natural = ln.reduce((w, a) => w + a.width, 0);
+    const height = Math.max(
+      ...ln.map((a) =>
+        doc.font(a.font).fontSize(a.size).currentLineHeight(true),
+      ),
+    );
+    if (doc.y + height > doc.page.height - doc.page.margins.bottom)
+      doc.addPage();
+    const y = doc.y;
+    let x = left;
+    let extra = 0; // added to each space when justifying
+    if (align === 'center') x = left + (maxWidth - natural) / 2;
+    else if (align === 'right') x = left + (maxWidth - natural);
+    else if (align === 'justify' && idx < lines.length - 1) {
+      const gaps = ln.filter((a) => a.space).length;
+      if (gaps) extra = (maxWidth - natural) / gaps;
+    }
+    for (const a of ln) {
+      if (!a.space)
+        doc
+          .font(a.font)
+          .fontSize(a.size)
+          .text(a.text, x, y, { lineBreak: false, underline: a.underline });
+      x += a.width + (a.space ? extra : 0);
+    }
+    doc.x = doc.page.margins.left;
+    doc.y = y + height;
+  });
 }
 
 function collectInlineRuns(

@@ -53,6 +53,16 @@ export class PolicyTemplate {
   @Prop({ type: [PolicyTemplateSectionSchema], default: [] })
   sections: PolicyTemplateSection[];
 
+  // Cover page (rich text, merge fields allowed). Empty = no cover page.
+  // Copied into a tenant's policy when the template is selected, the same
+  // way contract templates carry a cover page.
+  @Prop({ default: '' }) coverPage: string;
+
+  // A contents page, built from the section titles at the time the policy
+  // is shown or exported — never typed by hand, so it cannot drift.
+  @Prop({ default: false }) tocEnabled: boolean;
+  @Prop({ default: 'Table of Contents' }) tocTitle: string;
+
   @Prop({
     enum: PolicyTemplateStatus,
     default: PolicyTemplateStatus.DRAFT,

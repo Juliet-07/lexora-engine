@@ -108,8 +108,49 @@ export class ProbationService {
     return record;
   }
 
+  // Someone who has left, or is being dismissed, is not on probation any
+  // more as far as the active lists go: they are terminated/resigned, or have
+  // a termination open in Offboarding. They stay visible in Archived; if an
+  // appeal reinstates them they simply reappear here, since the probation
+  // record itself is left as it was.
+  private async leavingEmployeeIds(
+    employeeIds: Types.ObjectId[],
+  ): Promise<Set<string>> {
+    if (!employeeIds.length) return new Set();
+    const [gone, dismissing] = await Promise.all([
+      this.employeeModel
+        .find({
+          _id: { $in: employeeIds },
+          employmentStatus: { $in: ['terminated', 'resigned'] },
+        })
+        .distinct('_id'),
+      this.employeeModel.db
+        .collection('hr_offboarding_records')
+        .find({
+          employeeId: { $in: employeeIds },
+          type: 'termination',
+          status: { $in: ['not_started', 'in_progress'] },
+        })
+        .project({ employeeId: 1 })
+        .toArray(),
+    ]);
+    return new Set([
+      ...gone.map((id) => String(id)),
+      ...dismissing.map((r: any) => String(r.employeeId)),
+    ]);
+  }
+
+  private async withoutLeavers<T extends { employeeId: Types.ObjectId }>(
+    records: T[],
+  ): Promise<T[]> {
+    const leaving = await this.leavingEmployeeIds(
+      records.map((r) => r.employeeId),
+    );
+    return records.filter((r) => !leaving.has(String(r.employeeId)));
+  }
+
   async getAllInProgress(tenantId: string): Promise<ProbationRecordDocument[]> {
-    return this.probationModel
+    const records = await this.probationModel
       .find({
         tenantId: new Types.ObjectId(tenantId),
         status: {
@@ -120,7 +161,8 @@ export class ProbationService {
         },
       })
       .sort({ createdAt: 1 })
-      .lean() as any;
+      .lean();
+    return this.withoutLeavers(records as any[]) as any;
   }
 
   async getForMyDirectReports(
@@ -137,7 +179,7 @@ export class ProbationService {
 
     if (reportIds.length === 0) return [];
 
-    return this.probationModel
+    const records = await this.probationModel
       .find({
         employeeId: { $in: reportIds },
         status: {
@@ -148,7 +190,8 @@ export class ProbationService {
         },
       })
       .sort({ createdAt: 1 })
-      .lean() as any;
+      .lean();
+    return this.withoutLeavers(records as any[]) as any;
   }
 
   // ===============================================================
@@ -594,18 +637,20 @@ export class ProbationService {
   }
 
   async getAllInProgressEnriched(tenantId: string) {
-    const records = await this.probationModel
-      .find({
-        tenantId: new Types.ObjectId(tenantId),
-        status: {
-          $in: [
-            ProbationRecordStatus.IN_PROGRESS,
-            ProbationRecordStatus.EXTENDED,
-          ],
-        },
-      })
-      .sort({ createdAt: 1 })
-      .lean();
+    const records = await this.withoutLeavers(
+      (await this.probationModel
+        .find({
+          tenantId: new Types.ObjectId(tenantId),
+          status: {
+            $in: [
+              ProbationRecordStatus.IN_PROGRESS,
+              ProbationRecordStatus.EXTENDED,
+            ],
+          },
+        })
+        .sort({ createdAt: 1 })
+        .lean()) as any[],
+    );
 
     if (records.length === 0) return [];
 

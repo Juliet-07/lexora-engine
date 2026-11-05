@@ -88,6 +88,12 @@ export class UpdatePolicyPropertiesDto {
   boardApprovalRequired?: boolean;
 }
 
+export class UpdatePolicyCoverDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() coverPage?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() tocEnabled?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() tocTitle?: string;
+}
+
 export class UpsertSectionDto {
   @ApiPropertyOptional() @IsOptional() @IsString() title?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() content?: string;

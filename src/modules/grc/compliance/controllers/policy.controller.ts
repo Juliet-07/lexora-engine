@@ -24,6 +24,7 @@ import {
   CreatePolicyDto,
   UpdatePolicyPropertiesDto,
   UpsertSectionDto,
+  UpdatePolicyCoverDto,
   SetPolicyMergeFieldsDto,
   SetPolicyStatusDto,
   PublishPolicyDto,
@@ -146,6 +147,16 @@ export class PolicyController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.setMergeFieldValues(t || u, id, dto.values);
+  }
+
+  @Put(':id/cover')
+  updateCover(
+    @Param('id') id: string,
+    @Body() dto: UpdatePolicyCoverDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateCover(t || u, id, dto);
   }
 
   @Post(':id/sections')

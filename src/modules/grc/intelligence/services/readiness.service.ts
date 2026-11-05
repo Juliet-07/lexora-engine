@@ -3,8 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Connection, Model, Types } from 'mongoose';
 import {
   ReadinessAssessment,
   ReadinessAssessmentDocument,
@@ -111,6 +111,7 @@ export class ReadinessService {
     private readonly dealModel: Model<DealDocument>,
     private readonly invoiceService: InvoiceService,
     private readonly esgDashboardService: EsgDashboardService,
+    @InjectConnection() private readonly connection: Connection,
   ) {}
 
   // ── Real auto-scoring — one method per connected dimension ─────
@@ -275,19 +276,60 @@ export class ReadinessService {
     });
     if (accountCount === 0) return 0;
 
+    // The Finance module's own signals: books current, a period formally
+    // closed, the balance sheet balancing, and this year's bank
+    // reconciliations actually signed off.
     let score = 100;
-    const [recentEntry, closedPeriod, balanced] = await Promise.all([
-      this.glEntryModel.exists({
-        tenantId: tId,
-        date: { $gte: new Date(Date.now() - 90 * 86400000) },
-      }),
-      this.periodModel.exists({ tenantId: tId, locked: true }),
-      this.isBalanceSheetBalanced(tenantId),
-    ]);
-    if (!recentEntry) score -= 30;
-    if (!closedPeriod) score -= 30;
-    if (!balanced) score -= 40;
+    const year = new Date().getUTCFullYear();
+    const [recentEntry, closedPeriod, balanced, reconciliations] =
+      await Promise.all([
+        this.glEntryModel.exists({
+          tenantId: tId,
+          date: { $gte: new Date(Date.now() - 90 * 86400000) },
+        }),
+        this.periodModel.exists({ tenantId: tId, locked: true }),
+        this.isBalanceSheetBalanced(tenantId),
+        this.connection
+          .collection('crm_reconciliations')
+          .find({ tenantId: tId, period: { $regex: `^${year}-` } })
+          .toArray()
+          .catch(() => [] as any[]),
+      ]);
+    if (!recentEntry) score -= 25;
+    if (!closedPeriod) score -= 25;
+    if (!balanced) score -= 30;
+    if (!reconciliations.some((r: any) => r.signedOffAt)) score -= 20;
     return Math.max(0, score);
+  }
+
+  // GRC's RRA obligations and the Finance module's tax returns both say
+  // something about tax compliance, so the two are blended. Where only one
+  // has anything recorded, that one stands alone.
+  private async scoreTax(tenantId: string): Promise<number> {
+    const tId = new Types.ObjectId(tenantId);
+    const [grc, filings] = await Promise.all([
+      this.scoreObligations(tenantId, Regulator.RRA),
+      this.connection
+        .collection('crm_tax_obligations')
+        .find({
+          tenantId: tId,
+          dueOn: {
+            $gte: new Date(Date.now() - 365 * 86400000),
+            $lt: new Date(),
+          },
+        })
+        .toArray()
+        .catch(() => [] as any[]),
+    ]);
+    if (!filings.length) return grc;
+    const onTime = filings.filter(
+      (f: any) =>
+        f.status === 'Filed' &&
+        f.filedAt &&
+        new Date(f.filedAt) <= new Date(new Date(f.dueOn).getTime() + 86400000),
+    ).length;
+    const finance = Math.round((onTime / filings.length) * 100);
+    return grc > 0 ? Math.round((grc + finance) / 2) : finance;
   }
 
   // Blend of two real rates: what share of active client mandates
@@ -377,7 +419,7 @@ export class ReadinessService {
       case ReadinessDimension.LEGAL_COMPLIANCE:
         return this.scoreObligations(tenantId);
       case ReadinessDimension.TAX_COMPLIANCE:
-        return this.scoreObligations(tenantId, Regulator.RRA);
+        return this.scoreTax(tenantId);
       case ReadinessDimension.OPERATIONAL_COMMERCIAL:
         return this.scoreOperationalCommercial(tenantId);
       case ReadinessDimension.HR_MANAGEMENT:

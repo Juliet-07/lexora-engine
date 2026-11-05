@@ -180,6 +180,13 @@ export class Policy {
 
   @Prop({ type: [PolicySectionSchema], default: [] })
   sections: PolicySection[];
+
+  // Cover page and contents page, started from the template (merge fields
+  // filled where known) and editable by the tenant. A policy written from
+  // scratch has neither until the tenant adds them.
+  @Prop({ default: '' }) coverPage: string;
+  @Prop({ default: false }) tocEnabled: boolean;
+  @Prop({ default: 'Table of Contents' }) tocTitle: string;
   @Prop({ type: [PolicyApprovalEntrySchema], default: [] })
   approvalHistory: PolicyApprovalEntry[];
   @Prop({ type: [PolicyCommentSchema], default: [] })

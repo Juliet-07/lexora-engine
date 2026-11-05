@@ -12,6 +12,9 @@ export type ReadinessAssessmentDocument = ReadinessAssessment & Document;
 // later — e.g. once CRM's finance engine exists — is a one-line
 // change to DIMENSION_COMPUTE_MODE, not a rebuild.
 //
+// Finance, the fifth module, backs Financial Statements, Tax Compliance and
+// the collection half of Operational & Commercial.
+//
 // All 8 are now auto: ESG & Sustainability and Data Room
 // Completeness were the last two manual baselines, flipped once the
 // ESG submodule and the Deal pipeline's data room existed to back
@@ -51,11 +54,12 @@ export const DIMENSION_SOURCE: Record<ReadinessDimension, string> = {
   [ReadinessDimension.GOVERNANCE]:
     'GRC → Governance (board, committees, codes, meetings)',
   [ReadinessDimension.FINANCIAL_STATEMENTS]:
-    'CRM → Accounting (chart of accounts, GL activity, period close, balance sheet balance)',
+    'Finance → Accounting (chart of accounts, GL activity, period close, balance sheet balance, signed-off reconciliations)',
   [ReadinessDimension.LEGAL_COMPLIANCE]: 'GRC → Compliance obligations',
-  [ReadinessDimension.TAX_COMPLIANCE]: 'GRC → Compliance obligations (RRA)',
+  [ReadinessDimension.TAX_COMPLIANCE]:
+    'GRC → Compliance obligations (RRA) and Finance → Tax (returns filed by their due date)',
   [ReadinessDimension.OPERATIONAL_COMMERCIAL]:
-    'CRM → Mandates & Invoicing (delivery health, collection rate)',
+    'CRM → Mandates (delivery health) and Finance → Invoicing (collection rate)',
   [ReadinessDimension.HR_MANAGEMENT]:
     'HR module (contracts, onboarding, performance reviews)',
   [ReadinessDimension.ESG]:

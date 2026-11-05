@@ -35,6 +35,7 @@ import {
   PublishPolicyDto,
   DecideBoardApprovalDto,
   AddPolicyCommentDto,
+  UpdatePolicyCoverDto,
   UploadPolicyDto,
   SubmitBoardAckDto,
 } from '../dtos';
@@ -330,6 +331,11 @@ export class PolicyService implements OnModuleInit {
       boardApprovalRequired: dto.boardApprovalRequired ?? false,
       templateId: template?._id ?? null,
       sections,
+      coverPage: template?.coverPage
+        ? renderPolicyContent(template.coverPage, mergeValues)
+        : '',
+      tocEnabled: template?.tocEnabled ?? false,
+      tocTitle: template?.tocTitle?.trim() || 'Table of Contents',
       approvalHistory: [],
       comments: [],
       boardApprovals: [],
@@ -524,7 +530,19 @@ export class PolicyService implements OnModuleInit {
     for (const section of p.sections) {
       section.content = setPolicyFieldValues(section.content ?? '', values);
     }
+    if (p.coverPage) p.coverPage = setPolicyFieldValues(p.coverPage, values);
     p.markModified('sections');
+    await p.save();
+    return p;
+  }
+
+  /** The cover page and contents page of a policy. */
+  async updateCover(tenantId: string, id: string, dto: UpdatePolicyCoverDto) {
+    const p = await this.getRawDoc(tenantId, id);
+    if (dto.coverPage !== undefined) p.coverPage = dto.coverPage;
+    if (dto.tocEnabled !== undefined) p.tocEnabled = dto.tocEnabled;
+    if (dto.tocTitle !== undefined)
+      p.tocTitle = dto.tocTitle.trim() || 'Table of Contents';
     await p.save();
     return p;
   }
@@ -784,6 +802,20 @@ export class PolicyService implements OnModuleInit {
       return { success: true, outcome: 'rejected' as const };
     }
 
+    // A note left with an approval is shown to the tenant in the policy's
+    // comments, the same as the note left with a decline.
+    if (row.notes?.trim()) {
+      p.comments.push({
+        id: `c${Date.now().toString(36)}`,
+        author: row.name,
+        authorRole: 'Board',
+        date: new Date(),
+        content: `Approved: ${row.notes.trim()}`,
+        parentId: null,
+      } as any);
+      p.markModified('comments');
+    }
+
     const allApproved = p.boardApprovals.every(
       (r) => r.decision === BoardApprovalDecision.APPROVED,
     );
@@ -1008,13 +1040,21 @@ export class PolicyService implements OnModuleInit {
     authorRole: string,
   ) {
     const p = await this.getRawDoc(tenantId, id);
+    // A reply always hangs off the first comment of its thread, so a reply
+    // to a reply stays in the same conversation.
+    let parentId: string | null = null;
+    if (dto.parentId) {
+      const parent = p.comments.find((c) => c.id === dto.parentId);
+      if (!parent) throw new NotFoundException('Comment not found');
+      parentId = parent.parentId ?? parent.id;
+    }
     p.comments.push({
-      id: `c${Date.now().toString(36)}`,
+      id: `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
       author: authorName || 'You',
       authorRole: authorRole || '',
       date: new Date(),
       content: dto.content,
-      parentId: dto.parentId ?? null,
+      parentId,
     } as any);
     p.markModified('comments');
     await p.save();

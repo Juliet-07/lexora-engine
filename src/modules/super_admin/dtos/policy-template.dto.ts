@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString,
+  IsBoolean,
   IsEnum,
   IsOptional,
   IsArray,
@@ -27,6 +28,23 @@ export class UpsertPolicyTemplateDto {
   @ValidateNested({ each: true })
   @Type(() => PolicyTemplateSectionDto)
   sections: PolicyTemplateSectionDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'Cover page (rich text, merge fields allowed). Empty = no cover page.',
+  })
+  @IsOptional()
+  @IsString()
+  coverPage?: string;
+
+  @ApiPropertyOptional({
+    description: 'Add a table of contents page built from the section titles',
+  })
+  @IsOptional()
+  @IsBoolean()
+  tocEnabled?: boolean;
+
+  @ApiPropertyOptional() @IsOptional() @IsString() tocTitle?: string;
 
   @ApiProperty({ enum: PolicyTemplateStatus })
   @IsEnum(PolicyTemplateStatus)

@@ -496,8 +496,12 @@ export class PerformanceReviewService {
       return [];
     }
 
+    // Someone who has left no longer has a review waiting on their manager.
     const subjectIds = await this.employeeModel
-      .find({ reportsToManagerId: caller._id })
+      .find({
+        reportsToManagerId: caller._id,
+        employmentStatus: { $nin: ['terminated', 'resigned'] },
+      })
       .distinct('_id');
 
     if (subjectIds.length === 0) return [];
@@ -598,6 +602,7 @@ export class PerformanceReviewService {
       .find({
         reportsToTenantId: new Types.ObjectId(tenantUserId),
         hierarchyRole: 'head_of_department',
+        employmentStatus: { $nin: ['terminated', 'resigned'] },
       })
       .distinct('_id');
 

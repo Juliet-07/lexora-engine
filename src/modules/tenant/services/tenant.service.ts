@@ -232,7 +232,10 @@ export class TenantService {
         { $limit: 5 },
       ]),
       this.employeeModel
-        .find({ tenantId: tId })
+        .find({
+          tenantId: tId,
+          employmentStatus: { $nin: ['terminated', 'resigned'] },
+        })
         .sort({ createdAt: -1 })
         .limit(5)
         .select('firstName lastName jobTitle department clientId startDate')

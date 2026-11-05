@@ -135,7 +135,12 @@ export class EmployeeService {
 
     // Add member count
     const counts = await this.employeeModel.aggregate([
-      { $match: { tenantId: tId, employmentStatus: { $ne: 'terminated' } } },
+      {
+        $match: {
+          tenantId: tId,
+          employmentStatus: { $nin: ['terminated', 'resigned'] },
+        },
+      },
       { $group: { _id: '$teamId', count: { $sum: 1 } } },
     ]);
     const countMap = counts.reduce(
@@ -286,7 +291,12 @@ export class EmployeeService {
 
     // Add member count
     const counts = await this.employeeModel.aggregate([
-      { $match: { tenantId: tId, employmentStatus: { $ne: 'terminated' } } },
+      {
+        $match: {
+          tenantId: tId,
+          employmentStatus: { $nin: ['terminated', 'resigned'] },
+        },
+      },
       { $group: { _id: '$locationId', count: { $sum: 1 } } },
     ]);
     const countMap = counts.reduce(
@@ -913,7 +923,10 @@ export class EmployeeService {
         { $sort: { count: -1 } },
       ]),
       this.employeeModel
-        .find({ tenantId: tId })
+        .find({
+          tenantId: tId,
+          employmentStatus: { $nin: ['terminated', 'resigned'] },
+        })
         .sort({ createdAt: -1 })
         .limit(5)
         .populate('teamId', 'name')

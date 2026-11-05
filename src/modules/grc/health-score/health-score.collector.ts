@@ -305,6 +305,122 @@ export class HealthScoreCollector {
         'ESG targets at least half way from baseline',
       );
     });
+
+    add('grc.succession_coverage', async () => {
+      const horizon = new Date(now.getTime() + 365 * DAY);
+      const bm = (
+        await this.rows('grc_board_members', tid, {
+          lifecycleStatus: 'Active',
+          termEnds: { $lte: horizon },
+        })
+      ).filter((b) => !/secretary/i.test(b.role));
+      const ok = bm.filter((b) => !!b.successionPlan || !!b.successorId).length;
+      return share(
+        ok,
+        bm.length,
+        'directors near the end of their term with a succession plan or successor',
+      );
+    });
+
+    add('grc.board_training_compliance', async () => {
+      const [trainings, members] = await Promise.all([
+        this.rows('grc_governance_trainings', tid, {
+          mandatory: { $ne: false },
+        }),
+        this.rows('grc_board_members', tid, { lifecycleStatus: 'Active' }),
+      ]);
+      const active = new Map(members.map((m) => [String(m._id), m]));
+      let done = 0;
+      let total = 0;
+      for (const t of trainings) {
+        if (t.dueDate && new Date(t.dueDate) > now) continue; // not yet due
+        const assigned: string[] = (t.assignedTo ?? []).length
+          ? (t.assignedTo as any[]).map(String).filter((id) => active.has(id))
+          : [...active.keys()];
+        const completed = new Set(
+          (t.completions ?? []).map((x: any) => String(x.boardMemberId ?? '')),
+        );
+        const emails = new Set(
+          (t.completions ?? []).map((x: any) =>
+            String(x.email ?? '').toLowerCase(),
+          ),
+        );
+        for (const id of assigned) {
+          total++;
+          if (
+            completed.has(id) ||
+            emails.has(String(active.get(id)?.email ?? '').toLowerCase())
+          )
+            done++;
+        }
+      }
+      return share(done, total, 'mandatory training assignments completed');
+    });
+
+    add('grc.resolution_management', async () => {
+      const rs = await this.rows('grc_resolutions', tid);
+      const due = (r: any) => new Date(r.deadline ?? r.effectiveDate);
+      const inScope = rs.filter((r) => {
+        const d = due(r);
+        return d >= yearAgo && d < now;
+      });
+      const ok = inScope.filter(
+        (r) => r.status === 'Closed' && !!r.outcome,
+      ).length;
+      return share(
+        ok,
+        inScope.length,
+        'due resolutions closed with an outcome',
+      );
+    });
+
+    add('grc.incident_breach_closure', async () => {
+      const [risk, compliance] = await Promise.all([
+        this.rows('grc_incidents', tid, { reportedAt: { $gte: yearAgo } }),
+        this.rows('compliance_incidents', tid, { reported: { $gte: yearAgo } }),
+      ]);
+      let ok = 0;
+      let late = 0;
+      const judge = (closed: boolean, reported: any, due?: any) => {
+        if (closed) return void ok++;
+        const limit = due
+          ? new Date(due).getTime()
+          : new Date(reported).getTime() + 30 * DAY;
+        if (limit < now.getTime()) late++;
+      };
+      for (const i of risk)
+        judge(i.status === 'Closed', i.reportedAt, i.dueDate);
+      for (const i of compliance) judge(i.status === 'Closed', i.reported);
+      return share(
+        ok,
+        ok + late,
+        'incidents and breaches closed (or still open past their time limit)',
+      );
+    });
+
+    add('grc.regulatory_change_management', async () => {
+      const cs = await this.rows('compliance_regulatory_changes', tid, {
+        urgency: { $in: ['Action Required', 'Review'] },
+        publishedAt: { $gte: yearAgo, $lt: now },
+      });
+      let ok = 0;
+      let late = 0;
+      for (const c of cs) {
+        if (c.assessmentStatus === 'Complete') {
+          ok++;
+          continue;
+        }
+        const limit = c.assessmentDeadline
+          ? new Date(c.assessmentDeadline).getTime()
+          : new Date(c.publishedAt).getTime() + 30 * DAY;
+        if (limit < now.getTime()) late++;
+      }
+      return share(
+        ok,
+        ok + late,
+        'regulatory changes assessed (or overdue for assessment)',
+      );
+    });
   }
 
   // ── Finance ────────────────────────────────────────────────────
@@ -681,6 +797,27 @@ export class HealthScoreCollector {
       const ok = enr.filter((e) => e.status === 'completed').length;
       return share(ok, enr.length, 'mandatory course enrolments completed');
     });
+
+    add('hr.succession_readiness', async () => {
+      const plans = await this.rows('hr_succession_plans', tid);
+      if (!plans.length) return null;
+      const pts: Record<string, number> = {
+        ready_now: 100,
+        ready_1_2_years: 65,
+        ready_3_plus_years: 30,
+        gap: 0,
+      };
+      const total = plans.reduce(
+        (sum, p) => sum + (pts[p.overallReadiness] ?? 0),
+        0,
+      );
+      const ready = plans.filter((p) => p.overallReadiness === 'ready_now');
+      return {
+        value: r1(total / plans.length),
+        basis: `${plans.length} critical role${plans.length === 1 ? '' : 's'} planned, ${ready.length} with a successor ready now`,
+        sample: plans.length,
+      };
+    });
   }
 
   // ── CRM and Projects ───────────────────────────────────────────
@@ -812,6 +949,38 @@ export class HealthScoreCollector {
         'projects with cost within 10% of budget for their progress',
       );
     });
+
+    add('crm.sla_compliance', async () => {
+      const ts = await this.rows('crm_tickets', tid, {
+        createdAt: { $gte: yearAgo },
+      });
+      let ok = 0;
+      let breached = 0;
+      for (const t of ts) {
+        const target = (t.slaTargetHrs ?? 0) * 3_600_000;
+        if (!target) continue;
+        const stopped = t.slaStoppedAt
+          ? new Date(t.slaStoppedAt).getTime()
+          : ['Resolved', 'Closed'].includes(t.status)
+            ? new Date(t.updatedAt).getTime()
+            : null;
+        const end = stopped ?? now.getTime();
+        const paused =
+          (t.totalPausedMs ?? 0) +
+          (t.pausedAt && stopped === null
+            ? now.getTime() - new Date(t.pausedAt).getTime()
+            : 0);
+        const elapsed = end - new Date(t.createdAt).getTime() - paused;
+        if (elapsed <= target) {
+          if (stopped !== null) ok++; // still running within target: undecided
+        } else breached++;
+      }
+      return share(
+        ok,
+        ok + breached,
+        'tickets resolved within their SLA (or breached it)',
+      );
+    });
   }
 
   // ── AML / KYC ──────────────────────────────────────────────────
@@ -892,6 +1061,20 @@ export class HealthScoreCollector {
         ok,
         hi.length,
         'high-risk clients with enhanced due diligence completed',
+      );
+    });
+
+    add('aml.ubo_verification', async () => {
+      const entities = (await clients()).filter(
+        (p) => p.classifications && p.classifications !== 'individual',
+      );
+      const ok = entities.filter(
+        (p) => p.verificationResults?.ubo?.status === 'passed',
+      ).length;
+      return share(
+        ok,
+        entities.length,
+        'corporate, trust and partner clients with beneficial owners verified',
       );
     });
   }

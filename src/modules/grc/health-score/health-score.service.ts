@@ -89,7 +89,7 @@ export class HealthScoreService {
   // One calculation feeds every screen that shows the health score — the
   // GRC Overview, GRC Reporting and the main dashboard — so they can never
   // disagree. It is held for a few seconds per tenant so the dashboard does
-  // not recompute 45 indicators on every load; saving settings or
+  // not recompute 53 indicators on every load; saving settings or
   // commentary clears it at once.
   private readonly cache = new Map<
     string,
