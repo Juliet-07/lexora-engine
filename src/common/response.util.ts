@@ -11,5 +11,7 @@ export const successResponse = <T>(
   meta?: Record<string, any>,
 ): ApiResponse<T> => ({ success: true, message, data, ...(meta && { meta }) });
 
-export const errorResponse = (message: string): ApiResponse =>
-  ({ success: false, message });
+export const errorResponse = (message: string): ApiResponse => ({
+  success: false,
+  message,
+});

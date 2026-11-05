@@ -1,6 +1,9 @@
 // src/common/guards/roles.guard.ts
 import {
-  Injectable, CanActivate, ExecutionContext, ForbiddenException,
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY, USER_TYPES_KEY, IS_PUBLIC_KEY } from '../decorators/index';
@@ -17,14 +20,14 @@ export class RolesGuard implements CanActivate {
     ]);
     if (isPublic) return true;
 
-    const requiredRoles = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, [
-      ctx.getHandler(),
-      ctx.getClass(),
-    ]);
-    const requiredTypes = this.reflector.getAllAndOverride<string[]>(USER_TYPES_KEY, [
-      ctx.getHandler(),
-      ctx.getClass(),
-    ]);
+    const requiredRoles = this.reflector.getAllAndOverride<string[]>(
+      ROLES_KEY,
+      [ctx.getHandler(), ctx.getClass()],
+    );
+    const requiredTypes = this.reflector.getAllAndOverride<string[]>(
+      USER_TYPES_KEY,
+      [ctx.getHandler(), ctx.getClass()],
+    );
 
     // No restrictions — allow through
     if (!requiredRoles?.length && !requiredTypes?.length) return true;

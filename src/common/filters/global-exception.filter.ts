@@ -1,6 +1,10 @@
 import {
-  ExceptionFilter, Catch, ArgumentsHost,
-  HttpException, HttpStatus, Logger,
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+  HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 
@@ -9,11 +13,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalExceptionFilter.name);
 
   catch(exception: unknown, host: ArgumentsHost) {
-    const ctx      = host.switchToHttp();
+    const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
-    const request  = ctx.getRequest<Request>();
+    const request = ctx.getRequest<Request>();
 
-    let status  = HttpStatus.INTERNAL_SERVER_ERROR;
+    let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Internal server error';
     let errors: string[] | null = null;
 
@@ -25,7 +29,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       } else if (typeof res === 'object') {
         const r = res as any;
         if (Array.isArray(r.message)) {
-          errors  = r.message;
+          errors = r.message;
           message = 'Validation failed';
         } else {
           message = r.message || message;
@@ -37,12 +41,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     response.status(status).json({
-      success:   false,
+      success: false,
       statusCode: status,
       message,
       ...(errors && { errors }),
       timestamp: new Date().toISOString(),
-      path:      request.url,
+      path: request.url,
     });
   }
 }
