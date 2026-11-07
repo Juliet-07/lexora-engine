@@ -36,6 +36,12 @@ export class InitiateUpgradeDto {
   currency?: Currency;
 }
 
+export class RequestRenewalDto {
+  @IsOptional()
+  @IsEnum(Currency)
+  currency?: Currency;
+}
+
 export class RecordManualPaymentDto {
   @IsString()
   tenantId: string;
@@ -137,6 +143,27 @@ export class TenantPaymentController {
       dto.plan,
       dto.currency,
     );
+  }
+
+  /**
+   * POST /tenant/payments/request-renewal
+   * Renew the plan the tenant is already on — same real invoice flow as an
+   * upgrade; the extra month is added after the current period on confirmation.
+   */
+  @Post('request-renewal')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Request a renewal of the current plan — real invoice',
+    description:
+      "Creates an invoice for the tenant's current plan and emails it with " +
+      'Proof-of-Payment instructions. Once a super admin confirms payment, ' +
+      'a month is added after the current period ends.',
+  })
+  requestRenewal(
+    @CurrentUser('sub') tenantId: string,
+    @Body() dto: RequestRenewalDto,
+  ) {
+    return this.paymentService.tenantRequestRenewal(tenantId, dto.currency);
   }
 
   /**

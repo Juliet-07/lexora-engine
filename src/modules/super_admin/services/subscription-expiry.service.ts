@@ -14,6 +14,7 @@ import {
   SubscriptionStatus,
   UserType,
 } from '../../../common/interfaces/user-role.enum';
+import { EXPIRY_WARNING_DAYS } from '../../../common/utils/subscription-expiry.util';
 
 @Injectable()
 export class SubscriptionExpiryService {
@@ -29,14 +30,15 @@ export class SubscriptionExpiryService {
 
   // ═══════════════════════════════════════════════════════════
   // WARNING EMAILS — runs daily at 8am UTC
-  // Sends warnings at 3, and 1 day before expiry
+  // Sends warnings 7, 3 and 1 day before expiry (EXPIRY_WARNING_DAYS —
+  // the same list the tenant dashboard indicator is built from)
   // ═══════════════════════════════════════════════════════════
 
   @Cron('0 8 * * *', { name: 'subscription-warning' })
   async sendExpiryWarnings() {
     this.logger.log('Running subscription expiry warning job...');
 
-    const warningDays = [3, 1];
+    const warningDays = EXPIRY_WARNING_DAYS;
     const now = new Date();
 
     for (const daysAhead of warningDays) {

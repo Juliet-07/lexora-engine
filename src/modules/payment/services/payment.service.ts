@@ -155,6 +155,57 @@ export class PaymentService {
     planKey: string,
     currency: Currency = Currency.USD,
   ): Promise<PaymentTransactionDocument> {
+    const existing = await this.subscriptionModel
+      .findOne({ tenantId: new Types.ObjectId(tenantId) })
+      .select('plan')
+      .lean();
+    if (existing?.plan === planKey) {
+      throw new BadRequestException(
+        'You are already on this plan — use Renew to extend it.',
+      );
+    }
+    return this.createInvoiceRequest(
+      tenantId,
+      planKey,
+      currency,
+      PaymentTransactionType.SUBSCRIPTION_UPGRADE,
+    );
+  }
+
+  // Renewing the plan the tenant is already on. Same real invoice → proof of
+  // payment → super-admin confirmation flow as an upgrade; the difference is
+  // that on confirmation the new month is added after the current period ends
+  // (see applyPlanToSubscription), so renewing early never costs days.
+  async tenantRequestRenewal(
+    tenantId: string,
+    currency: Currency = Currency.USD,
+  ): Promise<PaymentTransactionDocument> {
+    const sub = await this.subscriptionModel
+      .findOne({ tenantId: new Types.ObjectId(tenantId) })
+      .select('plan')
+      .lean();
+    if (!sub) throw new NotFoundException('No subscription found');
+    if (sub.plan === 'free') {
+      throw new BadRequestException(
+        "A free trial can't be renewed — choose a plan to upgrade instead.",
+      );
+    }
+    return this.createInvoiceRequest(
+      tenantId,
+      sub.plan,
+      currency,
+      PaymentTransactionType.SUBSCRIPTION_RENEWAL,
+    );
+  }
+
+  private async createInvoiceRequest(
+    tenantId: string,
+    planKey: string,
+    currency: Currency,
+    type:
+      | PaymentTransactionType.SUBSCRIPTION_UPGRADE
+      | PaymentTransactionType.SUBSCRIPTION_RENEWAL,
+  ): Promise<PaymentTransactionDocument> {
     const [tenant, plan] = await Promise.all([
       this.userModel.findById(tenantId).select('-password').lean(),
       this.planModel.findOne({ plan: planKey, isActive: true }).lean(),
@@ -196,7 +247,7 @@ export class PaymentService {
 
     const transaction = await this.transactionModel.create({
       tenantId: new Types.ObjectId(tenantId),
-      type: PaymentTransactionType.SUBSCRIPTION_UPGRADE,
+      type,
       status: PaymentTransactionStatus.AWAITING_PAYMENT,
       amount,
       currency,
@@ -393,6 +444,7 @@ export class PaymentService {
       tenantId,
       transaction.plan,
       transaction.maxUsersOverride,
+      transaction.type === PaymentTransactionType.SUBSCRIPTION_RENEWAL,
     );
 
     // Only a genuinely first-time activation generates credentials —
@@ -604,6 +656,10 @@ export class PaymentService {
     tenantId: string,
     planKey: string,
     maxUsersOverride?: number | null,
+    // A renewal adds its month after the current period instead of
+    // restarting from today, so a tenant who renews with days to spare
+    // keeps them.
+    extendFromCurrentEnd = false,
   ): Promise<void> {
     // Every plan grants every real, active platform module — plans
     // only actually differ by maxUsers. Deliberately not filtered by
@@ -627,7 +683,14 @@ export class PaymentService {
       ? (existing as any).activeModules
       : allModules;
 
-    const periodEnd = new Date(new Date().setMonth(new Date().getMonth() + 1));
+    const now = new Date();
+    const currentEnd = (existing as any)?.currentPeriodEnd
+      ? new Date((existing as any).currentPeriodEnd)
+      : null;
+    const base =
+      extendFromCurrentEnd && currentEnd && currentEnd > now ? currentEnd : now;
+    const periodEnd = new Date(base);
+    periodEnd.setMonth(periodEnd.getMonth() + 1);
 
     const setFields: Record<string, any> = {
       plan: planKey,

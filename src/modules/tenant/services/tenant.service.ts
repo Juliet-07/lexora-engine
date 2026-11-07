@@ -1,3 +1,4 @@
+import { subscriptionExpiry } from '../../../common/utils/subscription-expiry.util';
 import {
   Injectable,
   NotFoundException,
@@ -540,6 +541,7 @@ export class TenantService {
         activeModules: subscription?.activeModules || [],
         trialEndsAt: subscription?.trialEndsAt || null,
         currentPeriodEnd: subscription?.currentPeriodEnd || null,
+        expiry: this.expiryPayload(subscription),
         maxUsers,
         seatsUsed,
         seatsRemaining: Math.max(maxUsers - seatsUsed, 0),
@@ -707,6 +709,20 @@ export class TenantService {
       addonModules: subscription.addonModules || [],
       trialEndsAt: subscription.trialEndsAt,
       currentPeriodEnd: subscription.currentPeriodEnd,
+      expiry: this.expiryPayload(subscription),
+    };
+  }
+
+  // Dashboard indicator data: null unless the subscription is within the
+  // reminder window (EXPIRY_WARNING_DAYS) — the same stages the emails use.
+  private expiryPayload(sub: any) {
+    const expiry = subscriptionExpiry(sub);
+    if (!expiry || !expiry.stage) return null;
+    return {
+      daysLeft: expiry.daysLeft,
+      stage: expiry.stage,
+      expiresAt: expiry.expiresAt,
+      isTrial: expiry.isTrial,
     };
   }
 
