@@ -30,6 +30,16 @@ interface TicketClientRepliedEvent {
   ref: string;
   subject: string;
 }
+interface PlatformSupportUpdatedEvent {
+  tenantId: string;
+  recipientUserId: string;
+  ticketId: string;
+  ref: string;
+  subject: string;
+  status: string;
+  escalated: boolean;
+  kind: 'replied' | 'status';
+}
 interface TicketCreatedEvent {
   tenantId: string;
   clientUserId: string;
@@ -269,6 +279,23 @@ export class TenantNotificationService {
       `${e.clientName} replied — Ticket ${e.ref}`,
       e.subject,
       '/crm/service-desk',
+    );
+  }
+
+  // The platform team (Super Admin) answered, or moved, a ticket the tenant
+  // raised — tell the person who raised it. An escalated client ticket links
+  // to the service desk, where the thread sits beside the client's ticket.
+  @OnEvent('platform.support.updated')
+  async onPlatformSupportUpdated(e: PlatformSupportUpdatedEvent) {
+    await this.create(
+      e.tenantId,
+      e.recipientUserId,
+      TenantNotificationType.TICKET,
+      e.kind === 'replied'
+        ? `Platform support replied — ${e.ref}`
+        : `Platform support: ${e.ref} is now ${e.status}`,
+      e.subject,
+      e.escalated ? '/crm/service-desk' : '/support',
     );
   }
 

@@ -32,6 +32,7 @@ import { CrmModule } from './modules/crm/crm.module';
 import { GrcModule } from './modules/grc/grc.module';
 import { BoardPortalModule } from './modules/board/board.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
+import { SupportModule } from './modules/support/support.module';
 
 @Module({
   imports: [
@@ -80,6 +81,7 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
     // Feature Modules
     AuthModule,
     SuperAdminModule,
+    SupportModule,
     TenantModule,
     ClientModule,
     KycModule,
