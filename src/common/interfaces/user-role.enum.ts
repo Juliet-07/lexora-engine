@@ -18,7 +18,8 @@ export enum UserType {
 
 // ── SuperAdmin roles ─────────────────────────────────────────
 export enum SuperAdminRole {
-  SUPER_ADMIN = 'super_admin', // full platform access
+  SUPER_ADMIN = 'super_admin', // the platform owner — the one account created at registration
+  ADMIN = 'admin', // a team member the owner has added; same app access, no team management
 }
 
 // ── Tenant roles ─────────────────────────────────────────────

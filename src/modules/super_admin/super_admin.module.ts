@@ -76,6 +76,8 @@ import {
 } from './services/contract-template.service';
 import { PaymentModule } from '../payment/payment.module';
 import { ReactivationController } from './controllers/reactivation.controller';
+import { AdminUserController } from './controllers/admin-user.controller';
+import { AdminUserService } from './services/admin-user.service';
 
 @Module({
   imports: [
@@ -121,6 +123,7 @@ import { ReactivationController } from './controllers/reactivation.controller';
   ],
   controllers: [
     SuperAdminController,
+    AdminUserController,
     PlatformContractTemplateController,
     PlatformTemplateFolderController,
     InsightAdminController,
@@ -138,6 +141,7 @@ import { ReactivationController } from './controllers/reactivation.controller';
   ],
   providers: [
     SuperAdminService,
+    AdminUserService,
     SubscriptionExpiryService,
     PlatformContractTemplateService,
     PlatformTemplateFolderService,

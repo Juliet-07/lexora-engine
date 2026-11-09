@@ -155,6 +155,20 @@ export class SuperAdminController {
     return this.service.getTenantSubscription(tenantId);
   }
 
+  @Delete('tenants/:id/subscription')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: "Delete a tenant's subscription and disable their account",
+    description:
+      "Removes the subscription record and sets the tenant's account — and " +
+      "their team's — to inactive, even if the subscription was active. The " +
+      "tenant's own details and data are NOT deleted; assigning them a plan " +
+      'again restores access.',
+  })
+  deleteSubscription(@Param('id') tenantId: string) {
+    return this.service.deleteTenantSubscription(tenantId);
+  }
+
   @Patch('tenants/:id/subscription/status')
   @ApiOperation({
     summary: 'Update tenant subscription status (active/suspended/cancelled)',

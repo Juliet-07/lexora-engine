@@ -512,6 +512,12 @@ export class SuperAdminService {
       const sub = await this.subscriptionModel
         .findOne({ tenantId: new Types.ObjectId(id) })
         .lean();
+      if (!sub) {
+        throw new BadRequestException(
+          'This tenant has no subscription (it may have been deleted) — reactivating directly is not allowed. ' +
+            'Give them a plan first (Change Plan on the tenant page); confirming its payment reactivates the tenant and their team.',
+        );
+      }
       const isExpired =
         sub?.status === SubscriptionStatus.EXPIRED ||
         (sub?.currentPeriodEnd && sub.currentPeriodEnd < new Date());
@@ -966,6 +972,25 @@ export class SuperAdminService {
       );
     }
 
+    // A tenant locked out by deleting their subscription comes back the
+    // moment they are given one again — the same plan-assignment step is the
+    // way back in, for the tenant account and then their team.
+    if (
+      tenant.status === AccountStatus.INACTIVE &&
+      (tenant as any).metadata?.deactivatedBySubscriptionDeletion
+    ) {
+      await this.userModel.updateOne(
+        { _id: tenant._id },
+        {
+          $set: { status: AccountStatus.ACTIVE },
+          $unset: { 'metadata.deactivatedBySubscriptionDeletion': '' },
+        },
+      );
+      await this.subscriptionExpiryService.cascadeReactivateTenantUsers(
+        tenantId,
+      );
+    }
+
     return subscription;
   }
 
@@ -995,6 +1020,35 @@ export class SuperAdminService {
       );
     }
     return sub;
+  }
+
+  // Removes the tenant's subscription and locks them out — the tenant's own
+  // record, team, clients and data are all left exactly as they were. The
+  // account is marked so that assigning a plan later (assignTenantSubscription)
+  // can bring it back without also reviving accounts that were deactivated for
+  // some unrelated reason.
+  async deleteTenantSubscription(tenantId: string): Promise<void> {
+    const tenant = await this.userModel.findOne({
+      _id: tenantId,
+      userType: UserType.TENANT,
+    });
+    if (!tenant) throw new NotFoundException('Tenant not found');
+
+    const deleted = await this.subscriptionModel.findOneAndDelete({
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!deleted) throw new NotFoundException('Tenant subscription not found');
+
+    await this.userModel.updateOne(
+      { _id: tenant._id },
+      {
+        $set: {
+          status: AccountStatus.INACTIVE,
+          'metadata.deactivatedBySubscriptionDeletion': true,
+        },
+      },
+    );
+    await this.subscriptionExpiryService.cascadeDeactivateTenantUsers(tenantId);
   }
 
   async getTenantSubscription(

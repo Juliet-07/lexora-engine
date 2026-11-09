@@ -1,3 +1,4 @@
+export * from './admin-user.controller';
 export * from './contract-template.controller';
 export * from './demo-request-admin.controller';
 export * from './demo-request-public.controller';

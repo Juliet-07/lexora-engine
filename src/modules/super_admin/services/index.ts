@@ -1,3 +1,4 @@
+export * from './admin-user.service';
 export * from './availability.service';
 export * from './contract-template.service';
 export * from './demo-request.service';

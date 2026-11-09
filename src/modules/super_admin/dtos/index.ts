@@ -1,3 +1,4 @@
+export * from './admin-user.dto';
 export * from './contract-template.dto';
 export * from './demo-request.dto';
 export * from './insight.dto';
