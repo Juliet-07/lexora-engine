@@ -12,9 +12,11 @@ import {
   IsObject,
   ValidateNested,
   Min,
+  MaxLength,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ContractType, ObligationType } from '../schemas';
+import { ContractType, ObligationType, VariationType } from '../schemas';
 
 export class AddCommentDto {
   @ApiProperty() @IsString() author: string;
@@ -94,13 +96,73 @@ export class UpdateClauseChangeStatusDto {
   status: 'Pending' | 'Accepted' | 'Rejected';
 }
 
-export class AddAmendmentDto {
-  @ApiProperty() @IsString() summary: string;
-  // When provided, the amendment doesn't just log a summary — it
-  // directly replaces the contract's real renderedBody, with the
-  // summary serving as the audit-trail record of what changed and
-  // why.
-  @ApiPropertyOptional() @IsOptional() @IsString() newBody?: string;
+// ── Variations (amendments, addenda, side letters, waivers, extensions)
+
+export class VariationClauseDto {
+  @ApiProperty({ description: 'Clause reference, as listed by GET …/clauses' })
+  @IsString()
+  ref: string;
+  @ApiProperty({ description: 'The clause text as it should read afterwards' })
+  @IsString()
+  @MaxLength(50000)
+  amended: string;
+}
+
+export class VariationAddendumClauseDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() ref?: string;
+  @ApiProperty() @IsString() title: string;
+  @ApiProperty() @IsString() @MaxLength(50000) text: string;
+}
+
+export class CreateVariationDto {
+  @ApiProperty({ enum: VariationType })
+  @IsEnum(VariationType)
+  type: VariationType;
+  @ApiProperty() @IsString() title: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() reason?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() effectiveDate?: string;
+  @ApiPropertyOptional({ type: [VariationClauseDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => VariationClauseDto)
+  clauses?: VariationClauseDto[];
+  @ApiPropertyOptional({ type: [VariationAddendumClauseDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => VariationAddendumClauseDto)
+  addendumClauses?: VariationAddendumClauseDto[];
+  // true = save and send straight to review
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() submit?: boolean;
+}
+
+export class UpdateVariationDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() title?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() reason?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() effectiveDate?: string;
+  @ApiPropertyOptional({ type: [VariationClauseDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => VariationClauseDto)
+  clauses?: VariationClauseDto[];
+  @ApiPropertyOptional({ type: [VariationAddendumClauseDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => VariationAddendumClauseDto)
+  addendumClauses?: VariationAddendumClauseDto[];
+}
+
+export class AdvanceVariationDto {
+  @ApiProperty({ enum: ['draft', 'review', 'approved', 'executed'] })
+  @IsEnum(['draft', 'review', 'approved', 'executed'])
+  to: 'draft' | 'review' | 'approved' | 'executed';
 }
 
 export class UpdateContractGovernanceDto {

@@ -49,7 +49,9 @@ import {
   CreateContractDto,
   ExecuteContractDto,
   AddNegotiationRoundDto,
-  AddAmendmentDto,
+  CreateVariationDto,
+  UpdateVariationDto,
+  AdvanceVariationDto,
   AddObligationDto,
   SetObligationDoneDto,
   GenerateFromTemplateDto,
@@ -298,15 +300,85 @@ export class ContractController {
     );
   }
 
-  @Post(':id/amendments')
-  @ApiOperation({ summary: 'Add an amendment' })
-  addAmendment(
+  // ── Variations: amendments, addenda, side letters, waivers, extensions ──
+
+  @Get(':id/clauses')
+  @ApiOperation({ summary: 'Clauses of the contract as it reads now' })
+  getClauses(
     @Param('id') id: string,
-    @Body() dto: AddAmendmentDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.addAmendment(t || u, id, dto);
+    return this.service.getClauses(t || u, id);
+  }
+
+  @Get(':id/variations/document')
+  @ApiOperation({ summary: 'Contract text: current, original or redline' })
+  @ApiQuery({
+    name: 'mode',
+    enum: ['current', 'original', 'redline'],
+    required: false,
+  })
+  getVariationDocument(
+    @Param('id') id: string,
+    @Query('mode') mode: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const m = mode === 'original' || mode === 'redline' ? mode : 'current';
+    return this.service.getVariationDocument(t || u, id, m);
+  }
+
+  @Post(':id/variations')
+  @ApiOperation({
+    summary: 'Create a variation (draft, or straight to review)',
+  })
+  createVariation(
+    @Param('id') id: string,
+    @Body() dto: CreateVariationDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.createVariation(t || u, u, id, dto);
+  }
+
+  @Patch(':id/variations/:ref')
+  @ApiOperation({ summary: 'Edit a draft variation' })
+  updateVariation(
+    @Param('id') id: string,
+    @Param('ref') ref: string,
+    @Body() dto: UpdateVariationDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.updateVariation(t || u, u, id, ref, dto);
+  }
+
+  @Post(':id/variations/:ref/advance')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Move a variation along: draft → review → approved → executed (or back to draft)',
+  })
+  advanceVariation(
+    @Param('id') id: string,
+    @Param('ref') ref: string,
+    @Body() dto: AdvanceVariationDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.advanceVariation(t || u, u, id, ref, dto);
+  }
+
+  @Delete(':id/variations/:ref')
+  @ApiOperation({ summary: 'Delete a draft variation' })
+  deleteVariation(
+    @Param('id') id: string,
+    @Param('ref') ref: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.deleteVariation(t || u, id, ref);
   }
 
   @Post(':id/obligations')

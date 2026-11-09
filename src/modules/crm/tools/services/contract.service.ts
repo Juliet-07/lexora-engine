@@ -1,5 +1,12 @@
 import { inferContractType } from 'src/common/utils/contract-type.util';
 import {
+  appendAddendum,
+  applyClauseChanges,
+  parseClauses,
+  redlineDocument,
+  sameText,
+} from 'src/common/utils/contract-clauses.util';
+import {
   refreshTableOfContents,
   renderTemplateDocument,
 } from 'src/common/utils/contract-structure.util';
@@ -37,6 +44,10 @@ import {
   SignatureStatus,
   ApprovalStepStatus,
   ClauseChangeStatus,
+  VariationType,
+  VariationStatus,
+  VARIATION_PREFIX,
+  type VariationAction,
   type ContractMergeField,
 } from '../schemas';
 import {
@@ -44,7 +55,9 @@ import {
   ExecuteContractDto,
   AddNegotiationRoundDto,
   UpdateClauseChangeStatusDto,
-  AddAmendmentDto,
+  CreateVariationDto,
+  UpdateVariationDto,
+  AdvanceVariationDto,
   AddObligationDto,
   SetObligationDoneDto,
   GenerateFromTemplateDto,
@@ -320,6 +333,7 @@ export class ContractService {
   async getAll(tenantId: string) {
     const contracts = await this.model
       .find({ tenantId: new Types.ObjectId(tenantId) })
+      .select('-originalBody')
       .sort({ createdAt: -1 })
       .lean();
     // A contract's clientId can point at a client or at a board member
@@ -425,8 +439,14 @@ export class ContractService {
         .lean();
     }
 
+    // The pre-variation snapshot is large and only needed by the document
+    // view, which asks for it separately.
+    const { originalBody, ...rest } = c;
     return {
-      ...c,
+      ...rest,
+      hasVariations: (c.variations ?? []).some(
+        (v: any) => v.status === 'executed',
+      ),
       tenantBusinessName,
       counterpartyKycStatus,
       counterpartyRegistrationNumber,
@@ -585,35 +605,405 @@ export class ContractService {
     return c.toObject();
   }
 
-  // Real edit — when newBody is provided, the amendment doesn't
-  // just log a summary, it directly replaces the contract's real
-  // renderedBody. The amendment record is the audit trail of what
-  // changed, not a substitute for the change itself.
-  async addAmendment(tenantId: string, id: string, dto: AddAmendmentDto) {
+  // ═══════════════════════════════════════════════════════════
+  // VARIATIONS — amendments, addenda, side letters, waivers and
+  // extensions. They apply to a contract that has been executed and
+  // is in force (Active / Renewal); each goes draft → review →
+  // approved → executed, and executing it applies it to the text.
+  // ═══════════════════════════════════════════════════════════
+
+  private async actorName(userId: string): Promise<string> {
+    const u: any = await this.userModel
+      .findById(userId)
+      .select('firstName lastName email')
+      .lean();
+    const name = `${u?.firstName ?? ''} ${u?.lastName ?? ''}`.trim();
+    return name || u?.email || 'Team member';
+  }
+
+  private assertVariable(c: any) {
+    if (AMENDABLE_STAGES.includes(c.stage)) return;
+    throw new BadRequestException(
+      c.stage === ContractStage.EXPIRY_TERMINATION
+        ? 'This contract has expired or been terminated, so it can no longer be varied.'
+        : `Amendments and other variations apply once a contract has been executed and is Active. This one is at "${c.stage}" — edit it in the editor or log a negotiation round instead.`,
+    );
+  }
+
+  private nextVariationRef(c: any, type: VariationType): string {
+    const prefix = VARIATION_PREFIX[type];
+    const re = new RegExp(`^${prefix}-(\\d+)$`);
+    let max = 0;
+    for (const r of [
+      ...(c.variations ?? []).map((v: any) => v.ref),
+      ...(c.amendments ?? []).map((a: any) => a.ref),
+    ]) {
+      const m = re.exec(String(r));
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+    return `${prefix}-${String(max + 1).padStart(2, '0')}`;
+  }
+
+  private variationAction(type: VariationType): VariationAction {
+    return type === VariationType.WAIVER
+      ? 'waive'
+      : type === VariationType.SIDE_LETTER
+        ? 'clarify'
+        : 'amend';
+  }
+
+  private variationLabel(type: VariationType): string {
+    return {
+      [VariationType.AMENDMENT]: 'Amendment',
+      [VariationType.ADDENDUM]: 'Addendum',
+      [VariationType.SIDE_LETTER]: 'Side letter',
+      [VariationType.WAIVER]: 'Waiver',
+      [VariationType.EXTENSION]: 'Extension',
+    }[type];
+  }
+
+  // Turn the clauses a user picked into stored clauses, snapshotting the
+  // text as it reads now. Every ref must exist and at least one clause
+  // must actually change.
+  private buildVariationClauses(
+    c: any,
+    type: VariationType,
+    picked: { ref: string; amended: string }[],
+  ) {
+    const current = parseClauses(c.renderedBody);
+    if (!current.length) {
+      throw new BadRequestException(
+        'This contract has no clause text to change. Use an addendum to add terms instead.',
+      );
+    }
+    if (!picked.length) {
+      throw new BadRequestException('Select at least one clause to change.');
+    }
+    const seen = new Set<string>();
+    let changed = 0;
+    const out = picked.map((p) => {
+      const cur = current.find((x) => x.ref === p.ref);
+      if (!cur) {
+        throw new BadRequestException(
+          `Clause ${p.ref} does not exist in the current contract text.`,
+        );
+      }
+      if (seen.has(p.ref)) {
+        throw new BadRequestException(`Clause ${p.ref} is listed twice.`);
+      }
+      seen.add(p.ref);
+      const amended = String(p.amended ?? '').trim();
+      if (!amended) {
+        throw new BadRequestException(
+          `Clause ${p.ref} needs the text it should read afterwards.`,
+        );
+      }
+      if (!sameText(amended, cur.text)) changed += 1;
+      return {
+        ref: cur.ref,
+        title: cur.title,
+        action: this.variationAction(type),
+        original: cur.text,
+        amended,
+      };
+    });
+    if (!changed) {
+      throw new BadRequestException(
+        'None of the selected clauses has been changed yet.',
+      );
+    }
+    return out;
+  }
+
+  private buildAddendumClauses(
+    list: { ref?: string; title: string; text: string }[],
+  ) {
+    const out = (list ?? [])
+      .map((x, i) => ({
+        ref: (x.ref ?? '').trim() || `Schedule ${i + 1}`,
+        title: String(x.title ?? '').trim(),
+        text: String(x.text ?? '').trim(),
+      }))
+      .filter((x) => x.title || x.text);
+    if (!out.length) {
+      throw new BadRequestException('Add at least one clause to the addendum.');
+    }
+    for (const x of out) {
+      if (!x.title || !x.text) {
+        throw new BadRequestException(
+          `${x.ref} needs both a title and its text.`,
+        );
+      }
+    }
+    return out;
+  }
+
+  private hist(user: string, action: string) {
+    return { at: new Date(), user, action };
+  }
+
+  private findVariation(c: any, ref: string) {
+    const v = (c.variations ?? []).find((x: any) => x.ref === ref);
+    if (!v) throw new NotFoundException('Variation not found');
+    return v;
+  }
+
+  private async getVariableContract(tenantId: string, id: string) {
     const c = await this.model.findOne({
       _id: id,
       tenantId: new Types.ObjectId(tenantId),
     });
     if (!c) throw new NotFoundException('Contract not found');
-    // An amendment is a formal change to a contract that is already in
-    // force. Before execution the document is simply edited (editor,
-    // negotiation rounds); once it has expired or been terminated there is
-    // nothing left to vary. This also keeps `newBody` — which replaces the
-    // document — from being a way round the signed-contract edit lock.
-    if (!AMENDABLE_STAGES.includes(c.stage)) {
+    return c;
+  }
+
+  // The clauses of the contract as it reads now — what a new variation
+  // can pick from.
+  async getClauses(tenantId: string, id: string) {
+    const c = await this.getVariableContract(tenantId, id);
+    return {
+      clauses: parseClauses(c.renderedBody),
+      canVary: AMENDABLE_STAGES.includes(c.stage),
+    };
+  }
+
+  async createVariation(
+    tenantId: string,
+    userId: string,
+    id: string,
+    dto: CreateVariationDto,
+  ) {
+    const c = await this.getVariableContract(tenantId, id);
+    this.assertVariable(c);
+    const title = String(dto.title ?? '').trim();
+    if (!title) throw new BadRequestException('Give the variation a title.');
+
+    const actor = await this.actorName(userId);
+    const ref = this.nextVariationRef(c, dto.type);
+    const isAddendum = dto.type === VariationType.ADDENDUM;
+    const history = [
+      this.hist(
+        actor,
+        `Created ${this.variationLabel(dto.type).toLowerCase()} ${ref}`,
+      ),
+    ];
+    if (dto.submit) history.unshift(this.hist(actor, 'Submitted for review'));
+    c.variations.push({
+      ref,
+      type: dto.type,
+      title,
+      status: dto.submit ? VariationStatus.REVIEW : VariationStatus.DRAFT,
+      reason: (dto.reason ?? '').trim(),
+      effectiveDate: dto.effectiveDate ? new Date(dto.effectiveDate) : null,
+      clauses: isAddendum
+        ? []
+        : this.buildVariationClauses(c, dto.type, dto.clauses ?? []),
+      addendumClauses: isAddendum
+        ? this.buildAddendumClauses(dto.addendumClauses ?? [])
+        : [],
+      createdBy: actor,
+      approvedBy: null,
+      executedBy: null,
+      executedDate: null,
+      history,
+    } as any);
+    await c.save();
+    return this.findVariation(c, ref).toObject();
+  }
+
+  async updateVariation(
+    tenantId: string,
+    userId: string,
+    id: string,
+    ref: string,
+    dto: UpdateVariationDto,
+  ) {
+    const c = await this.getVariableContract(tenantId, id);
+    this.assertVariable(c);
+    const v = this.findVariation(c, ref);
+    if (v.status !== VariationStatus.DRAFT) {
       throw new BadRequestException(
-        c.stage === ContractStage.EXPIRY_TERMINATION
-          ? 'This contract has expired or been terminated, so it can no longer be amended.'
-          : `Amendments apply to a contract that is in force. This one is at "${c.stage}" — edit it in the editor or log a negotiation round instead, and amend it once it is Active.`,
+        'Only a draft can be edited. Return it to draft first.',
       );
     }
-    const ref = `AMD-${String(c.amendments.length + 1).padStart(2, '0')}`;
-    c.amendments.push({ ref, at: new Date(), summary: dto.summary } as any);
-    if (dto.newBody != null) {
-      c.renderedBody = dto.newBody;
+    if (dto.title !== undefined) {
+      const t = dto.title.trim();
+      if (!t) throw new BadRequestException('Give the variation a title.');
+      v.title = t;
     }
+    if (dto.reason !== undefined) v.reason = dto.reason.trim();
+    if (dto.effectiveDate !== undefined) {
+      v.effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : null;
+    }
+    if (v.type === VariationType.ADDENDUM) {
+      if (dto.addendumClauses) {
+        v.addendumClauses = this.buildAddendumClauses(
+          dto.addendumClauses,
+        ) as any;
+      }
+    } else if (dto.clauses) {
+      // Re-reads the clause text, so a draft that was started before
+      // another variation changed the same clause is brought up to date.
+      v.clauses = this.buildVariationClauses(c, v.type, dto.clauses) as any;
+    }
+    v.history.unshift(this.hist(await this.actorName(userId), 'Edited draft'));
     await c.save();
-    return c.toObject();
+    return this.findVariation(c, ref).toObject();
+  }
+
+  async deleteVariation(tenantId: string, id: string, ref: string) {
+    const c = await this.getVariableContract(tenantId, id);
+    const v = this.findVariation(c, ref);
+    if (v.status !== VariationStatus.DRAFT) {
+      throw new BadRequestException('Only a draft can be deleted.');
+    }
+    c.variations = c.variations.filter((x: any) => x.ref !== ref) as any;
+    await c.save();
+    return { deleted: true, ref };
+  }
+
+  private static readonly VARIATION_FLOW: Record<string, VariationStatus[]> = {
+    [VariationStatus.DRAFT]: [VariationStatus.REVIEW],
+    [VariationStatus.REVIEW]: [VariationStatus.DRAFT, VariationStatus.APPROVED],
+    [VariationStatus.APPROVED]: [
+      VariationStatus.DRAFT,
+      VariationStatus.EXECUTED,
+    ],
+    [VariationStatus.EXECUTED]: [],
+  };
+
+  async advanceVariation(
+    tenantId: string,
+    userId: string,
+    id: string,
+    ref: string,
+    dto: AdvanceVariationDto,
+  ) {
+    const c = await this.getVariableContract(tenantId, id);
+    const v = this.findVariation(c, ref);
+    const to = dto.to as VariationStatus;
+    if (!ContractService.VARIATION_FLOW[v.status]?.includes(to)) {
+      throw new BadRequestException(
+        `A variation that is ${v.status} cannot move to ${to}.`,
+      );
+    }
+    const actor = await this.actorName(userId);
+    const labels: Record<string, string> = {
+      draft: 'Returned to draft',
+      review: 'Submitted for review',
+      approved: 'Approved',
+      executed: 'Executed and applied to the contract',
+    };
+
+    if (to === VariationStatus.EXECUTED) {
+      this.assertVariable(c);
+      this.applyVariation(c, v);
+      v.executedDate = new Date();
+      v.executedBy = actor;
+      c.amendments.push({
+        ref: v.ref,
+        at: v.executedDate,
+        summary: `${this.variationLabel(v.type)}: ${v.title}`,
+      } as any);
+      c.interactions.push({
+        type: ToolContractInteractionType.UPDATED,
+        occurredAt: new Date(),
+        actor: 'tenant',
+        message: `${this.variationLabel(v.type)} ${v.ref} executed — ${v.title}`,
+        tenantUserId: new Types.ObjectId(userId),
+      } as any);
+    }
+    if (to === VariationStatus.APPROVED) v.approvedBy = actor;
+    if (to === VariationStatus.DRAFT) v.approvedBy = null;
+
+    v.status = to;
+    v.history.unshift(this.hist(actor, labels[to]));
+    await c.save();
+    return this.findVariation(c, ref).toObject();
+  }
+
+  // Writes an approved variation into the contract text. Refuses (and
+  // changes nothing) if a clause it relies on has since been changed.
+  private applyVariation(c: any, v: any) {
+    if (v.type === VariationType.ADDENDUM) {
+      if (c.originalBody == null) c.originalBody = c.renderedBody;
+      c.renderedBody = refreshTableOfContents(
+        appendAddendum(
+          c.renderedBody,
+          v.ref,
+          v.title,
+          v.addendumClauses.map((x: any) => ({
+            ref: x.ref,
+            title: x.title,
+            text: x.text,
+          })),
+        ),
+      );
+      return;
+    }
+    const current = parseClauses(c.renderedBody);
+    for (const vc of v.clauses) {
+      const cur = current.find((x) => x.ref === vc.ref);
+      if (!cur) {
+        throw new ConflictException(
+          `Clause ${vc.ref} no longer exists in the contract, so ${v.ref} cannot be applied.`,
+        );
+      }
+      if (!sameText(cur.text, vc.original)) {
+        throw new ConflictException(
+          `Clause ${vc.ref} has been changed since ${v.ref} was drafted. Return it to draft and open it for editing to refresh it, then submit again.`,
+        );
+      }
+    }
+    if (c.originalBody == null) c.originalBody = c.renderedBody;
+    c.renderedBody = refreshTableOfContents(
+      applyClauseChanges(
+        c.renderedBody,
+        v.clauses.map((x: any) => ({ ref: x.ref, text: x.amended })),
+      ),
+    );
+  }
+
+  // The contract text: as it reads now, as originally signed, or with
+  // every executed variation shown as a redline.
+  async getVariationDocument(
+    tenantId: string,
+    id: string,
+    mode: 'current' | 'original' | 'redline',
+  ) {
+    const c = await this.getVariableContract(tenantId, id);
+    const executed = (c.variations ?? [])
+      .filter((v: any) => v.status === VariationStatus.EXECUTED)
+      .sort(
+        (a: any, b: any) =>
+          new Date(a.executedDate).getTime() -
+          new Date(b.executedDate).getTime(),
+      );
+    const original = c.originalBody ?? c.renderedBody;
+    let html = c.renderedBody;
+    if (mode === 'original') html = original;
+    else if (mode === 'redline' && c.originalBody != null) {
+      const finalText = new Map<string, string>();
+      for (const v of executed) {
+        for (const cl of v.clauses ?? []) finalText.set(cl.ref, cl.amended);
+      }
+      html = redlineDocument(
+        original,
+        finalText,
+        executed
+          .filter((v: any) => v.type === VariationType.ADDENDUM)
+          .map((v: any) => ({
+            ref: v.ref,
+            title: v.title,
+            clauses: v.addendumClauses.map((x: any) => ({
+              ref: x.ref,
+              title: x.title,
+              text: x.text,
+            })),
+          })),
+      );
+    }
+    return { mode, html, executedCount: executed.length };
   }
 
   async addObligation(tenantId: string, id: string, dto: AddObligationDto) {

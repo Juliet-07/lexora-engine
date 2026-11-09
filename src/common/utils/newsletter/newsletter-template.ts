@@ -89,6 +89,11 @@ const safeUrl = (u: unknown) => {
   return /^(https?:\/\/|mailto:|tel:)/i.test(v) ? v : '#';
 };
 
+// A button is only worth rendering when it has somewhere to go. The
+// link is optional in every template: no (or unusable) link = no
+// button, rather than a dead "#" button in the recipient's inbox.
+const hasLink = (u: unknown) => safeUrl(u) !== '#';
+
 // Images are http(s) only.
 const safeImageUrl = (u: unknown) => {
   const v = String(u ?? '').trim();
@@ -295,7 +300,7 @@ function renderRegulatoryAlert(
       <tr><td style="border-left:4px solid ${COLORS.red};padding:16px 18px;font-size:13.5px;line-height:1.7;color:${COLORS.inkSoft};${FONT}">${multiline(data.alertText)}</td></tr>
     </table>
     ${checklistHtml ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">${checklistHtml}</table>` : ''}
-    ${data.ctaUrl ? `<div style="text-align:center;padding:6px 0 24px;">${ctaButton(data.ctaLabel || 'Read the full advisory', data.ctaUrl)}</div>` : '<div style="padding-bottom:18px;"></div>'}
+    ${hasLink(data.ctaUrl) ? `<div style="text-align:center;padding:6px 0 24px;">${ctaButton(data.ctaLabel || 'Read the full advisory', data.ctaUrl)}</div>` : '<div style="padding-bottom:18px;"></div>'}
     ${data.fineText ? `<div style="font-size:12px;color:${COLORS.soft};text-align:center;padding-bottom:4px;${FONT}">${esc(data.fineText)}</div>` : ''}
   </td></tr>
   ${contentBlocksRows(data.contentBlocks)}`;
@@ -392,7 +397,7 @@ function renderArticleSpotlight(
     <div style="font-size:22px;line-height:1.3;font-weight:700;color:${COLORS.ink};margin:0 0 10px;${FONT}">${esc(data.heading)}</div>
     <div style="font-size:12.5px;color:${COLORS.soft};margin-bottom:18px;${FONT}">${esc(data.byline)}</div>
     <p style="font-size:14px;line-height:1.75;color:${COLORS.inkSoft};margin:0 0 20px;${FONT}">${multiline(data.excerpt)}</p>
-    ${data.ctaUrl ? `<div style="padding-bottom:26px;">${ctaButton(data.ctaLabel || 'Read the full article', data.ctaUrl)}</div>` : '<div style="padding-bottom:10px;"></div>'}
+    ${hasLink(data.ctaUrl) ? `<div style="padding-bottom:26px;">${ctaButton(data.ctaLabel || 'Read the full article', data.ctaUrl)}</div>` : '<div style="padding-bottom:10px;"></div>'}
   </td></tr>
   ${contentBlocksRows(data.contentBlocks)}
   ${moreHtml}`;
@@ -566,7 +571,7 @@ function renderEventInvite(
     paragraphs: data.bodyText ? [data.bodyText] : [],
     infoRows: Array.isArray(data.infoRows) ? data.infoRows : [],
     agenda: Array.isArray(data.agenda) ? data.agenda : [],
-    buttons: data.ctaUrl
+    buttons: hasLink(data.ctaUrl)
       ? [{ label: data.ctaLabel || 'Reserve my seat', url: data.ctaUrl }]
       : [],
     calendarUrl: data.calendarUrl,
@@ -625,7 +630,6 @@ export function missingTemplateFields(
     case NewsletterTemplate.ARTICLE_SPOTLIGHT:
       req(!!d.heading, 'heading');
       req(!!d.excerpt, 'excerpt');
-      req(!!d.ctaUrl, 'ctaUrl');
       break;
     case NewsletterTemplate.EVENT_INVITE:
       req(!!d.heading, 'heading');

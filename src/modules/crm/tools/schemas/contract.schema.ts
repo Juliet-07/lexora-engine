@@ -126,6 +126,90 @@ export class ContractAmendment {
 export const ContractAmendmentSchema =
   SchemaFactory.createForClass(ContractAmendment);
 
+// ── Variations ────────────────────────────────────────────────
+// A formal change to a contract that is in force. Five kinds:
+// amendment (AMD), addendum (ADD), side letter (SL), waiver (WAV) and
+// extension (EXT). Each goes draft → review → approved → executed;
+// executing it applies it to the contract text.
+export enum VariationType {
+  AMENDMENT = 'amendment',
+  ADDENDUM = 'addendum',
+  SIDE_LETTER = 'side_letter',
+  WAIVER = 'waiver',
+  EXTENSION = 'extension',
+}
+export const VARIATION_PREFIX: Record<VariationType, string> = {
+  [VariationType.AMENDMENT]: 'AMD',
+  [VariationType.ADDENDUM]: 'ADD',
+  [VariationType.SIDE_LETTER]: 'SL',
+  [VariationType.WAIVER]: 'WAV',
+  [VariationType.EXTENSION]: 'EXT',
+};
+export enum VariationStatus {
+  DRAFT = 'draft',
+  REVIEW = 'review',
+  APPROVED = 'approved',
+  EXECUTED = 'executed',
+}
+export type VariationAction = 'amend' | 'clarify' | 'waive';
+
+@Schema({ _id: true })
+export class VariationClause {
+  @Prop({ required: true }) ref: string;
+  @Prop({ default: '' }) title: string;
+  @Prop({ enum: ['amend', 'clarify', 'waive'], default: 'amend' })
+  action: VariationAction;
+  // The clause text when this was drafted, and the text it becomes.
+  @Prop({ default: '' }) original: string;
+  @Prop({ default: '' }) amended: string;
+}
+export const VariationClauseSchema =
+  SchemaFactory.createForClass(VariationClause);
+
+@Schema({ _id: true })
+export class VariationAddendumClause {
+  @Prop({ default: '' }) ref: string;
+  @Prop({ default: '' }) title: string;
+  @Prop({ default: '' }) text: string;
+}
+export const VariationAddendumClauseSchema = SchemaFactory.createForClass(
+  VariationAddendumClause,
+);
+
+@Schema({ _id: false })
+export class VariationHistoryEntry {
+  @Prop({ required: true, default: () => new Date() }) at: Date;
+  @Prop({ default: '' }) user: string;
+  @Prop({ required: true }) action: string;
+}
+export const VariationHistoryEntrySchema = SchemaFactory.createForClass(
+  VariationHistoryEntry,
+);
+
+@Schema({ timestamps: true })
+export class ContractVariation {
+  // AMD-01, ADD-01, SL-01 … numbered per type.
+  @Prop({ required: true }) ref: string;
+  @Prop({ enum: VariationType, required: true }) type: VariationType;
+  @Prop({ required: true, trim: true }) title: string;
+  @Prop({ enum: VariationStatus, default: VariationStatus.DRAFT })
+  status: VariationStatus;
+  @Prop({ default: '' }) reason: string;
+  @Prop({ default: null }) effectiveDate: Date | null;
+  @Prop({ type: [VariationClauseSchema], default: [] })
+  clauses: VariationClause[];
+  @Prop({ type: [VariationAddendumClauseSchema], default: [] })
+  addendumClauses: VariationAddendumClause[];
+  @Prop({ default: '' }) createdBy: string;
+  @Prop({ default: null }) approvedBy: string | null;
+  @Prop({ default: null }) executedBy: string | null;
+  @Prop({ default: null }) executedDate: Date | null;
+  @Prop({ type: [VariationHistoryEntrySchema], default: [] })
+  history: VariationHistoryEntry[];
+}
+export const ContractVariationSchema =
+  SchemaFactory.createForClass(ContractVariation);
+
 // Real, tenant-defined checklist gating execution — same pattern
 // Mandate's closureChecklist and ADR's prep checklist already use.
 @Schema({ _id: true })
@@ -330,8 +414,15 @@ export class ToolContract {
   rounds: NegotiationRound[];
   @Prop({ type: [ContractObligationSchema], default: [] })
   obligations: ContractObligation[];
+  // One entry per executed variation (plus any logged before variations
+  // existed) — feeds the contract's version history.
   @Prop({ type: [ContractAmendmentSchema], default: [] })
   amendments: ContractAmendment[];
+  @Prop({ type: [ContractVariationSchema], default: [] })
+  variations: ContractVariation[];
+  // The document exactly as it stood before the first executed variation
+  // changed it — kept for the Original / Redline views.
+  @Prop({ type: String, default: null }) originalBody: string | null;
 
   // ── Governance panel — real fields, tenant-entered. Risk
   // classification and conflict-check are recorded here directly

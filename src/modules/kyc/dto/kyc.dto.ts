@@ -5,6 +5,8 @@ import {
   IsEnum,
   IsNumber,
   IsBoolean,
+  IsEmail,
+  MaxLength,
   IsArray,
   IsDateString,
   Min,
@@ -212,6 +214,22 @@ export class UpdateStrDto {
 
 export class SubmitStrDto {
   @ApiPropertyOptional() @IsOptional() @IsString() goAmlReference?: string;
+}
+
+// Body of POST /kyc/str/:strId/submit — the tenant chooses, per
+// submission, which mailbox the report is sent to.
+export class SubmitStrToFicDto {
+  @ApiProperty({ description: 'Email address the STR is sent to (the FIC)' })
+  @IsEmail({}, { message: 'Enter a valid recipient email address' })
+  recipientEmail: string;
+
+  @ApiPropertyOptional({
+    description: 'Optional cover note shown in the email',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  message?: string;
 }
 
 // ── Watchlist ─────────────────────────────────────────────────

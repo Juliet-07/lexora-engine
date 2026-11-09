@@ -47,6 +47,7 @@ import {
   CreateStrDto,
   UpdateStrDto,
   SubmitStrDto,
+  SubmitStrToFicDto,
   AddWatchlistEntryDto,
   AdHocScreeningDto,
   WatchlistFilterDto,
@@ -467,17 +468,19 @@ export class KycController {
   @Roles(...COMPLIANCE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Submit STR to Rwanda FIC [compliance]',
+    summary: 'Submit STR to the FIC by email [compliance]',
     description:
-      'Marks STR as submitted and returns goAML-compatible XML. ' +
-      'Download the XML and upload it to goweb.fic.gov.rw',
+      'Emails the STR (goAML XML attached) to the recipient address in the ' +
+      'body and, only if the email was accepted for delivery, marks the ' +
+      'STR as submitted. Returns the goAML XML as well.',
   })
   submitStr(
     @Param('strId') strId: string,
+    @Body() dto: SubmitStrToFicDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.str.submitStr(strId, t || u, u);
+    return this.str.submitStr(strId, t || u, u, dto);
   }
 
   @Get('str/:strId/xml')

@@ -89,6 +89,11 @@ export class SuspiciousTransactionReport {
 
   @Prop({ default: null })
   ficEmailSentAt: Date | null;
+
+  // The address the report was actually emailed to (chosen by the
+  // tenant in the "Submit to FIC" popup).
+  @Prop({ type: String, default: null })
+  ficRecipientEmail: string | null;
 }
 
 export const StrSchema = SchemaFactory.createForClass(

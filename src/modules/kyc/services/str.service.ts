@@ -1,7 +1,9 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
+  BadGatewayException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -11,13 +13,15 @@ import {
   StrStatus,
 } from '../schemas/str.schema';
 import { User, UserDocument } from '../../auth/schemas/user.schema';
-import { CreateStrDto, UpdateStrDto, SubmitStrDto } from '../dto/kyc.dto';
+import { CreateStrDto, UpdateStrDto, SubmitStrToFicDto } from '../dto/kyc.dto';
 import { paginate, PaginationDto } from '../../../common/pagination.dto';
 import { TransactionService } from './transaction.service';
 import { EmailService } from '../../../common/utils/mailing/email.service';
 
 @Injectable()
 export class StrService {
+  private readonly logger = new Logger(StrService.name);
+
   constructor(
     @InjectModel(SuspiciousTransactionReport.name)
     private readonly strModel: Model<StrDocument>,
@@ -201,10 +205,18 @@ export class StrService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // SUBMIT STR — marks as submitted + generates goAML XML
+  // SUBMIT STR TO THE FIC — emails the report (goAML XML attached)
+  // to the address the tenant entered, and only then marks it
+  // submitted. If the email can't be sent the STR is left as it
+  // was, so nothing is recorded as submitted that never went out.
   // ═══════════════════════════════════════════════════════════
 
-  async submitStr(strId: string, tenantId: string, submittedBy: string) {
+  async submitStr(
+    strId: string,
+    tenantId: string,
+    submittedBy: string,
+    dto: SubmitStrToFicDto,
+  ) {
     const str = await this.strModel
       .findOne({ _id: strId, tenantId: new Types.ObjectId(tenantId) })
       .populate('clientId', 'firstName lastName email phone')
@@ -219,25 +231,26 @@ export class StrService {
       throw new BadRequestException('STR has already been submitted');
     }
 
-    // Generate goAML-compatible XML
+    const recipient = String(dto?.recipientEmail ?? '').trim();
+    if (!recipient) {
+      throw new BadRequestException('Recipient email is required');
+    }
+
     const xml = this.generateGoAmlXml(str);
 
-    // Real email to Rwanda FIC with the real goAML XML attached —
-    // configured per environment since the actual FIC intake
-    // address isn't something to guess at or hardcode. If it's
-    // genuinely not configured yet, the STR still gets marked
-    // submitted (the XML is still available for manual upload to
-    // goweb.fic.gov.rw) but ficEmailSent stays false so staff can
-    // see the email step didn't actually happen.
-    const ficEmail = process.env.FIC_RWANDA_EMAIL;
-    let ficEmailSent = false;
-    if (ficEmail) {
-      const tenant = await this.userModel
-        .findById(tenantId)
-        .select('tenantProfile.businessName')
-        .lean();
+    const tenant = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.businessName')
+      .lean();
+
+    const submitter = await this.userModel
+      .findById(submittedBy)
+      .select('email')
+      .lean();
+
+    try {
       await this.mailService.sendStrToFic({
-        to: ficEmail,
+        to: recipient,
         strId: str.strId,
         tenantBusinessName:
           (tenant as any)?.tenantProfile?.businessName || 'Lexora',
@@ -245,32 +258,40 @@ export class StrService {
         amount: str.amount,
         currency: str.currency,
         xml,
+        message: dto?.message?.trim() || undefined,
+        replyTo: (submitter as any)?.email || undefined,
       });
-      ficEmailSent = true;
+    } catch (err) {
+      this.logger.error(
+        `STR ${str.strId} email to ${recipient} failed: ${(err as Error)?.message}`,
+      );
+      throw new BadGatewayException(
+        'The email could not be sent, so the STR has not been marked as submitted. Check the address and try again.',
+      );
     }
 
-    // Mark as submitted
+    const now = new Date();
     await this.strModel.findByIdAndUpdate(strId, {
       status: StrStatus.SUBMITTED,
-      submittedAt: new Date(),
+      submittedAt: now,
       reviewedBy: new Types.ObjectId(submittedBy),
-      ficEmailSent,
-      ficEmailSentAt: ficEmailSent ? new Date() : null,
+      ficEmailSent: true,
+      ficEmailSentAt: now,
+      ficRecipientEmail: recipient,
     });
 
     return {
       success: true,
-      message: ficEmailSent
-        ? 'STR submitted and emailed to Rwanda FIC. You can also download the goAML XML file below.'
-        : 'STR marked as submitted. FIC email is not configured — download the goAML XML file and upload it to goweb.fic.gov.rw',
+      message: `STR ${str.strId} was emailed to ${recipient}.`,
       strId: str.strId,
-      ficEmailSent,
-      xml, // returned for frontend to trigger download
+      ficEmailSent: true,
+      recipientEmail: recipient,
+      xml, // returned so the frontend can offer a download too
     };
   }
 
   // ═══════════════════════════════════════════════════════════
-  // ACKNOWLEDGE STR — after FIC Rwanda responds
+  // ACKNOWLEDGE STR — after the FIC responds
   // ═══════════════════════════════════════════════════════════
 
   async acknowledgeStr(
@@ -297,9 +318,8 @@ export class StrService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // GENERATE goAML XML — Rwanda FIC format
-  // Based on goAML 4.0 schema used by FIC Rwanda
-  // Tenant uploads this XML to goweb.fic.gov.rw
+  // GENERATE goAML XML
+  // Based on the goAML 4.0 schema
   // ═══════════════════════════════════════════════════════════
 
   generateGoAmlXml(str: any): string {

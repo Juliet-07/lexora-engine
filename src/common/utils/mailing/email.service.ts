@@ -365,6 +365,7 @@ export class EmailService {
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,
+      ...(data.replyTo ? { replyTo: data.replyTo } : {}),
       subject,
       html,
       attachments: [
