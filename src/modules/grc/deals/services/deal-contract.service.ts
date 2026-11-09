@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Deal, DealDocument } from '../schemas';
+import { Deal, DealDocument, DealPartySide, partySide } from '../schemas';
 import type { DealDocKind } from '../schemas/deal.schema';
 import {
   GenerateDealContractDto,
@@ -79,8 +79,12 @@ export class DealContractService {
   // sees the gap rather than a silently incomplete agreement.
   buildDealMergeFields(deal: any): Record<string, string> {
     const parties: any[] = deal.parties ?? [];
-    const buyer = parties.find((p) => p.side === 'Buyer');
-    const seller = parties.find((p) => p.side === 'Seller');
+    const buyer = parties.find(
+      (p) => partySide(p.side) === DealPartySide.PARTY_A,
+    );
+    const seller = parties.find(
+      (p) => partySide(p.side) === DealPartySide.PARTY_B,
+    );
     const signing = deal.signing ?? {};
     const signatories: any[] = signing.signatories ?? [];
     return {
@@ -111,7 +115,7 @@ export class DealContractService {
       sellerEmail: seller?.email ?? '',
       partiesList: formatBulletList(
         parties.map((p) =>
-          [p.name, p.title ? `— ${p.title}` : '', `(${p.side})`]
+          [p.name, p.title ? `— ${p.title}` : '', `(${partySide(p.side)})`]
             .filter(Boolean)
             .join(' '),
         ),

@@ -1,5 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import {
+  ContractVariation,
+  ContractVariationSchema,
+} from 'src/modules/crm/tools/schemas/contract.schema';
 
 export type DealDocument = Deal & Document;
 
@@ -138,6 +142,46 @@ export class Redline {
 }
 export const RedlineSchema = SchemaFactory.createForClass(Redline);
 
+export enum DealPartySide {
+  PARTY_A = 'Party A',
+  PARTY_B = 'Party B',
+}
+
+// Deals saved before the sides were renamed hold 'Buyer' / 'Seller'. They
+// are still accepted on those records and read as Party A / Party B.
+const LEGACY_PARTY_SIDES: Record<string, DealPartySide> = {
+  Buyer: DealPartySide.PARTY_A,
+  Seller: DealPartySide.PARTY_B,
+};
+export const partySide = (side: unknown): DealPartySide =>
+  LEGACY_PARTY_SIDES[String(side)] ?? (side as DealPartySide);
+
+// A proposed edit to one line of a section, made by one of the deal's two
+// sides in a negotiation round. Accepting it writes it into the section;
+// rejecting it removes it. `del` / `ins` are only what differs between
+// `before` and `after`, kept for the redline display.
+@Schema()
+export class TrackedChange {
+  @Prop({ required: true }) lineIndex: number;
+  @Prop({ required: true }) before: string;
+  @Prop({ default: '' }) after: string;
+  @Prop({ default: '' }) del: string;
+  @Prop({ default: '' }) ins: string;
+  // Where in `before` the deleted text starts, and any new lines the
+  // proposal adds after this one.
+  @Prop({ default: 0 }) offset: number;
+  @Prop({ type: [String], default: [] }) addedLines: string[];
+  @Prop({ enum: ['replace', 'add'], default: 'replace' }) kind: string;
+  @Prop({ enum: DealPartySide, required: true }) party: DealPartySide;
+  @Prop({ default: 1 }) round: number;
+  @Prop({ enum: ['pending', 'accepted'], default: 'pending' }) status: string;
+  @Prop({ default: '' }) authorName: string;
+  @Prop({ default: () => new Date() }) createdAt: Date;
+  @Prop({ default: '' }) decidedBy: string;
+  @Prop({ type: Date, default: null }) decidedAt: Date | null;
+}
+export const TrackedChangeSchema = SchemaFactory.createForClass(TrackedChange);
+
 @Schema({ _id: false })
 export class ContractSection {
   @Prop({ required: true }) title: string;
@@ -148,6 +192,15 @@ export class ContractSection {
   comments: ContractComment[];
   @Prop({ type: [RedlineSchema], default: [] })
   redlines: Redline[];
+  // Set on the sections an executed addendum adds to the contract (the
+  // addendum's reference, e.g. ADD-01). Those are never offered as clauses
+  // to amend.
+  @Prop({ type: String, default: null }) variationRef: string | null;
+  // Tracked changes proposed during negotiation, and the section's text as
+  // it stood before the first one was accepted (for the Original view).
+  @Prop({ type: [TrackedChangeSchema], default: [] })
+  changes: TrackedChange[];
+  @Prop({ type: String, default: null }) draftBody: string | null;
 }
 export const ContractSectionSchema =
   SchemaFactory.createForClass(ContractSection);
@@ -201,11 +254,6 @@ export class PostCompletionItem {
 export const PostCompletionItemSchema =
   SchemaFactory.createForClass(PostCompletionItem);
 
-export enum DealPartySide {
-  BUYER = 'Buyer',
-  SELLER = 'Seller',
-}
-
 @Schema({ _id: false })
 export class DealPartyPermissions {
   @Prop({ default: false }) dataRoom: boolean;
@@ -217,7 +265,12 @@ export const DealPartyPermissionsSchema =
 
 @Schema({ _id: false })
 export class DealParty {
-  @Prop({ enum: DealPartySide, required: true }) side: DealPartySide;
+  @Prop({
+    enum: [...Object.values(DealPartySide), ...Object.keys(LEGACY_PARTY_SIDES)],
+    required: true,
+    set: (v: unknown) => partySide(v),
+  })
+  side: DealPartySide;
   @Prop({ required: true }) title: string;
   @Prop({ required: true }) name: string;
   @Prop({ required: true, lowercase: true }) email: string;
@@ -292,6 +345,19 @@ export class Contract {
   @Prop({ type: Object, default: {} }) variables: Record<string, string>;
   @Prop({ type: ReviewLoopSchema, default: () => ({}) }) reviewLoop: ReviewLoop;
   @Prop({ default: null }) pdfUrl: string | null;
+  // Formal changes made after the contract was executed — amendments,
+  // addenda, side letters, waivers and extensions. Executing one applies it
+  // to `sections`; `originalSections` keeps the text as it stood before the
+  // first one did, for the Original and Redline views.
+  @Prop({ type: [ContractVariationSchema], default: [] })
+  variations: ContractVariation[];
+  // Negotiation: which round the contract is in, and which side has the
+  // pen (is the one marking it up). Round 1 is Party A's draft.
+  @Prop({ default: 1 }) round: number;
+  @Prop({ enum: DealPartySide, default: DealPartySide.PARTY_A })
+  penParty: DealPartySide;
+  @Prop({ type: Object, default: null })
+  originalSections: { title: string; level: number; body: string }[] | null;
 }
 export const ContractSchema = SchemaFactory.createForClass(Contract);
 export type ContractDocument = Contract & Document;

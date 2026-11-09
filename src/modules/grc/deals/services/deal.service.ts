@@ -12,6 +12,8 @@ import {
   ChecklistStatus,
   CPType,
   CPStatus,
+  DealPartySide,
+  partySide,
 } from '../schemas';
 import {
   CreateDealDto,
@@ -40,6 +42,7 @@ import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { randomBytes } from 'crypto';
+import { dealContractExecuted } from './deal-variation.service';
 import * as PDFKitImport from 'pdfkit';
 import { User, UserDocument } from 'src/modules/auth/schemas';
 import { htmlToParagraphs } from 'src/common/utils/html-to-paragraphs.util';
@@ -144,18 +147,46 @@ export class DealService {
       ...deal,
       ddProgress: this.ddProgress(deal),
       cpsProgress: this.cpsProgress(deal),
+      // Deals saved when the sides were Buyer / Seller read as Party A / B.
+      parties: (deal.parties ?? []).map((p: any) => ({
+        ...p,
+        side: partySide(p.side),
+      })),
       contracts: (deal.contracts ?? []).map((c: any) => ({
         ...c,
         // Documents made before term sheets were their own are contracts.
         kind: c.kind ?? 'contract',
+        // Once executed, a contract is changed by variations (Amendments
+        // tab), not by editing its text.
+        executed: dealContractExecuted(deal, c),
+        variations: c.variations ?? [],
+        round: c.round ?? 1,
+        penParty: partySide(c.penParty ?? DealPartySide.PARTY_A),
+        // The as-executed snapshot is only for the redline view.
+        originalSections: undefined,
+        hasOriginal: !!c.originalSections,
         review: this.reviewStatus(c),
         // Merge fields resolved — what the document actually reads as. The
         // stored body keeps {{token}} so a field can be changed later.
         sections: (c.sections ?? []).map((s: any) => {
           const renderedBody = renderDealContractBody(c.variables, s.body);
+          const rawLines = htmlToParagraphs(s.body ?? '');
           return {
             ...s,
             renderedBody,
+            // Negotiation: the lines as stored ({{fields}} unresolved, which
+            // tracked changes anchor to), the lines before any change was
+            // accepted, and the changes with a plain id.
+            rawLines,
+            originalLines: s.draftBody
+              ? htmlToParagraphs(s.draftBody)
+              : rawLines,
+            draftBody: undefined,
+            changes: (s.changes ?? []).map((ch: any) => ({
+              ...ch,
+              id: String(ch._id),
+              party: partySide(ch.party),
+            })),
             // Redlines anchor to these lines, so they come from the
             // resolved text — what every reader (and the PDF) sees.
             lines: htmlToParagraphs(renderedBody),
@@ -447,6 +478,10 @@ export class DealService {
   ) {
     const deal = await this.getRawDoc(tenantId, dealId);
     const contract = this.getContractOrThrow(deal, contractId);
+    if (dealContractExecuted(deal, contract))
+      throw new BadRequestException(
+        'This contract has been executed, so its text can no longer be edited directly. Use the Amendments tab to vary it.',
+      );
     if (!contract.sections[index])
       throw new NotFoundException('Section not found');
     contract.sections.splice(index, 1);
@@ -463,6 +498,10 @@ export class DealService {
   ) {
     const deal = await this.getRawDoc(tenantId, dealId);
     const contract = this.getContractOrThrow(deal, contractId);
+    if (dealContractExecuted(deal, contract))
+      throw new BadRequestException(
+        'This contract has been executed, so its text can no longer be edited directly. Use the Amendments tab to vary it.',
+      );
     const section = contract.sections[index];
     if (!section) throw new NotFoundException('Section not found');
     section.body = dto.body;
@@ -1111,9 +1150,14 @@ export class DealService {
               : 'Parties to this Agreement',
           );
         doc.moveDown(0.5);
-        for (const side of ['Buyer', 'Seller'] as const) {
-          const sideParties = deal.parties.filter((p) => p.side === side);
-          doc.fontSize(12).font('Helvetica-Bold').text(`${side} Side`);
+        for (const side of [
+          DealPartySide.PARTY_A,
+          DealPartySide.PARTY_B,
+        ] as const) {
+          const sideParties = deal.parties.filter(
+            (p) => partySide(p.side) === side,
+          );
+          doc.fontSize(12).font('Helvetica-Bold').text(side);
           if (sideParties.length === 0) {
             doc
               .fontSize(10)
@@ -1225,6 +1269,36 @@ export class DealService {
                 );
             });
             doc.moveDown(0.3);
+          });
+          // Tracked changes proposed in negotiation: the wording struck
+          // through, the proposal beside it, who proposed it and when.
+          (s.changes ?? []).forEach((ch: any) => {
+            const who = `${partySide(ch.party)} · Round ${ch.round ?? 1}${ch.authorName ? ` — ${ch.authorName}` : ''}`;
+            const accepted = ch.status === 'accepted';
+            doc
+              .fontSize(9)
+              .font('Helvetica-Oblique')
+              .fillColor('#555555')
+              .text(`  ✎ [${who}${accepted ? ', accepted' : ''}] `, {
+                continued: true,
+              });
+            if (ch.del) {
+              doc
+                .fillColor('#b91c1c')
+                .text(ch.del, { continued: true, strike: true });
+              doc
+                .fillColor('#555555')
+                .text(' → ', { continued: true, strike: false });
+            }
+            doc
+              .fillColor('#067647')
+              .text(
+                [ch.ins, ...(ch.addedLines ?? [])]
+                  .filter(Boolean)
+                  .join(' / ') || '(no wording)',
+                { strike: false },
+              );
+            doc.moveDown(0.2);
           });
           doc.moveDown(0.5);
         });

@@ -19,6 +19,12 @@
 
 import { parse, HTMLElement, Node, NodeType } from 'node-html-parser';
 import {
+  badgeHtml,
+  CHANGED_BAR,
+  ADDED_BAR,
+  diffHtml,
+} from './contract-redline.util';
+import {
   composeContractDocument,
   splitContractDocument,
 } from './contract-structure.util';
@@ -236,17 +242,104 @@ export function appendAddendum(
   });
 }
 
-const DEL = 'background:#fde8e8;color:#b42318;text-decoration:line-through;';
-const INS = 'background:#e3f6ea;color:#067647;text-decoration:none;';
+export interface ClauseMark {
+  /** The text the clause reads as now. */
+  text: string;
+  /** The variation that last changed it, e.g. AMD-02. */
+  varRef: string;
+  action?: string;
+}
+
+// Shows a changed clause's heading with its variation badge, and its text
+// with a bar down the left, so a reader can see what was varied.
+function markClause(l: Located, mark: ClauseMark, bodyHtml?: string) {
+  if (l.heading) {
+    l.heading.insertAdjacentHTML(
+      'beforeend',
+      badgeHtml(mark.varRef, mark.action),
+    );
+  }
+  const html = bodyHtml?.trim()
+    ? `<div style="${CHANGED_BAR}">${bodyHtml.trim()}</div>`
+    : '';
+  const first = l.nodes[0];
+  if (html) {
+    if (first) {
+      (first as any).replaceWith(html);
+      for (const n of l.nodes.slice(1)) n.remove();
+    } else if (l.heading) {
+      l.heading.insertAdjacentHTML('afterend', html);
+    }
+  } else {
+    // Current view: keep the clause's own markup and just bar it.
+    for (const n of l.nodes) {
+      if (n.nodeType === NodeType.ELEMENT_NODE) {
+        const el = n as HTMLElement;
+        el.setAttribute(
+          'style',
+          `${el.getAttribute('style') ?? ''}${CHANGED_BAR}`,
+        );
+      }
+    }
+  }
+}
+
+function addendumBlock(a: {
+  ref: string;
+  title: string;
+  clauses: { ref: string; title: string; text: string }[];
+}) {
+  const inner = a.clauses
+    .map(
+      (c) =>
+        `<h3>${escapeHtml(c.ref)}${c.ref && c.title ? '. ' : ''}${escapeHtml(c.title)}${badgeHtml(a.ref, undefined, 'addendum')}</h3>` +
+        plainToHtml(c.text).replace(/<p>/g, `<p style="${ADDED_BAR}">`),
+    )
+    .join('');
+  return (
+    `<div data-variation="${escapeHtml(a.ref)}">` +
+    `<h2>Addendum ${escapeHtml(a.ref)}${a.title ? ` — ${escapeHtml(a.title)}` : ''}</h2>` +
+    `${inner}</div>`
+  );
+}
 
 /**
- * Redline: the ORIGINAL document with every changed clause shown as
- * struck-out original text followed by the final text, and every
- * addendum appended in green.
+ * Current view: the document as it reads now, with each clause a variation
+ * changed marked by its badge and a bar at the left, and addenda marked too.
+ */
+export function markVariations(
+  document: string,
+  marks: Map<string, ClauseMark>,
+): string {
+  if (!marks.size && !document?.includes('data-variation=')) return document;
+  return rebuild(document, (root) => {
+    for (const l of locate(root)) {
+      const m = marks.get(l.clause.ref);
+      if (m) markClause(l, m);
+    }
+    root.querySelectorAll('div[data-variation]').forEach((d) => {
+      const ref = d.getAttribute('data-variation') ?? '';
+      d.querySelectorAll('h3').forEach((h) =>
+        h.insertAdjacentHTML(
+          'beforeend',
+          badgeHtml(ref, undefined, 'addendum'),
+        ),
+      );
+      d.querySelectorAll('p').forEach((p) =>
+        p.setAttribute('style', `${p.getAttribute('style') ?? ''}${ADDED_BAR}`),
+      );
+    });
+  });
+}
+
+/**
+ * Redline: the ORIGINAL document with every changed clause shown as a
+ * word-level diff (removed text struck through, added text green) under
+ * its variation badge, and every executed addendum appended.
  */
 export function redlineDocument(
   originalDocument: string,
-  finalClauses: Map<string, string>,
+  finalClauses: Map<string, ClauseMark>,
   addenda: {
     ref: string;
     title: string;
@@ -255,23 +348,14 @@ export function redlineDocument(
 ): string {
   let doc = rebuild(originalDocument, (root) => {
     for (const l of locate(root)) {
-      if (!finalClauses.has(l.clause.ref)) continue;
-      const finalText = finalClauses.get(l.clause.ref)!;
-      if (sameText(finalText, l.clause.text)) continue;
-      const html =
-        `<p><span style="${DEL}">${escapeHtml(l.clause.text).replace(/\n+/g, ' ')}</span></p>` +
-        `<p><span style="${INS}">${escapeHtml(finalText).replace(/\n+/g, ' ')}</span></p>`;
-      const first = l.nodes[0];
-      if (first) {
-        (first as any).replaceWith(html);
-        for (const n of l.nodes.slice(1)) n.remove();
-      } else if (l.heading) {
-        l.heading.insertAdjacentHTML('afterend', html);
-      }
+      const m = finalClauses.get(l.clause.ref);
+      if (!m || sameText(m.text, l.clause.text)) continue;
+      markClause(l, m, diffHtml(l.clause.text, m.text));
     }
   });
-  for (const a of addenda) {
-    doc = appendAddendum(doc, a.ref, a.title, a.clauses);
+  if (addenda.length) {
+    const block = addenda.map(addendumBlock).join('');
+    doc = rebuild(doc, (root) => root.insertAdjacentHTML('beforeend', block));
   }
   return doc;
 }

@@ -1,7 +1,12 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Deal, DealSchema } from './schemas';
-import { DealContractService, DealService } from './services';
+import {
+  DealChangeService,
+  DealContractService,
+  DealService,
+  DealVariationService,
+} from './services';
 import { DealContractController, DealController } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas';
 import { EmailService } from 'src/common/utils/mailing/email.service';
@@ -24,7 +29,13 @@ import {
       },
     ]),
   ],
-  providers: [DealService, DealContractService, EmailService],
+  providers: [
+    DealService,
+    DealContractService,
+    DealVariationService,
+    DealChangeService,
+    EmailService,
+  ],
   controllers: [DealController, DealContractController],
   exports: [DealService],
 })

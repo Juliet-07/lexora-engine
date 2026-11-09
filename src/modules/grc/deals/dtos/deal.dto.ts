@@ -12,7 +12,8 @@ import {
   IsInt,
   Matches,
 } from 'class-validator';
-import { DealPartySide, DealType } from '../schemas';
+import { DealPartySide, DealType, partySide } from '../schemas';
+import { Transform } from 'class-transformer';
 import {
   DEAL_STAGES,
   DealStatus,
@@ -135,6 +136,7 @@ export class DealPartyPermissionsDto {
 
 export class AddPartyDto {
   @ApiProperty({ enum: DealPartySide })
+  @Transform(({ value }) => partySide(value))
   @IsEnum(DealPartySide)
   side: DealPartySide;
   @ApiProperty() @IsString() title: string;
@@ -165,6 +167,27 @@ export class RenameContractDto {
 export class AddRedlineDto {
   @ApiProperty() @IsInt() lineIndex: number;
   @ApiProperty() @IsString() comment: string;
+}
+
+export class ProposeChangeDto {
+  @ApiProperty({ description: 'Index of the line in the section' })
+  @IsInt()
+  lineIndex: number;
+  @ApiProperty({
+    description:
+      'The line as it should read. Further lines (new paragraphs) go on new lines.',
+  })
+  @IsString()
+  text: string;
+  @ApiPropertyOptional({
+    enum: DealPartySide,
+    description:
+      'Which side is proposing it. Defaults to the side with the pen.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => (value ? partySide(value) : value))
+  @IsEnum(DealPartySide)
+  party?: DealPartySide;
 }
 
 export class UpdateCommercialTermsDto {
