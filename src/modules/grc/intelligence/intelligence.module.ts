@@ -8,16 +8,21 @@ import {
   ValuationSchema,
   ReadinessAssessment,
   ReadinessAssessmentSchema,
+  ReadinessWorkspace,
+  ReadinessWorkspaceSchema,
 } from './schemas';
 import {
   PortfolioService,
   ValuationService,
   ReadinessService,
+  ReadinessWorkspaceService,
 } from './services';
 import {
   PortfolioController,
   ValuationController,
   ReadinessController,
+  ReadinessWorkspaceController,
+  ReadinessSharePublicController,
 } from './controllers';
 import { User, UserSchema } from 'src/modules/auth/schemas';
 import { Deal, DealSchema } from '../deals/schemas';
@@ -53,6 +58,7 @@ import {
 } from 'src/modules/crm/finance/schemas';
 import { Mandate, MandateSchema } from 'src/modules/crm/projects/schemas';
 import { EsgModule } from '../esg/esg.module';
+import { EmailService } from 'src/common/utils/mailing/email.service';
 
 @Module({
   imports: [
@@ -62,6 +68,7 @@ import { EsgModule } from '../esg/esg.module';
       { name: PortfolioWorkspace.name, schema: PortfolioWorkspaceSchema },
       { name: Deal.name, schema: DealSchema },
       { name: ReadinessAssessment.name, schema: ReadinessAssessmentSchema },
+      { name: ReadinessWorkspace.name, schema: ReadinessWorkspaceSchema },
       // Direct, real access to Governance/HR/Compliance data — the
       // "infused" scoring approach, reading raw module data rather
       // than proxying each module's own dashboard.
@@ -81,8 +88,20 @@ import { EsgModule } from '../esg/esg.module';
     FinanceModule,
     EsgModule,
   ],
-  providers: [ValuationService, PortfolioService, ReadinessService],
-  controllers: [ValuationController, PortfolioController, ReadinessController],
+  providers: [
+    ValuationService,
+    PortfolioService,
+    ReadinessService,
+    ReadinessWorkspaceService,
+    EmailService,
+  ],
+  controllers: [
+    ValuationController,
+    PortfolioController,
+    ReadinessController,
+    ReadinessWorkspaceController,
+    ReadinessSharePublicController,
+  ],
   exports: [ValuationService, PortfolioService, ReadinessService],
 })
 export class IntelligenceModule {}

@@ -77,8 +77,24 @@ export enum GapStatus {
   OPEN = 'Open',
   IN_PROGRESS = 'In progress',
   CLOSED = 'Closed',
+  // Knowingly left unremediated. Not counted as open, and not counted as
+  // closed either — it stays visible in the gap list.
+  RISK_ACCEPTED = 'Risk accepted',
 }
-export type ReportSectionState = 'Auto' | 'Review' | 'Incomplete';
+export type ReportSectionState = 'Auto' | 'Review' | 'Incomplete' | 'Approved';
+export const REPORT_STATES: ReportSectionState[] = [
+  'Auto',
+  'Review',
+  'Incomplete',
+  'Approved',
+];
+export const REPORT_STATUSES = [
+  'Draft',
+  'Internal review',
+  'Advisor review',
+  'Final',
+] as const;
+export type ReportStatus = (typeof REPORT_STATUSES)[number];
 export const REPORT_SECTIONS = [
   'Executive summary',
   'Company overview',
@@ -112,6 +128,11 @@ export class ReadinessGap {
   status: GapStatus;
 
   @Prop({ default: null }) closedAt: Date | null;
+
+  // 'score' gaps are raised from a dimension sitting below the
+  // threshold; 'manual' ones are typed in.
+  @Prop({ enum: ['manual', 'score'], default: 'manual' })
+  source: 'manual' | 'score';
 }
 export const ReadinessGapSchema = SchemaFactory.createForClass(ReadinessGap);
 
@@ -136,11 +157,57 @@ export const DimensionScoreSchema =
 @Schema({ _id: false })
 export class ReportSectionFlag {
   @Prop({ required: true }) name: string;
-  @Prop({ enum: ['Auto', 'Review', 'Incomplete'], default: 'Incomplete' })
+  @Prop({ enum: REPORT_STATES, default: 'Incomplete' })
   state: ReportSectionState;
+  @Prop({ default: '' }) owner: string;
+  // The section's text. Auto sections are drafted from the assessment's
+  // own indicators; the rest are written by hand.
+  @Prop({ default: '' }) content: string;
+  @Prop({ default: null }) updatedAt: Date | null;
 }
 export const ReportSectionFlagSchema =
   SchemaFactory.createForClass(ReportSectionFlag);
+
+// One indicator of one dimension. `value` is what the tenant typed in;
+// `autoValue` is what live module data says (null where no module backs
+// the indicator, or the module has nothing recorded). The value used for
+// scoring is `value` when set, else `autoValue`, else nothing (scores 0).
+@Schema({ _id: false })
+export class ReadinessIndicator {
+  @Prop({ enum: ReadinessDimension, required: true })
+  dimension: ReadinessDimension;
+  @Prop({ required: true }) key: string;
+  @Prop({ required: true }) label: string;
+  @Prop({ required: true }) weight: number;
+  @Prop({ required: true }) floor: number;
+  @Prop({ required: true }) target: number;
+  @Prop({ enum: ['%', 'x'], default: '%' }) unit: '%' | 'x';
+  @Prop({ type: Number, default: null }) value: number | null;
+  @Prop({ type: Number, default: null }) autoValue: number | null;
+  @Prop({ default: '' }) note: string;
+}
+export const ReadinessIndicatorSchema =
+  SchemaFactory.createForClass(ReadinessIndicator);
+
+@Schema({ _id: false })
+export class DimensionWeight {
+  @Prop({ enum: ReadinessDimension, required: true })
+  dimension: ReadinessDimension;
+  @Prop({ required: true }) weight: number;
+}
+export const DimensionWeightSchema =
+  SchemaFactory.createForClass(DimensionWeight);
+
+@Schema({ _id: false })
+export class DealContext {
+  @Prop({ default: 'general' }) dealType: string;
+  @Prop({ default: 'mixed' }) investorType: string;
+  @Prop({ default: 0 }) raiseAmount: number;
+  @Prop({ default: 'USD' }) currency: string;
+  @Prop({ type: Date, default: null }) targetClose: Date | null;
+  @Prop({ default: '' }) useOfFunds: string;
+}
+export const DealContextSchema = SchemaFactory.createForClass(DealContext);
 
 @Schema({ timestamps: true, collection: 'deal_intel_readiness' })
 export class ReadinessAssessment {
@@ -167,6 +234,26 @@ export class ReadinessAssessment {
   reportSections: ReportSectionFlag[];
 
   @Prop({ default: '' }) notes: string;
+
+  // ── Indicator model (assessments created from this version on) ──
+  // A version with no indicators is a legacy one and keeps scoring the
+  // way it always did: dimension auto-scores averaged equally.
+  @Prop({ default: '' }) title: string;
+
+  @Prop({ type: DealContextSchema, default: () => ({}) })
+  dealContext: DealContext;
+
+  @Prop({ type: [DimensionWeightSchema], default: [] })
+  weights: DimensionWeight[];
+
+  @Prop({ type: [ReadinessIndicatorSchema], default: [] })
+  indicators: ReadinessIndicator[];
+
+  // ── Report builder ──────────────────────────────────────────
+  @Prop({ enum: REPORT_STATUSES, default: 'Draft' })
+  reportStatus: ReportStatus;
+  @Prop({ default: 'Strictly confidential' }) confidentiality: string;
+  @Prop({ default: '' }) versionNotes: string;
 }
 export const ReadinessAssessmentSchema =
   SchemaFactory.createForClass(ReadinessAssessment);

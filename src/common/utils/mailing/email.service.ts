@@ -258,6 +258,10 @@ import {
   dealReviewInviteTemplate,
 } from './templates/deal-review-invite.template';
 import {
+  ReadinessShareEmailData,
+  readinessShareTemplate,
+} from './templates/readiness-share.template';
+import {
   QuoteSentEmailData,
   quoteSentTemplate,
 } from './templates/quote-sent.template';
@@ -1108,6 +1112,20 @@ export class EmailService {
     attachments: { filename: string; content: Buffer }[],
   ): Promise<void> {
     const { subject, html } = dataRoomDeliveryTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+      attachments,
+    });
+  }
+
+  async sendReadinessShare(
+    data: ReadinessShareEmailData,
+    attachments?: { filename: string; content: Buffer }[],
+  ): Promise<void> {
+    const { subject, html } = readinessShareTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,
