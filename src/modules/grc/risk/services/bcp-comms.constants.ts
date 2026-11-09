@@ -22,7 +22,7 @@ export interface SeedGroup {
 export const SEED_GROUPS: SeedGroup[] = [
   {
     key: 'board',
-    name: 'Board Chair and Audit Committee',
+    name: 'Board Chair and Risk Committee',
     icon: 'landmark',
     color: '#3b36db',
     slaHours: 1,
