@@ -258,6 +258,10 @@ import {
   dealReviewInviteTemplate,
 } from './templates/deal-review-invite.template';
 import {
+  DealSigningEmailData,
+  dealSigningTemplate,
+} from './templates/deal-signing.template';
+import {
   ReadinessShareEmailData,
   readinessShareTemplate,
 } from './templates/readiness-share.template';
@@ -1142,6 +1146,24 @@ export class EmailService {
       to: data.to,
       subject,
       html,
+    });
+  }
+
+  async sendDealSigningEmail(
+    data: DealSigningEmailData,
+    attachments?: { filename: string; content: Buffer }[],
+  ): Promise<void> {
+    const { subject, html } = dealSigningTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+      attachments: attachments?.map((a) => ({
+        filename: a.filename,
+        content: a.content,
+        contentType: 'application/pdf',
+      })),
     });
   }
 

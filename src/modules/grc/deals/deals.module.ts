@@ -5,6 +5,7 @@ import {
   DealChangeService,
   DealContractService,
   DealService,
+  DealSigningService,
   DealVariationService,
 } from './services';
 import { DealContractController, DealController } from './controllers';
@@ -34,6 +35,7 @@ import {
     DealContractService,
     DealVariationService,
     DealChangeService,
+    DealSigningService,
     EmailService,
   ],
   controllers: [DealController, DealContractController],

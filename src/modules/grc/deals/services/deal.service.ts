@@ -29,7 +29,6 @@ import {
   AddCPDto,
   UpdateCPDto,
   AddSigningChecklistDto,
-  AddSignatoryDto,
   UpdateSigningDetailsDto,
   AddPostCompletionDto,
   UpdatePartyDto,
@@ -147,10 +146,20 @@ export class DealService {
       ...deal,
       ddProgress: this.ddProgress(deal),
       cpsProgress: this.cpsProgress(deal),
+      // A signatory's link is their credential — it never leaves the server.
+      signing: deal.signing
+        ? {
+            ...deal.signing,
+            signatories: (deal.signing.signatories ?? []).map(
+              ({ token: _token, ...rest }: any) => rest,
+            ),
+          }
+        : deal.signing,
       // Deals saved when the sides were Buyer / Seller read as Party A / B.
       parties: (deal.parties ?? []).map((p: any) => ({
         ...p,
         side: partySide(p.side),
+        authorizedSignatory: !!p.authorizedSignatory,
       })),
       contracts: (deal.contracts ?? []).map((c: any) => ({
         ...c,
@@ -252,15 +261,28 @@ export class DealService {
       name: dto.name,
       email: dto.email.toLowerCase(),
       phone: dto.phone ?? '',
+      authorizedSignatory: false,
       permissions: {
         dataRoom: dto.permissions?.dataRoom ?? false,
         contractReview: dto.permissions?.contractReview ?? false,
         offerReview: dto.permissions?.offerReview ?? false,
       },
     } as any);
+    if (dto.authorizedSignatory) {
+      this.setAuthorizedSignatory(deal, deal.parties.length - 1);
+    }
     deal.markModified('parties');
     await deal.save();
     return deal;
+  }
+
+  // One authorised signatory per side: choosing one clears the others on
+  // the same side.
+  private setAuthorizedSignatory(deal: DealDocument, index: number) {
+    const side = partySide(deal.parties[index].side);
+    deal.parties.forEach((p, i) => {
+      if (partySide(p.side) === side) p.authorizedSignatory = i === index;
+    });
   }
 
   async updateParty(
@@ -278,6 +300,15 @@ export class DealService {
     if (dto.email !== undefined) p.email = dto.email.toLowerCase();
     if (dto.phone !== undefined) p.phone = dto.phone;
     if (dto.permissions) Object.assign(p.permissions, dto.permissions);
+    if (dto.authorizedSignatory === true) {
+      this.setAuthorizedSignatory(deal, index);
+    } else if (dto.authorizedSignatory === false) {
+      p.authorizedSignatory = false;
+    } else if (dto.side !== undefined && p.authorizedSignatory) {
+      // Moved to the other side: they no longer sign for the one they left,
+      // and are not automatically the signatory of the new one.
+      p.authorizedSignatory = false;
+    }
     deal.markModified('parties');
     await deal.save();
     return deal;
@@ -700,31 +731,6 @@ export class DealService {
     return deal;
   }
 
-  async addSignatory(tenantId: string, id: string, dto: AddSignatoryDto) {
-    const deal = await this.getRawDoc(tenantId, id);
-    deal.signing.signatories.push({
-      name: dto.name,
-      party: dto.party,
-      role: dto.role ?? '',
-      signed: false,
-      signedAt: null,
-    } as any);
-    deal.markModified('signing');
-    await deal.save();
-    return deal;
-  }
-
-  async markSignatorySigned(tenantId: string, id: string, index: number) {
-    const deal = await this.getRawDoc(tenantId, id);
-    const s = deal.signing.signatories[index];
-    if (!s) throw new NotFoundException('Signatory not found');
-    s.signed = true;
-    s.signedAt = new Date();
-    deal.markModified('signing');
-    await deal.save();
-    return deal;
-  }
-
   async updateSigningDetails(
     tenantId: string,
     id: string,
@@ -990,6 +996,9 @@ export class DealService {
       prefillName: tokenEntry.partyName,
       alreadyResponded: !!already,
       previousDecision: already?.decision ?? null,
+      // The same pages the deal team sees in the app's preview: cover,
+      // contents, then the body with every merge field filled in.
+      preview: this.documentPreview(contract),
       sections: contract.sections.map((s: any, i: number) => ({
         index: i,
         title: s.title,
@@ -1093,6 +1102,28 @@ export class DealService {
     doc.addPage();
   }
 
+  // A document as a reader sees it, for the public review and signing pages.
+  documentPreview(contract: any) {
+    return {
+      name: contract.name,
+      cover: renderDealContractBody(
+        contract.variables,
+        contract.coverPage ?? '',
+      ),
+      toc: {
+        enabled: !!contract.tocEnabled,
+        title: contract.tocTitle || 'Table of Contents',
+        entries: contract.tocEnabled
+          ? buildDealToc(contract.variables, contract.sections)
+          : [],
+      },
+      sections: (contract.sections ?? []).map((s: any) => ({
+        title: s.title,
+        html: renderDealContractBody(contract.variables, s.body),
+      })),
+    };
+  }
+
   private renderBody(
     contract: { variables: Record<string, string> },
     body: string,
@@ -1104,6 +1135,8 @@ export class DealService {
     deal: DealDocument,
     contract: any,
     businessName: string,
+    // Appended after the body (the signature page of a signed copy).
+    extra?: (doc: any) => void,
   ): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ margin: 50 });
@@ -1201,8 +1234,20 @@ export class DealService {
         });
       }
 
+      if (extra) extra(doc);
       doc.end();
     });
+  }
+
+  // The plain PDF of a document, optionally with extra pages after it —
+  // used by signing, which snapshots it and then adds the signature page.
+  buildContractPdf(
+    deal: DealDocument,
+    contract: any,
+    businessName: string,
+    extra?: (doc: any) => void,
+  ): Promise<Buffer> {
+    return this.generateContractPdf(deal, contract, businessName, extra);
   }
 
   private generateRedlinedContractPdf(

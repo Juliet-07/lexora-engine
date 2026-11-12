@@ -225,6 +225,24 @@ export class SigningItem {
 }
 export const SigningItemSchema = SchemaFactory.createForClass(SigningItem);
 
+// One line of the signing audit trail.
+@Schema({ _id: false })
+export class SigningAuditEntry {
+  @Prop({ default: () => new Date() }) at: Date;
+  @Prop({
+    enum: ['send', 'remind', 'view', 'sign', 'complete', 'copies', 'reset'],
+    default: 'send',
+  })
+  type: string;
+  @Prop({ default: '' }) text: string;
+  @Prop({ default: null }) ip: string | null;
+}
+export const SigningAuditEntrySchema =
+  SchemaFactory.createForClass(SigningAuditEntry);
+
+// Who signs. Made from each side's authorised signatory when the document
+// is sent for signing. Deals signed before that existed hold only name,
+// party, role and the signed flag.
 @Schema({ _id: false })
 export class Signatory {
   @Prop({ required: true }) name: string;
@@ -232,8 +250,50 @@ export class Signatory {
   @Prop({ default: '' }) role: string;
   @Prop({ default: false }) signed: boolean;
   @Prop({ default: null }) signedAt: Date | null;
+  @Prop({ default: '' }) email: string;
+  // Their title in the party record ("Managing Director").
+  @Prop({ default: '' }) title: string;
+  @Prop({ default: '', index: true }) token: string;
+  @Prop({ enum: ['pending', 'sent', 'signed'], default: 'pending' })
+  status: string;
+  @Prop({ default: null }) sentAt: Date | null;
+  @Prop({ default: null }) lastRemindedAt: Date | null;
+  @Prop({ default: null }) viewedAt: Date | null;
+  @Prop({ enum: ['typed', 'drawn', null], default: null })
+  signatureMethod: string | null;
+  // The typed name, or a drawn signature as a PNG data URL.
+  @Prop({ default: null }) signatureData: string | null;
+  @Prop({ default: null }) ip: string | null;
+  @Prop({ default: null }) device: string | null;
+  // SHA-256 of the document as it stood when they signed.
+  @Prop({ default: null }) hash: string | null;
 }
 export const SignatorySchema = SchemaFactory.createForClass(Signatory);
+// A signatory's link is their credential: it is never sent out with the deal.
+SignatorySchema.set('toJSON', {
+  transform: (_doc: any, ret: any) => {
+    delete ret.token;
+    return ret;
+  },
+});
+
+// The document being signed. A snapshot is taken when it is sent, so what
+// each signatory sees (and signs) cannot change under them.
+@Schema({ _id: false })
+export class SigningDocument {
+  @Prop({ type: Types.ObjectId, default: null })
+  contractId: Types.ObjectId | null;
+  @Prop({ default: '' }) name: string;
+  @Prop({ default: '' }) reference: string;
+  @Prop({ default: '' }) hash: string;
+  @Prop({ default: null }) sentAt: Date | null;
+  @Prop({ default: '' }) sentBy: string;
+  @Prop({ default: null }) completedAt: Date | null;
+  @Prop({ default: null }) signedPdfUrl: string | null;
+  @Prop({ default: false }) archivedToDataRoom: boolean;
+}
+export const SigningDocumentSchema =
+  SchemaFactory.createForClass(SigningDocument);
 
 @Schema({ _id: false })
 export class SigningBlock {
@@ -241,6 +301,10 @@ export class SigningBlock {
   @Prop({ type: [SignatorySchema], default: [] }) signatories: Signatory[];
   @Prop({ default: null }) signingDate: Date | null;
   @Prop({ default: '' }) venue: string;
+  @Prop({ type: SigningDocumentSchema, default: null })
+  document: SigningDocument | null;
+  @Prop({ type: [SigningAuditEntrySchema], default: [] })
+  audit: SigningAuditEntry[];
 }
 export const SigningBlockSchema = SchemaFactory.createForClass(SigningBlock);
 
@@ -275,6 +339,9 @@ export class DealParty {
   @Prop({ required: true }) name: string;
   @Prop({ required: true, lowercase: true }) email: string;
   @Prop({ default: '' }) phone: string;
+  // The person who signs for this side. One per side; the Signing tab sends
+  // the document to the authorised signatory of Party A and of Party B.
+  @Prop({ default: false }) authorizedSignatory: boolean;
   @Prop({ type: DealPartyPermissionsSchema, default: () => ({}) })
   permissions: DealPartyPermissions;
 }

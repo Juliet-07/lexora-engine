@@ -112,10 +112,42 @@ export class AddSigningChecklistDto {
   @ApiPropertyOptional() @IsOptional() @IsString() owner?: string;
 }
 
-export class AddSignatoryDto {
-  @ApiProperty() @IsString() name: string;
-  @ApiProperty() @IsString() party: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() role?: string;
+export class SendForSigningDto {
+  @ApiProperty({ description: 'The deal contract to be signed' })
+  @IsString()
+  contractId: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() message?: string;
+}
+
+export class RemindSignatoryDto {
+  @ApiPropertyOptional({ description: 'Omit to remind everyone still to sign' })
+  @IsOptional()
+  @IsInt()
+  index?: number;
+}
+
+export class SendExecutedCopiesDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() message?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  includeCertificate?: boolean;
+}
+
+export class PublicSignDto {
+  @ApiProperty({ description: 'Full name as typed by the signatory' })
+  @IsString()
+  name: string;
+  @ApiProperty({ enum: ['typed', 'drawn'] })
+  @IsIn(['typed', 'drawn'])
+  method: string;
+  @ApiPropertyOptional({
+    description: 'A drawn signature as a PNG data URL (method = drawn)',
+  })
+  @IsOptional()
+  @IsString()
+  signatureData?: string;
+  @ApiProperty() @IsBoolean() consent: boolean;
 }
 
 export class UpdateSigningDetailsDto {
@@ -143,6 +175,12 @@ export class AddPartyDto {
   @ApiProperty() @IsString() name: string;
   @ApiProperty() @IsEmail() email: string;
   @ApiPropertyOptional() @IsOptional() @IsString() phone?: string;
+  @ApiPropertyOptional({
+    description: 'The person who signs for this side (one per side).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  authorizedSignatory?: boolean;
   @ApiPropertyOptional({ type: DealPartyPermissionsDto })
   @IsOptional()
   @ValidateNested()

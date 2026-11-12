@@ -10,17 +10,18 @@ import {
   UploadedFile,
   BadRequestException,
   Res,
+  Req,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiConsumes } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { DealService } from '../services';
+import { DealService, DealSigningService } from '../services';
 import {
   CreateDealDto,
   SetStageDto,
@@ -35,7 +36,10 @@ import {
   AddCPDto,
   UpdateCPDto,
   AddSigningChecklistDto,
-  AddSignatoryDto,
+  SendForSigningDto,
+  RemindSignatoryDto,
+  SendExecutedCopiesDto,
+  PublicSignDto,
   UpdateSigningDetailsDto,
   AddPostCompletionDto,
   CreateFolderDto,
@@ -72,8 +76,19 @@ const dataRoomStorage = diskStorage({
 export class DealController {
   constructor(
     private readonly service: DealService,
+    private readonly signing: DealSigningService,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
   ) {}
+
+  private async actorName(userId: string): Promise<string> {
+    const me = await this.userModel
+      .findById(userId)
+      .select('firstName lastName')
+      .lean();
+    return (
+      `${me?.firstName ?? ''} ${me?.lastName ?? ''}`.trim() || 'A team member'
+    );
+  }
 
   // ── Core ─────────────────────────────────────────────────────
   @Post()
@@ -551,24 +566,143 @@ export class DealController {
     return this.service.toggleSigningChecklistItem(t || u, id, Number(index));
   }
 
-  @Post(':id/signing/signatories')
-  addSignatory(
+  // Send the chosen contract to the authorised signatory of each side.
+  @Post(':id/signing/send')
+  async sendForSigning(
     @Param('id') id: string,
-    @Body() dto: AddSignatoryDto,
+    @Body() dto: SendForSigningDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.addSignatory(t || u, id, dto);
+    const tenantId = t || u;
+    return this.signing.send(
+      tenantId,
+      id,
+      dto,
+      await this.actorName(u),
+      await resolveBusinessName(this.userModel, tenantId),
+    );
   }
 
-  @Patch(':id/signing/signatories/:index/sign')
-  markSignatorySigned(
+  @Post(':id/signing/remind')
+  async remindSignatories(
     @Param('id') id: string,
-    @Param('index') index: string,
+    @Body() dto: RemindSignatoryDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.markSignatorySigned(t || u, id, Number(index));
+    const tenantId = t || u;
+    return this.signing.remind(
+      tenantId,
+      id,
+      dto,
+      await resolveBusinessName(this.userModel, tenantId),
+    );
+  }
+
+  @Post(':id/signing/reset')
+  resetSigning(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.signing.reset(t || u, id);
+  }
+
+  @Get(':id/signing/signed.pdf')
+  async downloadSignedPdf(
+    @Param('id') id: string,
+    @Res() res: Response,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const buffer = await this.signing.getSignedPdf(
+      tenantId,
+      id,
+      await resolveBusinessName(this.userModel, tenantId),
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="Signed document.pdf"',
+    });
+    res.send(buffer);
+  }
+
+  @Get(':id/signing/certificate.pdf')
+  async downloadSigningCertificate(
+    @Param('id') id: string,
+    @Res() res: Response,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    const buffer = await this.signing.getCertificate(
+      tenantId,
+      id,
+      await resolveBusinessName(this.userModel, tenantId),
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="Signing certificate.pdf"',
+    });
+    res.send(buffer);
+  }
+
+  @Post(':id/signing/executed-copies')
+  async sendExecutedCopies(
+    @Param('id') id: string,
+    @Body() dto: SendExecutedCopiesDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    return this.signing.sendExecutedCopies(
+      tenantId,
+      id,
+      dto,
+      await resolveBusinessName(this.userModel, tenantId),
+    );
+  }
+
+  // Everyone has signed: file the executed copy and move to CPs Tracking.
+  @Post(':id/signing/advance')
+  async advanceFromSigning(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.signing.advance(t || u, id, await this.actorName(u));
+  }
+
+  // ── Signing by link (the signatory, no login) ────────────────
+  @Public()
+  @Get('sign/:token')
+  getSigningPage(@Param('token') token: string, @Req() req: Request) {
+    return this.signing.getPublic(token, this.clientIp(req));
+  }
+
+  @Public()
+  @Post('sign/:token')
+  submitSignature(
+    @Param('token') token: string,
+    @Body() dto: PublicSignDto,
+    @Req() req: Request,
+  ) {
+    return this.signing.submitPublic(
+      token,
+      dto,
+      this.clientIp(req),
+      (req.headers['user-agent'] as string) || null,
+    );
+  }
+
+  private clientIp(req: Request): string | null {
+    return (
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.ip ||
+      null
+    );
   }
 
   @Patch(':id/signing/details')
