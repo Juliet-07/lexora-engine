@@ -85,6 +85,43 @@ export class UpdateContractSectionBodyDto {
 export class AddContractCommentDto {
   @ApiProperty() @IsString() author: string;
   @ApiProperty() @IsString() text: string;
+  // Which side the comment is from, if from one.
+  @ApiPropertyOptional({ enum: ['Party A', 'Party B'] })
+  @IsOptional()
+  @IsIn(['Party A', 'Party B'])
+  party?: string;
+  // An internal note is for the deal team only.
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() internal?: boolean;
+  // The words of the clause the comment is about.
+  @ApiPropertyOptional() @IsOptional() @IsString() quote?: string;
+}
+
+export class AddCommentReplyDto {
+  @ApiProperty() @IsString() author: string;
+  @ApiProperty() @IsString() text: string;
+  @ApiPropertyOptional({ enum: ['Party A', 'Party B'] })
+  @IsOptional()
+  @IsIn(['Party A', 'Party B'])
+  party?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() internal?: boolean;
+}
+
+export class SendContractReviewDto {
+  // The emails to send to, from the parties who may review it. Everyone
+  // with review access when left out.
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsEmail({}, { each: true })
+  recipients?: string[];
+  @ApiPropertyOptional() @IsOptional() @IsString() message?: string;
+}
+
+export class RemindContractReviewDto {
+  // Only these reviewers; every reviewer who has not answered when left out.
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsEmail({}, { each: true })
+  recipients?: string[];
 }
 
 export class SetContractVariableDto {

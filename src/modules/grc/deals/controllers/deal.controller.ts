@@ -32,6 +32,9 @@ import {
   RenameContractDto,
   UpdateContractSectionBodyDto,
   AddContractCommentDto,
+  AddCommentReplyDto,
+  SendContractReviewDto,
+  RemindContractReviewDto,
   SetContractVariableDto,
   AddCPDto,
   UpdateCPDto,
@@ -378,8 +381,28 @@ export class DealController {
     );
   }
 
+  @Post(':id/contracts/:contractId/sections/:index/comments/:cIndex/replies')
+  replyToContractComment(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @Param('index') index: string,
+    @Param('cIndex') cIndex: string,
+    @Body() dto: AddCommentReplyDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.replyToContractComment(
+      t || u,
+      id,
+      contractId,
+      Number(index),
+      Number(cIndex),
+      dto,
+    );
+  }
+
   @Patch(':id/contracts/:contractId/sections/:index/comments/:cIndex/toggle')
-  toggleContractComment(
+  async toggleContractComment(
     @Param('id') id: string,
     @Param('contractId') contractId: string,
     @Param('index') index: string,
@@ -393,6 +416,7 @@ export class DealController {
       contractId,
       Number(index),
       Number(cIndex),
+      await this.actorName(u),
     );
   }
 
@@ -485,6 +509,7 @@ export class DealController {
   async sendContractForReview(
     @Param('id') id: string,
     @Param('contractId') contractId: string,
+    @Body() dto: SendContractReviewDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
@@ -495,6 +520,28 @@ export class DealController {
       id,
       contractId,
       businessName,
+      dto,
+      await this.actorName(u),
+    );
+  }
+
+  // Nudge the reviewers who have not answered yet.
+  @Post(':id/contracts/:contractId/review/remind')
+  async remindContractReviewers(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @Body() dto: RemindContractReviewDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const tenantId = t || u;
+    return this.service.remindContractReviewers(
+      tenantId,
+      id,
+      contractId,
+      await resolveBusinessName(this.userModel, tenantId),
+      dto,
+      await this.actorName(u),
     );
   }
 

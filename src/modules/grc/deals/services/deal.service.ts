@@ -25,6 +25,9 @@ import {
   RenameContractDto,
   UpdateContractSectionBodyDto,
   AddContractCommentDto,
+  AddCommentReplyDto,
+  SendContractReviewDto,
+  RemindContractReviewDto,
   SetContractVariableDto,
   AddCPDto,
   UpdateCPDto,
@@ -556,6 +559,35 @@ export class DealService {
       text: dto.text,
       resolved: false,
       createdAt: new Date(),
+      party: dto.party ?? null,
+      internal: !!dto.internal,
+      quote: (dto.quote ?? '').slice(0, 300),
+      replies: [],
+      resolvedBy: '',
+      resolvedAt: null,
+    } as any);
+    await deal.save();
+    return deal;
+  }
+
+  async replyToContractComment(
+    tenantId: string,
+    dealId: string,
+    contractId: string,
+    sectionIndex: number,
+    commentIndex: number,
+    dto: AddCommentReplyDto,
+  ) {
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    const comment = contract.sections[sectionIndex]?.comments[commentIndex];
+    if (!comment) throw new NotFoundException('Comment not found');
+    comment.replies.push({
+      author: dto.author,
+      text: dto.text,
+      party: dto.party ?? null,
+      internal: !!dto.internal,
+      createdAt: new Date(),
     } as any);
     await deal.save();
     return deal;
@@ -567,12 +599,15 @@ export class DealService {
     contractId: string,
     sectionIndex: number,
     commentIndex: number,
+    actorName = '',
   ) {
     const deal = await this.getRawDoc(tenantId, dealId);
     const contract = this.getContractOrThrow(deal, contractId);
     const comment = contract.sections[sectionIndex]?.comments[commentIndex];
     if (!comment) throw new NotFoundException('Comment not found');
     comment.resolved = !comment.resolved;
+    comment.resolvedBy = comment.resolved ? actorName : '';
+    comment.resolvedAt = comment.resolved ? new Date() : null;
     await deal.save();
     return deal;
   }
@@ -913,20 +948,30 @@ export class DealService {
     dealId: string,
     contractId: string,
     businessName: string,
+    dto: SendContractReviewDto = {},
+    actorName = '',
   ) {
     const deal = await this.getRawDoc(tenantId, dealId);
     const contract = this.getContractOrThrow(deal, contractId);
     // A term sheet goes to the parties allowed to review the term sheet /
     // offer; a contract to those allowed to review contracts.
     const isTermSheet = contract.kind === 'term_sheet';
-    const eligible = deal.parties.filter((p) =>
+    const allowed = deal.parties.filter((p) =>
       isTermSheet ? p.permissions.offerReview : p.permissions.contractReview,
     );
-    if (eligible.length === 0)
+    if (allowed.length === 0)
       throw new BadRequestException(
         isTermSheet
           ? 'No party has term sheet review access enabled. Turn it on for a party in the deal’s Parties.'
           : 'No party has contract review access enabled.',
+      );
+    const wanted = (dto.recipients ?? []).map((e) => e.toLowerCase());
+    const eligible = wanted.length
+      ? allowed.filter((p) => wanted.includes(p.email.toLowerCase()))
+      : allowed;
+    if (eligible.length === 0)
+      throw new BadRequestException(
+        'None of the people you picked can review this document.',
       );
 
     const pdfBuffer = await this.generateContractPdf(
@@ -940,6 +985,8 @@ export class DealService {
     writeFileSync(join(dir, filename), pdfBuffer);
     contract.pdfUrl = `/uploads/deals/contract-review/${filename}`;
 
+    const message = (dto.message ?? '').trim();
+    const round = contract.round ?? 1;
     const sent: string[] = [];
     for (const party of eligible) {
       let entry = contract.reviewLoop.tokens.find(
@@ -953,9 +1000,25 @@ export class DealService {
           sentAt: new Date(),
         } as any;
         contract.reviewLoop.tokens.push(entry as any);
-      } else {
-        entry.sentAt = new Date();
+        entry =
+          contract.reviewLoop.tokens[contract.reviewLoop.tokens.length - 1];
       }
+      // Every send starts a fresh look: the reviewer has not opened this
+      // version yet and has not answered it.
+      entry.sentAt = new Date();
+      entry.round = round;
+      entry.sentBy = actorName;
+      entry.message = message;
+      entry.viewedAt = null;
+      entry.lastRemindedAt = null;
+      contract.reviewLoop.history.push({
+        type: 'sent',
+        at: entry.sentAt,
+        by: actorName,
+        partyEmail: party.email,
+        round,
+        detail: `Sent to ${party.name}`,
+      } as any);
       const link = `${process.env.TENANT_APP_URL}/deal-review/contract/${entry.token}`;
       await this.emailService
         .sendDealReviewInvite({
@@ -965,6 +1028,8 @@ export class DealService {
           kind: isTermSheet ? 'offer' : 'contract',
           reviewLink: link,
           businessName,
+          message,
+          round,
         })
         .catch(() => {});
       sent.push(party.email);
@@ -973,21 +1038,107 @@ export class DealService {
     return { sent };
   }
 
+  // The reviewer's answer to the version they were last sent, if any.
+  private answerSinceSent(contract: any, tokenEntry: any) {
+    const since = new Date(tokenEntry.sentAt).getTime();
+    return [...(contract.reviewLoop.responses ?? [])]
+      .reverse()
+      .find(
+        (r: any) =>
+          r.partyEmail === tokenEntry.partyEmail &&
+          new Date(r.respondedAt).getTime() >= since,
+      );
+  }
+
+  // A nudge to the reviewers who have not answered what they were sent.
+  async remindContractReviewers(
+    tenantId: string,
+    dealId: string,
+    contractId: string,
+    businessName: string,
+    dto: RemindContractReviewDto = {},
+    actorName = '',
+  ) {
+    const deal = await this.getRawDoc(tenantId, dealId);
+    const contract = this.getContractOrThrow(deal, contractId);
+    const wanted = (dto.recipients ?? []).map((e) => e.toLowerCase());
+    const waiting = contract.reviewLoop.tokens.filter(
+      (t) =>
+        !this.answerSinceSent(contract, t) &&
+        (!wanted.length || wanted.includes(t.partyEmail.toLowerCase())),
+    );
+    if (waiting.length === 0)
+      throw new BadRequestException('Nobody is waiting to respond.');
+    const isTermSheet = contract.kind === 'term_sheet';
+    const reminded: string[] = [];
+    for (const entry of waiting) {
+      entry.lastRemindedAt = new Date();
+      contract.reviewLoop.history.push({
+        type: 'reminded',
+        at: entry.lastRemindedAt,
+        by: actorName,
+        partyEmail: entry.partyEmail,
+        round: entry.round ?? 1,
+        detail: `Reminder sent to ${entry.partyName}`,
+      } as any);
+      await this.emailService
+        .sendDealReviewInvite({
+          to: entry.partyEmail,
+          recipientName: entry.partyName,
+          dealName: `${deal.name} — ${contract.name}`,
+          kind: isTermSheet ? 'offer' : 'contract',
+          reviewLink: `${process.env.TENANT_APP_URL}/deal-review/contract/${entry.token}`,
+          businessName,
+          message: entry.message,
+          reminder: true,
+          round: entry.round ?? 1,
+        })
+        .catch(() => {});
+      reminded.push(entry.partyEmail);
+    }
+    await deal.save();
+    return { reminded };
+  }
+
   async getContractReviewSnapshot(token: string) {
-    const deal = await this.model
-      .findOne({ 'contracts.reviewLoop.tokens.token': token })
-      .lean();
-    if (!deal) throw new NotFoundException('This review link is invalid.');
-    const contract = (deal as any).contracts.find((c: any) =>
+    const doc = await this.model.findOne({
+      'contracts.reviewLoop.tokens.token': token,
+    });
+    if (!doc) throw new NotFoundException('This review link is invalid.');
+    const liveContract = doc.contracts.find((c) =>
+      c.reviewLoop.tokens.some((t) => t.token === token),
+    );
+    if (!liveContract)
+      throw new NotFoundException('This review link is invalid.');
+    const liveToken = liveContract.reviewLoop.tokens.find(
+      (t) => t.token === token,
+    );
+    // The first time the reviewer opens what they were sent is recorded, so
+    // the deal team can see it has been looked at. Never fails the page.
+    if (!liveToken.viewedAt) {
+      try {
+        liveToken.viewedAt = new Date();
+        liveContract.reviewLoop.history.push({
+          type: 'viewed',
+          at: liveToken.viewedAt,
+          by: liveToken.partyName,
+          partyEmail: liveToken.partyEmail,
+          round: liveToken.round ?? 1,
+          detail: 'Opened the document',
+        } as any);
+        await doc.save();
+      } catch {
+        /* viewing is not worth failing over */
+      }
+    }
+    const deal: any = doc.toObject();
+    const contract = deal.contracts.find((c: any) =>
       c.reviewLoop.tokens.some((t: any) => t.token === token),
     );
-    if (!contract) throw new NotFoundException('This review link is invalid.');
     const tokenEntry = contract.reviewLoop.tokens.find(
       (t: any) => t.token === token,
     );
-    const already = contract.reviewLoop.responses.find(
-      (r: any) => r.partyEmail === tokenEntry.partyEmail,
-    );
+    const already = this.answerSinceSent(contract, tokenEntry);
     return {
       dealName: deal.name,
       contractName: contract.name,
@@ -1022,20 +1173,30 @@ export class DealService {
     const tokenEntry = contract.reviewLoop.tokens.find(
       (t) => t.token === token,
     );
-    if (
-      contract.reviewLoop.responses.some(
-        (r) =>
-          r.partyEmail === tokenEntry.partyEmail && r.decision === 'Approved',
-      )
-    ) {
+    const earlier = this.answerSinceSent(contract, tokenEntry);
+    if (earlier?.decision === 'Approved') {
       throw new BadRequestException('You have already approved this.');
     }
+    const round = tokenEntry.round ?? 1;
+    const name = dto.name || tokenEntry.partyName;
     contract.reviewLoop.responses.push({
       partyEmail: tokenEntry.partyEmail,
-      partyName: dto.name || tokenEntry.partyName,
+      partyName: name,
       decision: dto.decision,
       comment: dto.comment ?? '',
       respondedAt: new Date(),
+      round,
+    } as any);
+    contract.reviewLoop.history.push({
+      type: 'responded',
+      at: new Date(),
+      by: name,
+      partyEmail: tokenEntry.partyEmail,
+      round,
+      detail:
+        dto.decision === 'Approved'
+          ? 'Approved'
+          : `Requested changes${dto.comment ? ` — ${dto.comment}` : ''}`,
     } as any);
     await deal.save();
     return { success: true };

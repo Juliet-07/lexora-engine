@@ -5,7 +5,19 @@ export interface DealReviewInviteEmailData {
   kind: 'contract' | 'offer';
   reviewLink: string;
   businessName: string;
+  // Sent by the deal team along with the link.
+  message?: string;
+  // A nudge to someone who has not answered yet.
+  reminder?: boolean;
+  round?: number;
 }
+
+const esc = (v: string) =>
+  v
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 
 export function dealReviewInviteTemplate(data: DealReviewInviteEmailData): {
   subject: string;
@@ -13,7 +25,7 @@ export function dealReviewInviteTemplate(data: DealReviewInviteEmailData): {
 } {
   const year = new Date().getFullYear();
   const label = data.kind === 'contract' ? 'Contract' : 'Term Sheet / Offer';
-  const subject = `${label} Review Requested — ${data.dealName}`;
+  const subject = `${data.reminder ? 'Reminder: ' : ''}${label} Review Requested — ${data.dealName}`;
   const html = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"/><title>Review Requested</title></head>
 <body style="margin:0;padding:0;background:#f2f0ed;font-family:'Georgia',serif;">
@@ -28,8 +40,9 @@ export function dealReviewInviteTemplate(data: DealReviewInviteEmailData): {
         <tr><td style="padding:32px 48px 32px;">
           <p style="margin:0 0 16px;font-size:15px;color:#2c2c2c;line-height:1.8;">Dear <strong>${data.recipientName}</strong>,</p>
           <p style="margin:0 0 20px;font-size:15px;color:#2c2c2c;line-height:1.8;">
-            You are invited to review the ${label.toLowerCase()} for <strong>${data.dealName}</strong> and record your response.
+            ${data.reminder ? 'This is a reminder that you are' : 'You are'} invited to review the ${label.toLowerCase()} for <strong>${data.dealName}</strong>${data.round && data.round > 1 ? ` (round ${data.round})` : ''} and record your response.
           </p>
+          ${data.message?.trim() ? `<p style="margin:0 0 20px;padding:12px 16px;background:#f7f5f2;border-left:3px solid #c9a84c;font-size:14px;color:#2c2c2c;line-height:1.7;white-space:pre-wrap;">${esc(data.message.trim())}</p>` : ''}
           <div style="text-align:center;">
             <a href="${data.reviewLink}" style="display:inline-block;background:#4B0082;color:#fff;text-decoration:none;padding:12px 28px;border-radius:6px;font-size:14px;">Review Now</a>
           </div>

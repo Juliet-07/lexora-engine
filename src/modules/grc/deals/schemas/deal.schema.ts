@@ -121,11 +121,33 @@ export class DDItem {
 export const DDItemSchema = SchemaFactory.createForClass(DDItem);
 
 @Schema({ _id: false })
+export class ContractReply {
+  @Prop({ required: true }) author: string;
+  @Prop({ required: true }) text: string;
+  // Which side the reply is from, if the writer said.
+  @Prop({ type: String, default: null }) party: string | null;
+  // An internal reply is for the deal team only.
+  @Prop({ default: false }) internal: boolean;
+  @Prop({ default: () => new Date() }) createdAt: Date;
+}
+export const ContractReplySchema = SchemaFactory.createForClass(ContractReply);
+
+@Schema({ _id: false })
 export class ContractComment {
   @Prop({ required: true }) author: string;
   @Prop({ required: true }) text: string;
   @Prop({ default: false }) resolved: boolean;
   @Prop({ default: () => new Date() }) createdAt: Date;
+  // Which side the comment is from ('Party A' / 'Party B'), if it is from
+  // one; and whether it is an internal note for the deal team.
+  @Prop({ type: String, default: null }) party: string | null;
+  @Prop({ default: false }) internal: boolean;
+  // The words of the clause the comment is about.
+  @Prop({ default: '' }) quote: string;
+  @Prop({ type: [ContractReplySchema], default: [] })
+  replies: ContractReply[];
+  @Prop({ default: '' }) resolvedBy: string;
+  @Prop({ type: Date, default: null }) resolvedAt: Date | null;
 }
 export const ContractCommentSchema =
   SchemaFactory.createForClass(ContractComment);
@@ -358,6 +380,14 @@ export class ReviewToken {
   @Prop({ required: true, lowercase: true }) partyEmail: string;
   @Prop({ required: true }) partyName: string;
   @Prop({ required: true, default: () => new Date() }) sentAt: Date;
+  // The negotiation round the document was at when it was last sent, who
+  // sent it and the message that went with it.
+  @Prop({ default: 1 }) round: number;
+  @Prop({ default: '' }) sentBy: string;
+  @Prop({ default: '' }) message: string;
+  // First time the reviewer opened the link since it was last sent.
+  @Prop({ type: Date, default: null }) viewedAt: Date | null;
+  @Prop({ type: Date, default: null }) lastRemindedAt: Date | null;
 }
 export const ReviewTokenSchema = SchemaFactory.createForClass(ReviewToken);
 
@@ -368,15 +398,32 @@ export class ReviewResponse {
   @Prop({ enum: ReviewDecision, required: true }) decision: ReviewDecision;
   @Prop({ default: '' }) comment: string;
   @Prop({ required: true, default: () => new Date() }) respondedAt: Date;
+  @Prop({ default: 1 }) round: number;
 }
 export const ReviewResponseSchema =
   SchemaFactory.createForClass(ReviewResponse);
+
+// One thing that happened in a review: the document was sent, a reminder
+// went out, a reviewer opened it, or a reviewer answered.
+@Schema({ _id: false })
+export class ReviewEvent {
+  @Prop({ enum: ['sent', 'reminded', 'viewed', 'responded'], required: true })
+  type: string;
+  @Prop({ default: () => new Date() }) at: Date;
+  // Who did it: the deal team member, or the reviewer.
+  @Prop({ default: '' }) by: string;
+  @Prop({ default: '' }) partyEmail: string;
+  @Prop({ default: 1 }) round: number;
+  @Prop({ default: '' }) detail: string;
+}
+export const ReviewEventSchema = SchemaFactory.createForClass(ReviewEvent);
 
 @Schema({ _id: false })
 export class ReviewLoop {
   @Prop({ type: [ReviewTokenSchema], default: [] }) tokens: ReviewToken[];
   @Prop({ type: [ReviewResponseSchema], default: [] })
   responses: ReviewResponse[];
+  @Prop({ type: [ReviewEventSchema], default: [] }) history: ReviewEvent[];
 }
 export const ReviewLoopSchema = SchemaFactory.createForClass(ReviewLoop);
 
