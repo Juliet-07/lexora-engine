@@ -37,6 +37,14 @@ export class ClientCommercial {
   // HR has no employees yet. Either way what's stored is a name.
   @Prop({ default: '' }) relationshipManager: string;
 
+  // The real HR employee behind the name above, when the RM was picked
+  // from the HR list (or the typed name matched exactly one employee).
+  // This is what ties the assignment to the employee's own workspace:
+  // saving it also sets the client profile's assignedTo to that
+  // employee's login, which is what "My Clients" is scoped by.
+  @Prop({ type: Types.ObjectId, ref: 'Employee', default: null })
+  relationshipManagerEmployeeId: Types.ObjectId | null;
+
   @Prop({ type: [String], default: [] }) serviceLines: string[];
   @Prop({ enum: ClientRisk, default: ClientRisk.LOW }) riskRating: ClientRisk;
   @Prop({ enum: FeeTier, default: FeeTier.TIER_3 }) feeTier: FeeTier;

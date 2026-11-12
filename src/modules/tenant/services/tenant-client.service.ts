@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, type QueryFilter } from 'mongoose';
@@ -273,14 +274,19 @@ export class TenantClientsService {
     callerUserType: string,
     callerRoles: string[],
   ) {
-    // Same admin-access rule the frontend uses to decide which view
-    // to show (tenant owner, or tagged staff with real roles) —
-    // replicated here so it's real access control, not just a UI
-    // choice the caller could ignore by editing the query string.
-    const callerHasAdminAccess =
-      callerUserType === 'tenant' ||
-      (callerUserType === 'employee' && callerRoles.length > 0);
-    const assignedTo = callerHasAdminAccess ? filters.assignedTo : callerId;
+    // Who sees every client and who sees only their own:
+    //  • the tenant owner account — always everyone (admin and
+    //    employee workspace alike);
+    //  • a plain employee — only clients assigned to them, always;
+    //  • an employee with a role/module — everyone in the module's
+    //    admin pages, but only their own assigned clients when the
+    //    caller asks for `scope=mine` (the employee workspace does).
+    // Enforced here, not in the UI: access to a module does not make
+    // someone's own workspace a view of the whole client book.
+    const isOwner = callerUserType === UserType.TENANT;
+    const mineOnly =
+      !isOwner && (callerRoles.length === 0 || filters.scope === 'mine');
+    const assignedTo = mineOnly ? callerId : filters.assignedTo;
 
     const userQuery: QueryFilter<UserDocument> = {
       userType: UserType.CLIENT,
@@ -371,6 +377,25 @@ export class TenantClientsService {
   // ═══════════════════════════════════════════════════════════
   // GET CLIENT BY ID (full detail view with all tabs data)
   // ═══════════════════════════════════════════════════════════
+  // A plain employee (no role/module) may only open a client who is
+  // assigned to them — listing was already scoped, this closes the
+  // same gap for anyone who has a client's id.
+  async assertCanAccessClient(
+    clientId: string,
+    callerId: string,
+    callerUserType: string,
+    callerRoles: string[] = [],
+  ) {
+    if (callerUserType !== UserType.EMPLOYEE || callerRoles.length > 0) return;
+    const profile = await this.profileModel
+      .findOne({ userId: new Types.ObjectId(clientId) })
+      .select('assignedTo')
+      .lean();
+    if (!profile?.assignedTo || String(profile.assignedTo) !== callerId) {
+      throw new ForbiddenException('This client is not assigned to you.');
+    }
+  }
+
   async getClientById(clientId: string, tenantId: string) {
     const client = await this.userModel
       .findOne({

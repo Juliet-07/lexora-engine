@@ -804,6 +804,26 @@ export class TenantNotificationService {
     );
   }
 
+  // A client was assigned to this employee as relationship manager —
+  // in-app entry plus the standard notification email (create() sends
+  // it), pointing at their workspace's Clients page.
+  @OnEvent('tenant.client.assigned')
+  async onClientAssigned(e: {
+    tenantId: string;
+    employeeUserId: string;
+    clientUserId: string;
+    clientName: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.employeeUserId,
+      TenantNotificationType.ONBOARDING,
+      `New client assigned to you — ${e.clientName}`,
+      `You are now the relationship manager for ${e.clientName}. You can find them under Clients in your workspace.`,
+      '/clients',
+    );
+  }
+
   @OnEvent('tenant.board_pack_document.submitted')
   async onBoardPackDocumentSubmitted(e: BoardPackDocumentSubmittedEvent) {
     await this.create(

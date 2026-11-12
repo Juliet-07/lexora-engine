@@ -132,8 +132,16 @@ export class TenantController {
     @Param('id') id: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+    @CurrentUser('roles') roles: string[],
     @Res() res: Response,
   ) {
+    await this.tenantClientService.assertCanAccessClient(
+      id,
+      u,
+      userType,
+      roles ?? [],
+    );
     const buffer = await this.tenantClientService.generateClientReport(
       id,
       t || u,
@@ -148,11 +156,19 @@ export class TenantController {
   // ── Get one ───────────────────────────────────────────────
   @Get('my-clients/:id')
   @ApiOperation({ summary: 'Get client full details' })
-  findOne(
+  async findOne(
     @Param('id') id: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+    @CurrentUser('roles') roles: string[],
   ) {
+    await this.tenantClientService.assertCanAccessClient(
+      id,
+      u,
+      userType,
+      roles ?? [],
+    );
     return this.tenantClientService.getClientById(id, t || u);
   }
 
@@ -161,11 +177,19 @@ export class TenantController {
     summary:
       'Real client health — saved commercial/relationship data combined with live-computed operational signals (open tickets, payment behaviour, last activity)',
   })
-  getClientHealth(
+  async getClientHealth(
     @Param('id') id: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+    @CurrentUser('roles') roles: string[],
   ) {
+    await this.tenantClientService.assertCanAccessClient(
+      id,
+      u,
+      userType,
+      roles ?? [],
+    );
     return this.tenantClientService.getClientHealth(id, t || u);
   }
 
@@ -174,12 +198,20 @@ export class TenantController {
     summary:
       'Update the real, staff-entered relationship fields (service lines, fee tier, revenue, satisfaction, notes)',
   })
-  updateClientCommercial(
+  async updateClientCommercial(
     @Param('id') id: string,
     @Body() dto: UpdateClientCommercialDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+    @CurrentUser('roles') roles: string[],
   ) {
+    await this.tenantClientService.assertCanAccessClient(
+      id,
+      u,
+      userType,
+      roles ?? [],
+    );
     return this.tenantClientService.upsertClientCommercial(id, t || u, dto, u);
   }
 

@@ -18,6 +18,15 @@ import { ClientRisk, FeeTier } from '../schemas';
 export class UpsertClientCommercialDto {
   @ApiPropertyOptional() @IsOptional() @IsString() relationshipManager?: string;
 
+  // The HR employee chosen as RM. Send '' to clear the assignment.
+  @ApiPropertyOptional({
+    description:
+      "HR employee id of the relationship manager. Setting it assigns the client to that employee (their workspace + a notification); '' clears it.",
+  })
+  @IsOptional()
+  @IsString()
+  relationshipManagerId?: string;
+
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()

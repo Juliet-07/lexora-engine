@@ -45,7 +45,7 @@ export class ClientCommercialController {
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.upsert(t || u, clientUserId, dto);
+    return this.service.upsert(t || u, clientUserId, dto, u);
   }
 
   @Delete(':clientUserId')

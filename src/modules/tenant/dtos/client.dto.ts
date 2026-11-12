@@ -314,6 +314,13 @@ export class ClientFilterDto {
   @IsString()
   assignedTo?: string;
 
+  // 'mine' = only clients assigned to the caller, even for someone
+  // who has module/admin access. Sent by the employee workspace.
+  @ApiPropertyOptional({ enum: ['mine'] })
+  @IsOptional()
+  @IsString()
+  scope?: string;
+
   // Ex-clients are excluded from the default list — the tenant
   // opts in specifically to see them, matching "retained but not in
   // the way of day-to-day active work."
