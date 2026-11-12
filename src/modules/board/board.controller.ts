@@ -6,9 +6,11 @@ import {
   Param,
   Patch,
   Post,
+  Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -893,6 +895,46 @@ export class BoardPortalController {
     @CurrentUser('sub') u: string,
   ) {
     return this.service.decideCommitteeChairApproval(u, id, dto);
+  }
+
+  // ── ESG reports — published by the tenant, delivered to the Board
+  // Pack page. The same report is also emailed to every active board
+  // member at publish time (see EsgFrameworkService#publish).
+
+  @Get('esg-reports')
+  @ApiOperation({
+    summary: 'ESG reports the tenant has published to the board',
+  })
+  getEsgReports(@CurrentUser('sub') u: string) {
+    return this.service.getPublishedForBoardMember(u);
+  }
+
+  @Get('esg-reports/:id')
+  @ApiOperation({ summary: 'One published ESG report, with its full content' })
+  getEsgReport(@Param('id') id: string, @CurrentUser('sub') u: string) {
+    return this.service.getPublishedForBoardMemberById(u, id);
+  }
+
+  @Post('esg-reports/:id/read')
+  @ApiOperation({ summary: 'Mark a published ESG report as read' })
+  markEsgReportRead(@Param('id') id: string, @CurrentUser('sub') u: string) {
+    return this.service.markReportRead(u, id);
+  }
+
+  @Get('esg-reports/:id/pdf')
+  @ApiOperation({ summary: 'Download a published ESG report as a PDF' })
+  async downloadEsgReportPdf(
+    @Param('id') id: string,
+    @Res() res: Response,
+    @CurrentUser('sub') u: string,
+  ) {
+    const { buffer, filename } =
+      await this.service.getPublishedPdfForBoardMember(u, id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.send(buffer);
   }
 
   // ── Board Evaluations — "make board evaluations functional" (PO,

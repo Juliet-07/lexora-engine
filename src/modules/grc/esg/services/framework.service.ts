@@ -17,6 +17,7 @@ import {
   EsgReport,
   EsgReportDocument,
   EsgReportStatus,
+  EsgReportEmailStatus,
 } from '../schemas';
 import {
   CreateFrameworkDto,
@@ -31,7 +32,12 @@ import {
   DecideEsgChairApprovalDto,
   DecideBoardChairApprovalDto,
   CompileReportDto,
+  PublishReportDto,
 } from '../dtos';
+import {
+  buildEsgReportPdf,
+  EsgReportSnapshot,
+} from 'src/common/utils/pdf/esg-report.util';
 import { frameworkCoverage } from 'src/common/utils/esg-calculations.util';
 import { CommitteeMemberRole } from '../../governance/schemas';
 import {
@@ -745,19 +751,78 @@ export class EsgFrameworkService {
 
   // ── Reports ──────────────────────────────────────────────────
 
+  // The list never carries the (large) snapshot — the viewer asks for
+  // one report at a time via getReport().
   async getReports(tenantId: string) {
     return this.reportModel
       .find({ tenantId: new Types.ObjectId(tenantId) })
+      .select('-snapshot')
       .sort({ createdAt: -1 })
       .lean();
   }
 
+  // Freezes a framework's current state into the document that gets
+  // viewed, downloaded and sent. Not-applicable disclosures are
+  // listed (with their reason) but don't count toward sign-off —
+  // nobody can sign off something that doesn't apply.
+  private async buildSnapshot(
+    tenantId: string,
+    frameworkId: string,
+  ): Promise<EsgReportSnapshot> {
+    const framework = await this.getRawFramework(tenantId, frameworkId);
+    const rows = await this.getIndicators(tenantId, frameworkId);
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const applicable = rows.filter((i) => i.isApplicable);
+    const signedOff = applicable.filter(
+      (i) => i.status === IndicatorStatus.SIGNED_OFF,
+    ).length;
+    return {
+      businessName,
+      frameworkLabel: framework.label,
+      frameworkDescription: framework.description ?? '',
+      builtAt: new Date(),
+      totals: {
+        total: rows.length,
+        applicable: applicable.length,
+        notApplicable: rows.length - applicable.length,
+        signedOff,
+        pending: applicable.length - signedOff,
+        pct: applicable.length
+          ? Math.round((signedOff / applicable.length) * 100)
+          : 0,
+      },
+      indicators: rows.map((i: any) => ({
+        code: i.code,
+        title: i.title,
+        owner: i.owner ?? '',
+        requirement: i.requirement ?? '',
+        response: i.response ?? '',
+        status: i.status,
+        isApplicable: i.isApplicable,
+        applicabilityNote: i.applicabilityNote ?? '',
+        evidence: (i.evidence ?? []).map((e: any) => e.name),
+        signedOffBy: i.signedOffBy ?? null,
+        signedOffAt: i.signedOffAt ?? null,
+        esgChairName: i.esgChairApproval?.name ?? '',
+        esgChairDecidedAt:
+          i.esgChairApproval?.decision === EsgApprovalDecision.APPROVED
+            ? i.esgChairApproval.decidedAt
+            : null,
+        boardChairName:
+          i.boardChairApproval?.decision === EsgApprovalDecision.APPROVED
+            ? (i.boardChairApproval.name ?? '')
+            : '',
+        boardChairDecidedAt:
+          i.boardChairApproval?.decision === EsgApprovalDecision.APPROVED
+            ? i.boardChairApproval.decidedAt
+            : null,
+      })),
+    };
+  }
+
   async compile(tenantId: string, frameworkId: string, dto: CompileReportDto) {
     const framework = await this.getRawFramework(tenantId, frameworkId);
-    const indicators = await this.getIndicators(tenantId, frameworkId);
-    const pending = indicators.filter(
-      (i) => i.status !== IndicatorStatus.SIGNED_OFF,
-    );
+    const snapshot = await this.buildSnapshot(tenantId, frameworkId);
     const period = dto.period ?? String(new Date().getFullYear());
 
     const created = await this.reportModel.create({
@@ -768,21 +833,306 @@ export class EsgFrameworkService {
       status: EsgReportStatus.COMPILED,
       compiledAt: new Date(),
       publishedAt: null,
-      note: `Auto-assembled from ${indicators.length} indicators (${indicators.length - pending.length} signed off).`,
+      snapshot,
+      note: `Auto-assembled from ${snapshot.totals.total} indicators (${snapshot.totals.signedOff} signed off).`,
     });
+    const { snapshot: _omit, ...report } = created.toObject();
+    return { report, pendingCount: snapshot.totals.pending };
+  }
+
+  private async getRawReport(tenantId: string, id: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('Report not found');
+    }
+    const r = await this.reportModel.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!r) throw new NotFoundException('Report not found');
+    return r;
+  }
+
+  // Reports compiled before snapshots existed have none — build it
+  // from the framework as it stands now the first time it's needed,
+  // and keep it so the document doesn't drift afterwards.
+  private async ensureSnapshot(r: EsgReportDocument) {
+    if (!r.snapshot) {
+      r.snapshot = await this.buildSnapshot(
+        r.tenantId.toString(),
+        r.frameworkId.toString(),
+      );
+      r.markModified('snapshot');
+      await r.save();
+    }
+    return r.snapshot as unknown as EsgReportSnapshot;
+  }
+
+  // Full report for the tenant's viewer: metadata, content, and who it
+  // was sent to / who has opened it.
+  async getReport(tenantId: string, id: string) {
+    const r = await this.getRawReport(tenantId, id);
+    await this.ensureSnapshot(r);
+    return r.toObject();
+  }
+
+  private async renderPdf(r: EsgReportDocument): Promise<Buffer> {
+    const snapshot = await this.ensureSnapshot(r);
+    return buildEsgReportPdf({
+      title: r.title,
+      period: r.period,
+      status: r.status,
+      compiledAt: r.compiledAt,
+      publishedAt: r.publishedAt,
+      snapshot,
+    });
+  }
+
+  private pdfName(r: EsgReportDocument) {
+    return `${r.title.replace(/[^\w\- ]+/g, '').trim() || 'ESG Report'}.pdf`;
+  }
+
+  async getReportPdf(tenantId: string, id: string) {
+    const r = await this.getRawReport(tenantId, id);
+    return { buffer: await this.renderPdf(r), filename: this.pdfName(r) };
+  }
+
+  // Publishing is what puts the report in front of the board: the
+  // content is re-frozen at its latest state, the report is marked
+  // Published, and every active board member gets it by email (PDF
+  // attached) and as an entry in their portal's Board Pack page.
+  async publish(
+    tenantId: string,
+    id: string,
+    userId: string,
+    dto: PublishReportDto = {},
+  ) {
+    const r = await this.getRawReport(tenantId, id);
+    if (r.status === EsgReportStatus.PUBLISHED) {
+      throw new BadRequestException(
+        'This report is already published. Use "Send to board" to reach members who have not received it.',
+      );
+    }
+    const me = await this.userModel
+      .findById(userId)
+      .select('firstName lastName')
+      .lean();
+    r.snapshot = await this.buildSnapshot(tenantId, r.frameworkId.toString());
+    r.markModified('snapshot');
+    r.status = EsgReportStatus.PUBLISHED;
+    r.publishedAt = new Date();
+    r.publishedBy =
+      `${(me as any)?.firstName ?? ''} ${(me as any)?.lastName ?? ''}`.trim();
+    r.publishMessage = (dto.message ?? '').trim();
+    r.note = `Auto-assembled from ${r.snapshot.totals.total} indicators (${r.snapshot.totals.signedOff} signed off).`;
+    await r.save();
+
+    const sent = await this.sendToBoardMembers(r, false);
+    return { report: r.toObject(), ...sent };
+  }
+
+  // "Send to board" on an already-published report: reaches active
+  // board members who never got it — appointed after publishing, or
+  // whose email failed — and leaves everyone else alone.
+  async resendToBoard(tenantId: string, id: string) {
+    const r = await this.getRawReport(tenantId, id);
+    if (r.status !== EsgReportStatus.PUBLISHED) {
+      throw new BadRequestException('Publish the report first.');
+    }
+    const sent = await this.sendToBoardMembers(r, true);
+    return { report: r.toObject(), ...sent };
+  }
+
+  private async sendToBoardMembers(r: EsgReportDocument, onlyMissing: boolean) {
+    const tenantId = r.tenantId.toString();
+    const snapshot = await this.ensureSnapshot(r);
+    const members = (await this.boardMemberService.getAll(tenantId)).filter(
+      (m: any) => m.isActive,
+    );
+
+    const already = new Map(
+      r.recipients.map((x) => [x.boardMemberId.toString(), x]),
+    );
+    const targets = members.filter((m: any) => {
+      const prev = already.get(String(m._id));
+      return (
+        !onlyMissing || !prev || prev.emailStatus !== EsgReportEmailStatus.SENT
+      );
+    });
+    if (!targets.length) {
+      return {
+        emailed: 0,
+        failed: 0,
+        notified: 0,
+        totalMembers: members.length,
+      };
+    }
+
+    const pdf = await this.renderPdf(r);
+    const filename = this.pdfName(r);
+    const boardAppUrl = process.env.BOARD_APP_URL || 'http://localhost:8083';
+    const boardPackLink = `${boardAppUrl}/board-packs?report=${r._id}`;
+    let emailed = 0;
+    let failed = 0;
+    let notified = 0;
+
+    for (const m of targets as any[]) {
+      const key = String(m._id);
+      const email = String(m.email ?? '')
+        .trim()
+        .toLowerCase();
+      let emailStatus = EsgReportEmailStatus.NO_EMAIL;
+      let sentAt: Date | null = null;
+      if (email) {
+        try {
+          await this.emailService.sendEsgReportPublished(
+            {
+              to: email,
+              memberName: m.name,
+              reportTitle: r.title,
+              frameworkLabel: snapshot.frameworkLabel,
+              period: r.period,
+              publishedAt: r.publishedAt ?? new Date(),
+              disclosureCount: snapshot.totals.total,
+              signedOffCount: snapshot.totals.signedOff,
+              message: r.publishMessage,
+              boardPackLink,
+              businessName: snapshot.businessName,
+              hasAttachment: true,
+            },
+            [{ filename, content: pdf }],
+          );
+          emailStatus = EsgReportEmailStatus.SENT;
+          sentAt = new Date();
+          emailed++;
+        } catch {
+          emailStatus = EsgReportEmailStatus.FAILED;
+          failed++;
+        }
+      }
+
+      // In-portal entry: the Board Pack page lists every published
+      // report, so this notification is just the nudge — it goes out
+      // whether or not the email did, but only the first time.
+      const prev = already.get(key);
+      if (!prev) {
+        const notification: BoardNotificationEvent = {
+          tenantId,
+          recipientBoardMemberId: key,
+          recipientUserId: m.userId ? String(m.userId) : null,
+          type: BoardNotificationType.ESG,
+          title: `ESG report published: ${r.title}`,
+          description:
+            'It has been added to your Board Pack — open it to review.',
+          link: '/board-packs',
+        };
+        this.eventEmitter.emit(BOARD_NOTIFICATION_EVENT, notification);
+        notified++;
+      }
+
+      if (prev) {
+        prev.emailStatus = emailStatus;
+        prev.sentAt = sentAt ?? prev.sentAt;
+        prev.name = m.name;
+        prev.email = email;
+      } else {
+        r.recipients.push({
+          boardMemberId: new Types.ObjectId(key),
+          name: m.name,
+          email,
+          emailStatus,
+          sentAt,
+          readAt: null,
+        } as any);
+      }
+    }
+    r.markModified('recipients');
+    await r.save();
+    return { emailed, failed, notified, totalMembers: members.length };
+  }
+
+  // ── Board Portal — published reports in the Board Pack page ──
+
+  private toBoardSummary(r: any, boardMemberId: string) {
+    const mine = (r.recipients ?? []).find(
+      (x: any) => String(x.boardMemberId) === boardMemberId,
+    );
     return {
-      report: created.toObject(),
-      pendingCount: pending.length,
+      _id: r._id,
+      title: r.title,
+      period: r.period,
+      frameworkLabel: r.snapshot?.frameworkLabel ?? '',
+      publishedAt: r.publishedAt,
+      publishedBy: r.publishedBy ?? '',
+      message: r.publishMessage ?? '',
+      totals: r.snapshot?.totals ?? null,
+      readAt: mine?.readAt ?? null,
     };
   }
 
-  async publish(tenantId: string, id: string) {
-    const r = await this.reportModel.findOneAndUpdate(
-      { _id: id, tenantId: new Types.ObjectId(tenantId) },
-      { $set: { status: EsgReportStatus.PUBLISHED, publishedAt: new Date() } },
-      { new: true },
+  async getPublishedForBoardMember(userId: string) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    const rows = await this.reportModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        status: EsgReportStatus.PUBLISHED,
+      })
+      .sort({ publishedAt: -1 })
+      .lean();
+    return rows.map((r) => this.toBoardSummary(r, boardMemberId));
+  }
+
+  private async getPublishedRaw(userId: string, id: string) {
+    const { boardMemberId, tenantId } =
+      await this.boardMemberService.resolveBoardMember(userId);
+    const r = await this.getRawReport(tenantId, id);
+    // Board members only ever see what has actually been published.
+    if (r.status !== EsgReportStatus.PUBLISHED) {
+      throw new NotFoundException('Report not found');
+    }
+    return { r, boardMemberId };
+  }
+
+  async getPublishedForBoardMemberById(userId: string, id: string) {
+    const { r, boardMemberId } = await this.getPublishedRaw(userId, id);
+    const snapshot = await this.ensureSnapshot(r);
+    return {
+      ...this.toBoardSummary(r.toObject(), boardMemberId),
+      snapshot,
+    };
+  }
+
+  async markReportRead(userId: string, id: string) {
+    const { r, boardMemberId } = await this.getPublishedRaw(userId, id);
+    const existing = r.recipients.find(
+      (x) => x.boardMemberId.toString() === boardMemberId,
     );
-    if (!r) throw new NotFoundException('Report not found');
-    return r.toObject();
+    if (existing) {
+      if (existing.readAt) return { readAt: existing.readAt };
+      existing.readAt = new Date();
+    } else {
+      // Joined the board after publishing, or opened it by link before
+      // being sent it — still counts as reached.
+      const m = await this.boardMemberService.resolveBoardMember(userId);
+      r.recipients.push({
+        boardMemberId: new Types.ObjectId(boardMemberId),
+        name: m.name,
+        email: m.email,
+        emailStatus: EsgReportEmailStatus.NO_EMAIL,
+        sentAt: null,
+        readAt: new Date(),
+      } as any);
+    }
+    r.markModified('recipients');
+    await r.save();
+    const mine = r.recipients.find(
+      (x) => x.boardMemberId.toString() === boardMemberId,
+    );
+    return { readAt: mine?.readAt ?? null };
+  }
+
+  async getPublishedPdfForBoardMember(userId: string, id: string) {
+    const { r } = await this.getPublishedRaw(userId, id);
+    return { buffer: await this.renderPdf(r), filename: this.pdfName(r) };
   }
 }

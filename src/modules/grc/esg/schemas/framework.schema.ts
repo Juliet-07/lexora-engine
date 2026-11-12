@@ -206,6 +206,30 @@ export enum EsgReportStatus {
   PUBLISHED = 'Published',
 }
 
+// One board member's copy of a published report — who it was emailed
+// to, whether that send worked, and when they opened it in their
+// Board Pack page. Written at publish time (and by "send to board" for
+// anyone who was missing then), updated when the member reads it.
+export enum EsgReportEmailStatus {
+  SENT = 'Sent',
+  FAILED = 'Failed',
+  NO_EMAIL = 'No email',
+}
+
+@Schema({ _id: false })
+export class EsgReportRecipient {
+  @Prop({ type: Types.ObjectId, ref: 'BoardMember', required: true })
+  boardMemberId: Types.ObjectId;
+  @Prop({ default: '' }) name: string;
+  @Prop({ default: '', lowercase: true }) email: string;
+  @Prop({ enum: EsgReportEmailStatus, default: EsgReportEmailStatus.SENT })
+  emailStatus: EsgReportEmailStatus;
+  @Prop({ default: null }) sentAt: Date | null;
+  @Prop({ default: null }) readAt: Date | null;
+}
+export const EsgReportRecipientSchema =
+  SchemaFactory.createForClass(EsgReportRecipient);
+
 @Schema({ timestamps: true, collection: 'esg_reports' })
 export class EsgReport {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -221,5 +245,20 @@ export class EsgReport {
   @Prop({ default: null }) compiledAt: Date | null;
   @Prop({ default: null }) publishedAt: Date | null;
   @Prop({ default: '' }) note: string;
+
+  // The report's actual content, frozen when it's compiled and
+  // refreshed once more at publish — so what the tenant views and
+  // downloads, and what the board receives, is one fixed document
+  // rather than whatever the indicators say today. Shape: see
+  // EsgReportSnapshot in services/esg-report-snapshot.ts. Reports
+  // compiled before this existed have none; it's built on first use.
+  @Prop({ type: Object, default: null })
+  snapshot: Record<string, any> | null;
+
+  // Publishing → board distribution.
+  @Prop({ default: '' }) publishedBy: string;
+  @Prop({ default: '' }) publishMessage: string;
+  @Prop({ type: [EsgReportRecipientSchema], default: [] })
+  recipients: EsgReportRecipient[];
 }
 export const EsgReportSchema = SchemaFactory.createForClass(EsgReport);

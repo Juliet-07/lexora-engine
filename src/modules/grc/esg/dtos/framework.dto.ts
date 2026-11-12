@@ -34,6 +34,15 @@ export class CompileReportDto {
   @ApiPropertyOptional() @IsOptional() @IsString() period?: string;
 }
 
+export class PublishReportDto {
+  @ApiPropertyOptional({
+    description: 'Optional cover note shown to board members with the report.',
+  })
+  @IsOptional()
+  @IsString()
+  message?: string;
+}
+
 export class UpdateIndicatorRequirementDto {
   @ApiProperty() @IsString() requirement: string;
 }

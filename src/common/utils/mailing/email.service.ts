@@ -210,6 +210,10 @@ import {
   meetingDispatchTemplate,
 } from './templates/meeting-dispatch.template';
 import {
+  EsgReportPublishedEmailData,
+  esgReportPublishedTemplate,
+} from './templates/esg-report-published.template';
+import {
   MeetingMinutesEmailData,
   meetingMinutesTemplate,
 } from './templates/meeting-minutes.template';
@@ -984,6 +988,20 @@ export class EmailService {
     attachments: { filename: string; path: string }[] = [],
   ): Promise<void> {
     const { subject, html } = meetingDispatchTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      subject,
+      html,
+      attachments,
+    });
+  }
+
+  async sendEsgReportPublished(
+    data: EsgReportPublishedEmailData,
+    attachments: { filename: string; content: Buffer }[] = [],
+  ): Promise<void> {
+    const { subject, html } = esgReportPublishedTemplate(data);
     await this.transporter.sendMail({
       from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
       to: data.to,

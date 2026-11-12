@@ -9,7 +9,9 @@ import {
   Query,
   UseInterceptors,
   UploadedFiles,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiTags, ApiBearerAuth, ApiConsumes } from '@nestjs/swagger';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -29,6 +31,7 @@ import {
   SendForEsgApprovalDto,
   DecideEsgChairApprovalDto,
   CompileReportDto,
+  PublishReportDto,
 } from '../dtos';
 import { CurrentUser, UserTypes, Public } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
@@ -255,12 +258,46 @@ export class EsgFrameworkController {
     return this.service.compile(t || u, frameworkId, dto);
   }
 
-  @Post('reports/:id/publish')
-  publish(
+  @Get('reports/:id')
+  getReport(
     @Param('id') id: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.publish(t || u, id);
+    return this.service.getReport(t || u, id);
+  }
+
+  @Get('reports/:id/pdf')
+  async downloadReportPdf(
+    @Param('id') id: string,
+    @Res() res: Response,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const { buffer, filename } = await this.service.getReportPdf(t || u, id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.send(buffer);
+  }
+
+  @Post('reports/:id/publish')
+  publish(
+    @Param('id') id: string,
+    @Body() dto: PublishReportDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.publish(t || u, id, u, dto);
+  }
+
+  @Post('reports/:id/send-to-board')
+  sendToBoard(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.resendToBoard(t || u, id);
   }
 }
