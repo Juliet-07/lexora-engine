@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseInterceptors,
   UploadedFile,
   BadRequestException,
@@ -21,7 +22,7 @@ import { existsSync, mkdirSync } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { DealService, DealSigningService } from '../services';
+import { DealService, DealSigningService, signKind } from '../services';
 import {
   CreateDealDto,
   SetStageDto,
@@ -613,10 +614,12 @@ export class DealController {
     return this.service.toggleSigningChecklistItem(t || u, id, Number(index));
   }
 
-  // Send the chosen contract to the authorised signatory of each side.
+  // Send the chosen contract — or, with ?kind=term_sheet, term sheet — to
+  // the authorised signatory of each side.
   @Post(':id/signing/send')
   async sendForSigning(
     @Param('id') id: string,
+    @Query('kind') kind: string | undefined,
     @Body() dto: SendForSigningDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
@@ -628,12 +631,14 @@ export class DealController {
       dto,
       await this.actorName(u),
       await resolveBusinessName(this.userModel, tenantId),
+      signKind(kind),
     );
   }
 
   @Post(':id/signing/remind')
   async remindSignatories(
     @Param('id') id: string,
+    @Query('kind') kind: string | undefined,
     @Body() dto: RemindSignatoryDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
@@ -644,21 +649,24 @@ export class DealController {
       id,
       dto,
       await resolveBusinessName(this.userModel, tenantId),
+      signKind(kind),
     );
   }
 
   @Post(':id/signing/reset')
   resetSigning(
     @Param('id') id: string,
+    @Query('kind') kind: string | undefined,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.signing.reset(t || u, id);
+    return this.signing.reset(t || u, id, signKind(kind));
   }
 
   @Get(':id/signing/signed.pdf')
   async downloadSignedPdf(
     @Param('id') id: string,
+    @Query('kind') kind: string | undefined,
     @Res() res: Response,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
@@ -668,6 +676,7 @@ export class DealController {
       tenantId,
       id,
       await resolveBusinessName(this.userModel, tenantId),
+      signKind(kind),
     );
     res.set({
       'Content-Type': 'application/pdf',
@@ -679,6 +688,7 @@ export class DealController {
   @Get(':id/signing/certificate.pdf')
   async downloadSigningCertificate(
     @Param('id') id: string,
+    @Query('kind') kind: string | undefined,
     @Res() res: Response,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
@@ -688,6 +698,7 @@ export class DealController {
       tenantId,
       id,
       await resolveBusinessName(this.userModel, tenantId),
+      signKind(kind),
     );
     res.set({
       'Content-Type': 'application/pdf',
@@ -699,6 +710,7 @@ export class DealController {
   @Post(':id/signing/executed-copies')
   async sendExecutedCopies(
     @Param('id') id: string,
+    @Query('kind') kind: string | undefined,
     @Body() dto: SendExecutedCopiesDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
@@ -709,6 +721,7 @@ export class DealController {
       id,
       dto,
       await resolveBusinessName(this.userModel, tenantId),
+      signKind(kind),
     );
   }
 
@@ -716,10 +729,16 @@ export class DealController {
   @Post(':id/signing/advance')
   async advanceFromSigning(
     @Param('id') id: string,
+    @Query('kind') kind: string | undefined,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.signing.advance(t || u, id, await this.actorName(u));
+    return this.signing.advance(
+      t || u,
+      id,
+      await this.actorName(u),
+      signKind(kind),
+    );
   }
 
   // ── Signing by link (the signatory, no login) ────────────────

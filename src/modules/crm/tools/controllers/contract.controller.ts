@@ -592,6 +592,26 @@ export class ContractController {
     res.send(buffer);
   }
 
+  @Get(':id/signing-certificate')
+  @ApiOperation({
+    summary:
+      'Download the signing certificate — available once both parties have signed',
+  })
+  async downloadSigningCertificate(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.service.getSigningCertificate(t || u, id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="signing-certificate-${id}.pdf"`,
+      'Content-Length': buffer.length,
+    });
+    res.send(buffer);
+  }
+
   @Get(':id/preview-pdf')
   @ApiOperation({
     summary:

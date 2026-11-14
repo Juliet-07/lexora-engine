@@ -44,7 +44,10 @@ import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { randomBytes } from 'crypto';
-import { dealContractExecuted } from './deal-variation.service';
+import {
+  dealContractExecuted,
+  termSheetSigned,
+} from './deal-variation.service';
 import * as PDFKitImport from 'pdfkit';
 import { User, UserDocument } from 'src/modules/auth/schemas';
 import { htmlToParagraphs } from 'src/common/utils/html-to-paragraphs.util';
@@ -144,20 +147,24 @@ export class DealService {
     };
   }
 
+  private withoutTokens(block: any) {
+    if (!block) return block;
+    return {
+      ...block,
+      signatories: (block.signatories ?? []).map(
+        ({ token: _token, ...rest }: any) => rest,
+      ),
+    };
+  }
+
   private withComputed(deal: any) {
     return {
       ...deal,
       ddProgress: this.ddProgress(deal),
       cpsProgress: this.cpsProgress(deal),
       // A signatory's link is their credential — it never leaves the server.
-      signing: deal.signing
-        ? {
-            ...deal.signing,
-            signatories: (deal.signing.signatories ?? []).map(
-              ({ token: _token, ...rest }: any) => rest,
-            ),
-          }
-        : deal.signing,
+      signing: this.withoutTokens(deal.signing),
+      termSheetSigning: this.withoutTokens(deal.termSheetSigning),
       // Deals saved when the sides were Buyer / Seller read as Party A / B.
       parties: (deal.parties ?? []).map((p: any) => ({
         ...p,
@@ -171,6 +178,8 @@ export class DealService {
         // Once executed, a contract is changed by variations (Amendments
         // tab), not by editing its text.
         executed: dealContractExecuted(deal, c),
+        // A signed term sheet is fixed — the signed copy is the record.
+        signed: termSheetSigned(deal, c),
         variations: c.variations ?? [],
         round: c.round ?? 1,
         penParty: partySide(c.penParty ?? DealPartySide.PARTY_A),
@@ -516,6 +525,10 @@ export class DealService {
       throw new BadRequestException(
         'This contract has been executed, so its text can no longer be edited directly. Use the Amendments tab to vary it.',
       );
+    if (termSheetSigned(deal, contract))
+      throw new BadRequestException(
+        'This term sheet has been signed, so its text can no longer be edited.',
+      );
     if (!contract.sections[index])
       throw new NotFoundException('Section not found');
     contract.sections.splice(index, 1);
@@ -535,6 +548,10 @@ export class DealService {
     if (dealContractExecuted(deal, contract))
       throw new BadRequestException(
         'This contract has been executed, so its text can no longer be edited directly. Use the Amendments tab to vary it.',
+      );
+    if (termSheetSigned(deal, contract))
+      throw new BadRequestException(
+        'This term sheet has been signed, so its text can no longer be edited.',
       );
     const section = contract.sections[index];
     if (!section) throw new NotFoundException('Section not found');

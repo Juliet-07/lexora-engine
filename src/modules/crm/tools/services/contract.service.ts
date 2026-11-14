@@ -109,6 +109,12 @@ import {
   PortfolioRiskDocument,
 } from 'src/modules/crm/projects/schemas/portfolio-risk.schema';
 
+import {
+  SigningPackData,
+  buildSigningCertificate,
+  describeDevice,
+} from 'src/common/utils/pdf/deal-signing.util';
+
 const DEFAULT_SIGNING_EXPIRY_HOURS = 168; // 7 days
 
 // Stages in which a contract is in force and can be formally amended.
@@ -1913,6 +1919,112 @@ export class ContractService {
       businessName,
       (letterhead as any)?.imagePath ?? null,
     );
+  }
+
+  // The certificate of signing for a fully executed contract: both
+  // signatures with time, IP and device, the document fingerprint, and the
+  // trail of events. Only once the client has signed AND the tenant has
+  // countersigned.
+  async getSigningCertificate(
+    tenantId: string,
+    contractId: string,
+  ): Promise<Buffer> {
+    const contract = await this.getById(tenantId, contractId);
+    if (
+      contract.signatureStatus !== SignatureStatus.COUNTERSIGNED ||
+      !contract.signature ||
+      !contract.tenantSignature
+    ) {
+      throw new ConflictException(
+        'The signing certificate is available once both parties have signed.',
+      );
+    }
+    const businessName = await resolveBusinessName(this.userModel, tenantId);
+    const client = contract.signature;
+    const mine = contract.tenantSignature;
+    const countersigner: any = mine.signedByUserId
+      ? await this.userModel
+          .findById(mine.signedByUserId)
+          .select('email')
+          .lean()
+      : null;
+
+    const LABEL: Partial<Record<ToolContractInteractionType, string>> = {
+      [ToolContractInteractionType.SENT]: 'Sent for signature',
+      [ToolContractInteractionType.RESENT]: 'Sent again for signature',
+      [ToolContractInteractionType.VIEWED]: 'Opened by the counterparty',
+      [ToolContractInteractionType.SIGNED]: 'Signed by the counterparty',
+      [ToolContractInteractionType.COUNTERSIGNED]: `Countersigned by ${businessName}`,
+      [ToolContractInteractionType.SIGNED_COPY_SENT]:
+        'Fully executed copy sent to the counterparty',
+      [ToolContractInteractionType.DECLINED]: 'Declined by the counterparty',
+    };
+    const audit = (contract.interactions ?? [])
+      .filter((i) => LABEL[i.type])
+      .map((i) => ({
+        at: i.occurredAt,
+        text: LABEL[i.type]!,
+        ip:
+          i.type === ToolContractInteractionType.SIGNED
+            ? (client.ipAddress ?? null)
+            : i.type === ToolContractInteractionType.COUNTERSIGNED
+              ? (mine.ipAddress ?? null)
+              : null,
+      }))
+      .sort((a, b) => +new Date(a.at) - +new Date(b.at));
+
+    const sent = (contract.interactions ?? []).find(
+      (i) =>
+        i.type === ToolContractInteractionType.SENT ||
+        i.type === ToolContractInteractionType.RESENT,
+    );
+    const method = (img: string | null | undefined) =>
+      img && img.startsWith('data:image/png') ? 'drawn' : 'typed';
+
+    const data: SigningPackData = {
+      businessName,
+      dealName: contract.counterparty,
+      contextLabel: 'Counterparty',
+      documentName: contract.title,
+      reference: '',
+      // SHA-256 of the contract text as it stood when signed.
+      hash: crypto
+        .createHash('sha256')
+        .update(contract.renderedBody ?? '')
+        .digest('hex'),
+      initiatedAt: sent?.occurredAt ?? null,
+      completedAt: mine.signedAt,
+      signatories: [
+        {
+          name: client.signerName,
+          title: 'Counterparty',
+          side: contract.counterparty,
+          email: contract.counterpartyEmail,
+          signed: true,
+          method: method(client.signatureImageData),
+          data: client.signatureImageData ?? client.signerName,
+          signedAt: client.signedAt,
+          ip: client.ipAddress ?? null,
+          device: describeDevice(client.userAgent ?? null),
+          hash: null,
+        },
+        {
+          name: mine.signerName,
+          title: 'Countersigned for the company',
+          side: businessName,
+          email: countersigner?.email ?? '',
+          signed: true,
+          method: method(mine.signatureImageData),
+          data: mine.signatureImageData ?? mine.signerName,
+          signedAt: mine.signedAt,
+          ip: mine.ipAddress ?? null,
+          device: describeDevice(mine.userAgent ?? null),
+          hash: null,
+        },
+      ],
+      audit,
+    };
+    return buildSigningCertificate(data);
   }
 
   // Real preview of the contract as a document — works at any

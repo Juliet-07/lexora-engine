@@ -59,6 +59,18 @@ export function dealContractExecuted(deal: any, contract?: any): boolean {
   return SIGNED_STAGES.includes(deal?.stage);
 }
 
+/** A term sheet that both sides have signed — its text is then fixed. */
+export function termSheetSigned(deal: any, contract?: any): boolean {
+  if (!contract || contract.kind !== 'term_sheet') return false;
+  const block = deal?.termSheetSigning;
+  const sigs: any[] = block?.signatories ?? [];
+  return (
+    String(block?.document?.contractId ?? '') === String(contract._id) &&
+    sigs.length > 0 &&
+    sigs.every((x) => x.signed)
+  );
+}
+
 export const DEAL_VARIATION_BLOCKED =
   'Amendments and other variations apply once the contract has been executed — when every signatory has signed on the Signing tab, or the deal has moved past Signing. Until then, edit the contract itself.';
 

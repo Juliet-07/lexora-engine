@@ -523,6 +523,13 @@ export class Deal {
   @Prop({ type: [CPSchema], default: [] }) cps: CP[];
   @Prop({ type: SigningBlockSchema, default: () => ({}) })
   signing: SigningBlock;
+  // The term sheet is signed on its own, before the contract — the same
+  // simple flow (each side's authorised signatory, emailed links, executed
+  // copy, certificate) with its own signatories and audit trail, so signing
+  // one never blocks or overwrites the other. Checklist/signingDate/venue
+  // on this block are unused.
+  @Prop({ type: SigningBlockSchema, default: () => ({}) })
+  termSheetSigning: SigningBlock;
   @Prop({ type: [PostCompletionItemSchema], default: [] })
   postCompletion: PostCompletionItem[];
   @Prop({ type: ConflictCheckSchema, default: () => ({}) })

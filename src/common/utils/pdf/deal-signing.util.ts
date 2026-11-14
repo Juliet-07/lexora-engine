@@ -31,7 +31,10 @@ export interface SigningAuditLine {
 
 export interface SigningPackData {
   businessName: string;
+  /** The deal (or other record) the document belongs to; omitted if blank. */
   dealName: string;
+  /** Label for `dealName` on the certificate — "Deal" unless set. */
+  contextLabel?: string;
   documentName: string;
   reference: string;
   /** SHA-256 of the document text that was sent and signed. */
@@ -55,6 +58,33 @@ export const fmtCat = (d: Date | null | undefined): string =>
         hour12: false,
       })} CAT`
     : '—';
+
+// What a browser says about itself, boiled down to "Chrome 119 / macOS".
+export function describeDevice(ua: string | null): string | null {
+  if (!ua) return null;
+  const pick = (re: RegExp) => re.exec(ua)?.[1];
+  const browser = pick(/Edg\/(\d+)/)
+    ? `Edge ${pick(/Edg\/(\d+)/)}`
+    : pick(/Firefox\/(\d+)/)
+      ? `Firefox ${pick(/Firefox\/(\d+)/)}`
+      : pick(/Chrome\/(\d+)/)
+        ? `Chrome ${pick(/Chrome\/(\d+)/)}`
+        : pick(/Version\/(\d+).*Safari/)
+          ? `Safari ${pick(/Version\/(\d+).*Safari/)}`
+          : 'Browser';
+  const os = /Windows/.test(ua)
+    ? 'Windows'
+    : /Android/.test(ua)
+      ? 'Android'
+      : /iPhone|iPad/.test(ua)
+        ? 'iOS'
+        : /Mac OS X/.test(ua)
+          ? 'macOS'
+          : /Linux/.test(ua)
+            ? 'Linux'
+            : '';
+  return os ? `${browser} / ${os}` : browser;
+}
 
 /** A drawn signature arrives as a PNG data URL; anything else is ignored. */
 export function pngFromDataUrl(data: string | null): Buffer | null {
@@ -150,7 +180,9 @@ export function drawSignaturePage(doc: any, data: SigningPackData) {
 }
 
 /** The certificate of signing: who signed, when, from where, and the trail. */
-export function buildSigningCertificate(data: SigningPackData): Promise<Buffer> {
+export function buildSigningCertificate(
+  data: SigningPackData,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
     const chunks: Buffer[] = [];
@@ -187,16 +219,23 @@ export function buildSigningCertificate(data: SigningPackData): Promise<Buffer> 
         .text(value, x + 140, y, { width: w - 140 });
       doc.moveDown(0.4);
     };
-    row('Deal', data.dealName);
+    if (data.dealName) row(data.contextLabel ?? 'Deal', data.dealName);
     row('Document', data.documentName);
     if (data.reference) row('Reference', data.reference);
     row('Prepared by', data.businessName);
     row('Signing initiated', fmtCat(data.initiatedAt));
-    row('Completed', data.completedAt ? fmtCat(data.completedAt) : 'In progress');
+    row(
+      'Completed',
+      data.completedAt ? fmtCat(data.completedAt) : 'In progress',
+    );
     row('Document fingerprint', data.hash);
 
     doc.moveDown(0.8);
-    doc.font('Helvetica-Bold').fontSize(11).fillColor(NAVY).text('Signatories', x);
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(11)
+      .fillColor(NAVY)
+      .text('Signatories', x);
     doc.moveDown(0.4);
     for (const s of data.signatories) {
       if (doc.y > doc.page.height - 170) doc.addPage();
@@ -240,7 +279,11 @@ export function buildSigningCertificate(data: SigningPackData): Promise<Buffer> 
 
     doc.moveDown(0.4);
     if (doc.y > doc.page.height - 140) doc.addPage();
-    doc.font('Helvetica-Bold').fontSize(11).fillColor(NAVY).text('Audit trail', x);
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(11)
+      .fillColor(NAVY)
+      .text('Audit trail', x);
     doc.moveDown(0.4);
     for (const a of data.audit) {
       if (doc.y > doc.page.height - 70) doc.addPage();
@@ -251,7 +294,10 @@ export function buildSigningCertificate(data: SigningPackData): Promise<Buffer> 
         .text(`${fmtCat(a.at)}${a.ip ? `  ·  IP ${a.ip}` : ''}`, x, doc.y, {
           width: w,
         });
-      doc.fillColor('#000000').fontSize(9.5).text(a.text, x, doc.y, { width: w });
+      doc
+        .fillColor('#000000')
+        .fontSize(9.5)
+        .text(a.text, x, doc.y, { width: w });
       doc.moveDown(0.35);
     }
     doc.moveDown(1);
