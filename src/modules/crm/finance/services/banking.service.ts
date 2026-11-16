@@ -18,6 +18,7 @@ import {
   ReconciliationDocument,
   TxStatus,
   TxLinkType,
+  BillStatus,
 } from '../schemas';
 import {
   CreateBankAccountDto,
@@ -329,6 +330,34 @@ export class BankTransactionService {
     });
     if (!tx) throw new NotFoundException('Transaction not found');
 
+    // Direction has to agree with what is being settled. A bill is paid
+    // OUT of an account and a client invoice is paid INTO one — matching
+    // a transaction the wrong way round would settle the document while
+    // moving the balance the wrong way.
+    if (dto.linkType === TxLinkType.BILL && tx.amount >= 0) {
+      throw new BadRequestException(
+        'A bill is paid out of the account. This transaction is money in — record the payment as money out, or match it to a client invoice instead.',
+      );
+    }
+    if (dto.linkType === TxLinkType.INVOICE_PAYMENT && tx.amount <= 0) {
+      throw new BadRequestException(
+        'A client invoice is paid into the account. This transaction is money out — match it to a bill instead.',
+      );
+    }
+    // Whether the bill was already approved decides how the ledger entry
+    // is corrected below: approval is what booked the expense and the
+    // payable, so only then does this payment clear the payable.
+    let billWasApproved = false;
+    if (dto.linkType === TxLinkType.BILL && dto.linkId) {
+      const bill: any = await this.billService.getById(tenantId, dto.linkId);
+      if (bill.status === BillStatus.PAID) {
+        throw new BadRequestException('That bill is already paid.');
+      }
+      billWasApproved =
+        bill.status === BillStatus.APPROVED ||
+        bill.status === BillStatus.SCHEDULED;
+    }
+
     if (dto.linkType === TxLinkType.MANUAL) {
       // A manual match is a free-text note, not a real record —
       // there's nothing to hold an ObjectId reference to.
@@ -351,6 +380,31 @@ export class BankTransactionService {
     // that could fall out of sync with what the bank feed shows.
     if (dto.linkType === TxLinkType.BILL && dto.linkId) {
       await this.billService.markPaidViaBankMatch(tenantId, dto.linkId);
+      if (billWasApproved) {
+        // The payment came out of the bank (credit), so its other side
+        // clears what we owe the vendor — not a second expense.
+        const account = await this.accountModel
+          .findOne({
+            _id: tx.accountId,
+            tenantId: new Types.ObjectId(tenantId),
+          })
+          .lean();
+        const bankGlAccount =
+          account?.type === 'Trust'
+            ? GL_ACCOUNTS.BANK_TRUST
+            : account?.type === 'Fund'
+              ? GL_ACCOUNTS.BANK_FUND
+              : GL_ACCOUNTS.BANK_OPERATING;
+        await this.glPostingService.reclassifyContra(
+          tenantId,
+          tx._id,
+          bankGlAccount.code,
+          GL_ACCOUNTS.ACCOUNTS_PAYABLE,
+          tx.date,
+          dto.linkLabel || tx.description,
+          `${tx.description} — matched to ${dto.linkLabel || 'bill'}`,
+        );
+      }
     }
 
     // Same real settlement for the money-in side: a bank line matched

@@ -47,7 +47,6 @@ import {
 } from '../services';
 import {
   CreateContractDto,
-  ExecuteContractDto,
   AddNegotiationRoundDto,
   CreateVariationDto,
   UpdateVariationDto,
@@ -232,20 +231,6 @@ export class ContractController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.advanceStage(t || u, id);
-  }
-
-  @Post(':id/execute')
-  @ApiOperation({
-    summary:
-      'Capture signature — moves to Active with real executed/effective dates',
-  })
-  executeContract(
-    @Param('id') id: string,
-    @Body() dto: ExecuteContractDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.executeContract(t || u, id, dto);
   }
 
   @Post(':id/initiate-renewal')

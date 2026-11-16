@@ -1,12 +1,19 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as ExcelJS from 'exceljs';
 import {
+  Employee,
+  EmployeeDocument,
   Payslip,
   PayslipDocument,
   PayrollRun,
   PayrollRunDocument,
+  PayrollRunStatus,
 } from '../schemas';
 
 @Injectable()
@@ -16,7 +23,87 @@ export class PayrollExportService {
     private readonly payslipModel: Model<PayslipDocument>,
     @InjectModel(PayrollRun.name)
     private readonly runModel: Model<PayrollRunDocument>,
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
   ) {}
+
+  // Bank details live on the employee record, not the payslip, so both
+  // exports look them up by employee id.
+  private async bankDetailsFor(payslips: PayslipDocument[]) {
+    const ids = payslips.map((p) => p.employeeId);
+    const employees = await this.employeeModel
+      .find({ _id: { $in: ids } })
+      .select('bankName bankAccountNumber')
+      .lean();
+    return new Map(
+      employees.map((e: any) => [
+        String(e._id),
+        { bank: e.bankName ?? '', account: e.bankAccountNumber ?? '' },
+      ]),
+    );
+  }
+
+  // The file Finance uploads to the bank to pay a processed run: one line
+  // per employee with their net pay. Anyone without bank details on file
+  // is still listed, marked MISSING, so nobody silently drops out of the
+  // payment run.
+  async exportRunBankFile(tenantId: string, runId: string) {
+    const run = await this.runModel.findOne({
+      _id: runId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!run) throw new NotFoundException('Payroll run not found');
+    if (run.status === PayrollRunStatus.DRAFT) {
+      throw new BadRequestException(
+        'Process the payroll run before generating the bank file.',
+      );
+    }
+    const payslips = await this.payslipModel
+      .find({ payrollRunId: run._id })
+      .sort({ employeeName: 1 });
+    const bank = await this.bankDetailsFor(payslips);
+
+    // Spreadsheet apps run text that starts with = + - @ as a formula.
+    const cell = (v: unknown) => {
+      let t = String(v ?? '');
+      if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`;
+      return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const header = [
+      'Employee Number',
+      'Employee Name',
+      'Bank Name',
+      'Account Number',
+      'Currency',
+      'Net Pay',
+      'Payment Reference',
+    ];
+    let missing = 0;
+    const lines = payslips.map((p) => {
+      const b = bank.get(String(p.employeeId));
+      const hasBank = !!(b?.bank && b?.account);
+      if (!hasBank) missing += 1;
+      return [
+        p.employeeNumber ?? '',
+        p.employeeName,
+        b?.bank || 'MISSING',
+        b?.account || 'MISSING',
+        p.payCurrency,
+        p.netSalary.toFixed(2),
+        `Salary ${run.periodLabel}`,
+      ]
+        .map(cell)
+        .join(',');
+    });
+    const csv = '\uFEFF' + [header.join(','), ...lines].join('\r\n') + '\r\n';
+    const safePeriod = String(run.periodLabel).replace(/[^A-Za-z0-9]+/g, '-');
+    return {
+      csv,
+      filename: `payroll-bank-file-${safePeriod}.csv`,
+      count: payslips.length,
+      missing,
+    };
+  }
 
   async exportRunToExcel(tenantId: string, runId: string): Promise<Buffer> {
     const run = await this.runModel.findOne({
@@ -31,6 +118,7 @@ export class PayrollExportService {
 
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet(run.periodLabel);
+    const bank = await this.bankDetailsFor(payslips);
 
     // Collect every distinct deduction key across all payslips so
     // columns stay consistent even if different employees have
@@ -79,6 +167,8 @@ export class PayrollExportService {
         totalDed: p.totalEmployeeDeductions,
         net: p.netSalary,
         currency: p.payCurrency,
+        bankName: bank.get(String(p.employeeId))?.bank ?? '',
+        bankAccount: bank.get(String(p.employeeId))?.account ?? '',
       };
       for (const label of deductionCols) {
         const d = p.deductions.find((x) => x.label === label);

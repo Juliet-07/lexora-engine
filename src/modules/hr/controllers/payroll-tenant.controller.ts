@@ -522,6 +522,29 @@ export class PayrollRunController {
     res.send(buffer);
   }
 
+  @Get(':runId/bank-file')
+  @ApiOperation({
+    summary:
+      'Download the bulk bank payment file (CSV) for a processed or paid run',
+  })
+  async bankFile(
+    @Param('runId') runId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @Res() res: Response,
+  ) {
+    const file = await this.exportService.exportRunBankFile(t || u, runId);
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${file.filename}"`,
+      'X-Payment-Lines': String(file.count),
+      'X-Missing-Bank-Details': String(file.missing),
+      'Access-Control-Expose-Headers':
+        'Content-Disposition, X-Payment-Lines, X-Missing-Bank-Details',
+    });
+    res.send(file.csv);
+  }
+
   @Get('payroll/my-summary')
   @ApiOperation({ summary: 'YTD payroll summary for the logged-in employee' })
   getMyPayrollSummary(@CurrentUser('sub') userId: string) {

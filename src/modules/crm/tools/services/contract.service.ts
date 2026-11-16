@@ -60,7 +60,6 @@ import {
 } from '../schemas';
 import {
   CreateContractDto,
-  ExecuteContractDto,
   AddNegotiationRoundDto,
   UpdateClauseChangeStatusDto,
   CreateVariationDto,
@@ -522,29 +521,6 @@ export class ContractService {
       );
     }
     c.stage = CONTRACT_STAGES[i + 1];
-    await c.save();
-    return c.toObject();
-  }
-
-  // Execution is a real, distinct event — capturing signature,
-  // moving straight to Active and setting real executed/effective
-  // dates, not just another generic stage advance. Only valid from
-  // Execution, since a contract can't be signed before it's reached
-  // that stage.
-  async executeContract(tenantId: string, id: string, dto: ExecuteContractDto) {
-    const c = await this.model.findOne({
-      _id: id,
-      tenantId: new Types.ObjectId(tenantId),
-    });
-    if (!c) throw new NotFoundException('Contract not found');
-    if (c.stage !== ContractStage.EXECUTION) {
-      throw new BadRequestException(
-        'Only a contract in Execution can be marked executed',
-      );
-    }
-    c.stage = ContractStage.ACTIVE;
-    c.executedOn = new Date(dto.executedOn);
-    c.effectiveOn = new Date(dto.effectiveOn);
     await c.save();
     return c.toObject();
   }

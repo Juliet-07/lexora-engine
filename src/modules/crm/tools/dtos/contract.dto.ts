@@ -64,11 +64,6 @@ export class CreateContractDto {
   @ApiPropertyOptional() @IsOptional() @IsString() content?: string;
 }
 
-export class ExecuteContractDto {
-  @ApiProperty() @IsDateString() executedOn: string;
-  @ApiProperty() @IsDateString() effectiveOn: string;
-}
-
 export class AddClauseChangeDto {
   @ApiProperty() @IsString() clauseRef: string;
   @ApiProperty() @IsString() change: string;
