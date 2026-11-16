@@ -8,8 +8,15 @@ import {
   Query,
   UseInterceptors,
   UploadedFile,
+  UploadedFiles,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
+import {
+  FileInterceptor,
+  FileFieldsInterceptor,
+} from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
@@ -30,7 +37,13 @@ import {
   EbmService,
   TaxObligationService,
 } from '../services';
-import { CreateTaxObligationDto, UpdateEbmReceiptDto } from '../dtos';
+import { RecordFilingFiles } from '../services/tax.service';
+import {
+  CreateTaxObligationDto,
+  RecordTaxFilingDto,
+  RejectTaxFilingDto,
+  UpdateEbmReceiptDto,
+} from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import {
   PlatformModuleKey,
@@ -68,13 +81,66 @@ const ebmReceiptFileFilter = (
   }
 };
 
+// Filed returns and proofs of payment — stored per tenant, UUID-named,
+// served back through the same /uploads static route as other uploads.
+const taxFilingStorage = diskStorage({
+  destination: (req: any, _file, cb) => {
+    const tenant = String(req.user?.tenantId || req.user?.sub || 'unknown');
+    const uploadPath = join(process.cwd(), 'uploads', 'tax-filings', tenant);
+    if (!existsSync(uploadPath)) mkdirSync(uploadPath, { recursive: true });
+    cb(null, uploadPath);
+  },
+  filename: (_req, file, cb) =>
+    cb(null, `${uuidv4()}${extname(file.originalname)}`),
+});
+const RETURN_TYPES = [
+  'application/pdf',
+  'text/csv',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+];
+const POP_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
+const taxFilingFileFilter = (_req: any, file: Express.Multer.File, cb: any) => {
+  const ok =
+    file.fieldname === 'returnFile'
+      ? RETURN_TYPES.includes(file.mimetype)
+      : POP_TYPES.includes(file.mimetype);
+  if (ok) return cb(null, true);
+  cb(
+    new Error(
+      file.fieldname === 'returnFile'
+        ? 'The tax return has to be a PDF, XLSX or CSV file.'
+        : 'The proof of payment has to be a PDF, PNG or JPG file.',
+    ),
+    false,
+  );
+};
+
 @ApiTags('CRM — Finance — Tax')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+// An employee with the Finance role can prepare tax obligations and
+// record filings; the account owner has the final say (see
+// TaxObligationService#approveFiling).
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/tax-obligations')
 export class TaxObligationController {
-  constructor(private readonly service: TaxObligationService) {}
+  constructor(
+    private readonly service: TaxObligationService,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+  ) {}
+
+  private async actorName(userId: string): Promise<string> {
+    const u = await this.userModel
+      .findById(userId)
+      .select('firstName lastName tenantProfile.businessName')
+      .lean();
+    return (
+      [u?.firstName, u?.lastName].filter(Boolean).join(' ') ||
+      u?.tenantProfile?.businessName ||
+      'A team member'
+    );
+  }
 
   @Post()
   @ApiOperation({ summary: 'Add an obligation to the tax calendar' })
@@ -92,14 +158,97 @@ export class TaxObligationController {
     return this.service.getAll(t || u);
   }
 
-  @Post(':id/file')
-  @ApiOperation({ summary: 'Mark filed' })
-  file(
-    @Param('id') id: string,
+  @Get('responsible-options')
+  @ApiOperation({
+    summary: 'The people an obligation can be assigned to (owner + employees)',
+  })
+  responsibleOptions(
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.file(t || u, id);
+    return this.service.getResponsibleOptions(t || u);
+  }
+
+  @Post(':id/record-filing')
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'returnFile', maxCount: 1 },
+        { name: 'popFile', maxCount: 1 },
+      ],
+      {
+        storage: taxFilingStorage,
+        fileFilter: taxFilingFileFilter,
+        limits: { fileSize: 25 * 1024 * 1024 },
+      },
+    ),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['filedOn'],
+      properties: {
+        filedOn: { type: 'string', format: 'date' },
+        amountPaid: { type: 'number' },
+        notes: { type: 'string' },
+        returnFile: { type: 'string', format: 'binary' },
+        popFile: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @ApiOperation({
+    summary:
+      'Record the filing — return + proof of payment. The owner files it outright; anyone else sends it to the owner for approval.',
+  })
+  async recordFiling(
+    @Param('id') id: string,
+    @Body() dto: RecordTaxFilingDto,
+    @UploadedFiles() files: RecordFilingFiles,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    return this.service.recordFiling(t || u, id, dto, files ?? {}, {
+      id: u,
+      name: await this.actorName(u),
+      userType,
+    });
+  }
+
+  @Post(':id/approve-filing')
+  @ApiOperation({
+    summary: 'Final approval of a recorded filing — the account owner only',
+  })
+  async approveFiling(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    return this.service.approveFiling(t || u, id, {
+      id: u,
+      name: await this.actorName(u),
+      userType,
+    });
+  }
+
+  @Post(':id/reject-filing')
+  @ApiOperation({
+    summary: 'Send a recorded filing back with a reason — the owner only',
+  })
+  async rejectFiling(
+    @Param('id') id: string,
+    @Body() dto: RejectTaxFilingDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    return this.service.rejectFiling(t || u, id, dto.reason, {
+      id: u,
+      name: await this.actorName(u),
+      userType,
+    });
   }
 }
 
@@ -111,6 +260,9 @@ export class TaxObligationController {
 export class VatController {
   constructor(private readonly service: VatService) {}
 
+  // Read-only for finance staff too — it is the same Tax page.
+  @UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+  @RequiresModule(PlatformModuleKey.FINANCE)
   @Get()
   @ApiQuery({
     name: 'period',
@@ -137,6 +289,9 @@ export class VatController {
 export class PayrollTaxController {
   constructor(private readonly service: PayrollTaxService) {}
 
+  // Read-only for finance staff too — it is the same Tax page.
+  @UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+  @RequiresModule(PlatformModuleKey.FINANCE)
   @Get()
   @ApiOperation({
     summary: 'Real PAYE/RSSB remittances, sourced from actual HR payroll runs',
@@ -157,6 +312,9 @@ export class PayrollTaxController {
 export class CitController {
   constructor(private readonly service: CitService) {}
 
+  // Read-only for finance staff too — it is the same Tax page.
+  @UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+  @RequiresModule(PlatformModuleKey.FINANCE)
   @Get()
   @ApiQuery({ name: 'displayCurrency', required: false })
   @ApiOperation({
@@ -179,6 +337,9 @@ export class CitController {
 export class WhtController {
   constructor(private readonly service: WhtService) {}
 
+  // Read-only for finance staff too — it is the same Tax page.
+  @UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+  @RequiresModule(PlatformModuleKey.FINANCE)
   @Get()
   @ApiOperation({
     summary:
@@ -197,6 +358,9 @@ export class WhtController {
 export class EbmController {
   constructor(private readonly service: EbmService) {}
 
+  // Read-only for finance staff too — it is the same Tax page.
+  @UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+  @RequiresModule(PlatformModuleKey.FINANCE)
   @Get()
   @ApiOperation({ summary: 'EBM sync status for real invoices' })
   getStatus(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {

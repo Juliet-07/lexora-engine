@@ -4,6 +4,7 @@ import {
   IsOptional,
   IsEnum,
   IsNumber,
+  IsInt,
   IsBoolean,
   IsDateString,
   IsMongoId,
@@ -19,7 +20,12 @@ import { PaymentMethod } from '../schemas';
 import { QuoteKind } from '../schemas';
 import { RecurringFrequency } from '../schemas';
 import { BankAccountType, TxLinkType } from '../schemas';
-import { TaxObligationType } from '../schemas';
+import {
+  TaxObligationType,
+  TaxPeriodType,
+  TaxPriority,
+  TaxRecurrence,
+} from '../schemas';
 import { AccountType, AssetKind, JournalType } from '../schemas';
 import { FundStatus } from '../schemas';
 import { WaterfallType, CommitmentType, DistributionSource } from '../schemas';
@@ -347,14 +353,92 @@ export class CreateTaxObligationDto {
   @ApiProperty({ enum: TaxObligationType })
   @IsEnum(TaxObligationType)
   type: TaxObligationType;
-  @ApiProperty() @IsString() period: string;
-  @ApiProperty() @IsDateString() dueOn: string;
-  @ApiProperty() @IsNumber() amount: number;
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() recurring?: boolean;
-  @ApiPropertyOptional({ enum: RecurringFrequency })
+  @ApiPropertyOptional({
+    description: 'Defaults to "<type> — <period>"',
+  })
   @IsOptional()
-  @IsEnum(RecurringFrequency)
-  frequency?: RecurringFrequency;
+  @IsString()
+  name?: string;
+  @ApiPropertyOptional({ description: 'Tax authority / jurisdiction code' })
+  @IsOptional()
+  @IsString()
+  jurisdiction?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+
+  // The period being filed for. Monthly/quarterly/annual obligations
+  // give the year (+ month or quarter) and the label is built from
+  // them, so the Filing Archive and the recurring chain stay exact.
+  // Once-off obligations give their own label in `period`.
+  @ApiProperty({ enum: TaxPeriodType })
+  @IsEnum(TaxPeriodType)
+  periodType: TaxPeriodType;
+  @ApiPropertyOptional() @IsOptional() @IsInt() @Min(2000) periodYear?: number;
+  @ApiPropertyOptional({ description: '1–12, monthly periods' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  periodMonth?: number;
+  @ApiPropertyOptional({ description: '1–4, quarterly periods' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(4)
+  periodQuarter?: number;
+  @ApiPropertyOptional({ description: 'Label for once-off obligations' })
+  @IsOptional()
+  @IsString()
+  period?: string;
+
+  @ApiProperty() @IsDateString() dueOn: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) amount?: number;
+  @ApiPropertyOptional({ description: 'A team member (User id)' })
+  @IsOptional()
+  @IsMongoId()
+  responsibleId?: string;
+  @ApiPropertyOptional({ enum: TaxPriority })
+  @IsOptional()
+  @IsEnum(TaxPriority)
+  priority?: TaxPriority;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+  @ApiPropertyOptional({
+    description:
+      'Require the return and the proof of payment before a filing can be recorded (default true)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  requireDocuments?: boolean;
+
+  // Recurring: only a frequency and the day of the month it falls due.
+  // Draft entries and filing reminders are handled by the backend.
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() recurring?: boolean;
+  @ApiPropertyOptional({ enum: TaxRecurrence })
+  @IsOptional()
+  @IsEnum(TaxRecurrence)
+  frequency?: TaxRecurrence;
+  @ApiPropertyOptional({ description: '1–31 (31 = last day of the month)' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(31)
+  dueDay?: number;
+}
+
+// Recording a filing: multipart, with the return and the proof of
+// payment as files (`returnFile`, `popFile`).
+export class RecordTaxFilingDto {
+  @ApiProperty() @IsDateString() filedOn: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  amountPaid?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+}
+
+export class RejectTaxFilingDto {
+  @ApiProperty() @IsString() reason: string;
 }
 
 export class UpdateEbmReceiptDto {

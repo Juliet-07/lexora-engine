@@ -3,17 +3,24 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import {
   CalendarEvent,
   CalendarEventDocument,
   CalendarLayer,
 } from 'src/modules/crm/tools/schemas/calendar.schema';
-import { TaxObligation, TaxObligationDocument } from '../schemas';
+import {
+  TaxObligation,
+  TaxObligationDocument,
+  TaxPeriodType,
+  TaxRecurrence,
+} from '../schemas';
 import {
   FREQUENCY_CALENDAR_RULE,
-  addInterval,
+  FREQUENCY_MONTHS,
+  TaxObligationService,
+  addMonthsOnDay,
+  nextDueDate,
   periodLabelFor,
 } from './tax.service';
 
@@ -34,7 +41,7 @@ export class TaxObligationReminderService {
     private readonly userModel: Model<UserDocument>,
     @InjectModel(CalendarEvent.name)
     private readonly calendarEventModel: Model<CalendarEventDocument>,
-    private readonly emailService: EmailService,
+    private readonly obligations: TaxObligationService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -80,16 +87,59 @@ export class TaxObligationReminderService {
   ): Promise<void> {
     const frequency = head.frequency!;
     const nextDueOn = head.nextDueOn!;
-    const followingDueOn = addInterval(nextDueOn, frequency);
+    const followingDueOn = nextDueDate(nextDueOn, frequency, head.dueDay);
+
+    // The period rolls on by the same step as the due date, so the
+    // October return that fell due in November is followed by the
+    // November return due in December — not a label taken off the
+    // due date.
+    const months = FREQUENCY_MONTHS[frequency];
+    let periodType = head.periodType;
+    let periodStart: Date | null = head.periodStart
+      ? addMonthsOnDay(head.periodStart, months, 1)
+      : null;
+    if (!periodStart && periodType === TaxPeriodType.ONCE_OFF) {
+      // Never happens for new rows (a once-off cannot recur); older
+      // chain heads carried only a label, so read the period off the
+      // due date at the chain's own granularity.
+      periodType =
+        frequency === TaxRecurrence.MONTHLY
+          ? TaxPeriodType.MONTHLY
+          : frequency === TaxRecurrence.QUARTERLY
+            ? TaxPeriodType.QUARTERLY
+            : TaxPeriodType.ANNUAL;
+      periodStart = new Date(
+        Date.UTC(nextDueOn.getUTCFullYear(), nextDueOn.getUTCMonth(), 1),
+      );
+    } else if (!periodStart) {
+      periodStart = new Date(
+        Date.UTC(nextDueOn.getUTCFullYear(), nextDueOn.getUTCMonth(), 1),
+      );
+    }
+    const period = periodLabelFor(periodType, periodStart);
+    const name =
+      head.name && head.name.includes(head.period)
+        ? head.name.replace(head.period, period)
+        : head.name;
 
     const next = await this.model.create({
       tenantId: head.tenantId,
       type: head.type,
-      period: periodLabelFor(nextDueOn, frequency),
+      name,
+      jurisdiction: head.jurisdiction,
+      currency: head.currency,
+      periodType,
+      period,
+      periodStart,
       dueOn: nextDueOn,
       amount: head.amount,
+      responsibleId: head.responsibleId,
+      responsibleName: head.responsibleName,
+      priority: head.priority,
+      requireDocuments: head.requireDocuments,
       recurring: true,
       frequency,
+      dueDay: head.dueDay,
       nextDueOn: followingDueOn,
     });
 
@@ -100,28 +150,9 @@ export class TaxObligationReminderService {
     await head.save();
 
     const tenant = await this.userModel.findById(head.tenantId).lean();
-    const profile = tenant?.tenantProfile;
-    const firmName = profile?.businessName || 'Your firm';
-    const recipientEmail = profile?.contactPerson?.email || tenant?.email;
-    const recipientName = profile?.contactPerson?.firstName || firmName;
+    const firmName = tenant?.tenantProfile?.businessName || 'Your firm';
 
-    if (recipientEmail) {
-      await this.emailService
-        .sendTaxObligationReminder({
-          to: recipientEmail,
-          recipientName,
-          firmName,
-          type: next.type,
-          period: next.period,
-          dueOn: next.dueOn,
-          amount: next.amount,
-        })
-        .catch((err) =>
-          this.logger.error(
-            `Failed to send tax obligation reminder email for ${next._id}: ${err?.message}`,
-          ),
-        );
-    }
+    await this.obligations.remind(next, tenant);
 
     await this.calendarEventModel
       .create({
@@ -147,7 +178,7 @@ export class TaxObligationReminderService {
       tenantId: String(head.tenantId),
       type: next.type,
       period: next.period,
-      amountLabel: `${next.amount.toLocaleString()}`,
+      amountLabel: `${next.currency} ${next.amount.toLocaleString()}`,
       dueOn: next.dueOn,
     });
   }

@@ -517,6 +517,49 @@ export class TenantNotificationService {
     );
   }
 
+  // An employee recorded a tax filing — the owner has the final say, so
+  // the owner is told it is waiting (in-app and email).
+  @OnEvent('finance.tax_filing_submitted')
+  async onTaxFilingSubmitted(e: {
+    tenantId: string;
+    obligationId: string;
+    type: string;
+    period: string;
+    submittedBy: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.tenantId,
+      TenantNotificationType.GENERAL,
+      `Tax filing awaiting your approval — ${e.type} (${e.period})`,
+      `${e.submittedBy} recorded this filing with its return and proof of payment. Review and approve it to mark it filed.`,
+      '/finance/tax',
+    );
+  }
+
+  // The owner approved or sent back a filing — whoever recorded it is told.
+  @OnEvent('finance.tax_filing_decided')
+  async onTaxFilingDecided(e: {
+    tenantId: string;
+    recipientId: string;
+    decision: string;
+    type: string;
+    period: string;
+    reason: string;
+  }) {
+    if (!e.recipientId) return;
+    await this.create(
+      e.tenantId,
+      e.recipientId,
+      TenantNotificationType.GENERAL,
+      `Tax filing ${e.decision} — ${e.type} (${e.period})`,
+      e.reason
+        ? `Reason: ${e.reason}`
+        : 'The account owner approved this filing — it is now marked filed.',
+      '/finance/tax',
+    );
+  }
+
   @OnEvent('tenant.vendor_approval.decided')
   async onVendorApprovalDecided(e: {
     tenantId: string;
