@@ -25,6 +25,7 @@ import {
   InvoiceStage,
 } from '../schemas';
 import { InvoiceService } from './invoice.service';
+import { FinanceSettingsService } from './finance-settings.service';
 import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
 import {
   CreateCreditNoteDto,
@@ -234,6 +235,7 @@ export class QuoteService {
     private readonly invoiceService: InvoiceService,
     private readonly emailService: EmailService,
     private readonly mandateService: MandateService,
+    private readonly settingsService: FinanceSettingsService,
   ) {}
 
   private async nextRef(
@@ -381,14 +383,7 @@ export class QuoteService {
   // established — the firm's own logo/name, never the platform's.
   async generatePdf(tenantId: string, id: string): Promise<Buffer> {
     const q = await this.getRawDoc(tenantId, id);
-    const tenant = await this.userModel.findById(tenantId).lean();
-    const profile = tenant?.tenantProfile;
-    const firmName = profile?.businessName || 'Your firm';
-    const addressLines = [
-      profile?.address?.city,
-      profile?.address?.state,
-      profile?.address?.country,
-    ].filter(Boolean);
+    const branding = await this.settingsService.getBranding(tenantId);
 
     return buildQuotePdf({
       ref: q.ref,
@@ -404,9 +399,11 @@ export class QuoteService {
       currency: q.currency,
       issued: q.issued,
       expires: q.expires,
-      firmName,
-      firmAddressLines: addressLines,
-      logoDataUrl: profile?.logoUrl || null,
+      firmName: branding.companyName,
+      firmAddressLines: branding.addressLines,
+      logoDataUrl: branding.logoDataUrl,
+      branding,
+      isDraft: q.status === 'Draft',
     });
   }
 

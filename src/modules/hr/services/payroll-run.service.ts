@@ -385,7 +385,7 @@ export class PayrollRunService {
     tenantId: string,
     slip: PayslipDocument,
   ): Promise<string> {
-    const template = await this.templateService.getOrCreateTemplate(tenantId);
+    const { template } = await this.templateService.getEffective(tenantId);
     return buildPayslipHtml(slip, template);
   }
 
@@ -412,9 +412,14 @@ export class PayrollRunService {
       );
     }
 
-    const template = await this.templateService.getOrCreateTemplate(tenantId);
+    const { template, branding } =
+      await this.templateService.getEffective(tenantId);
     const payslipHtml = buildPayslipHtml(slip, template);
-    const pdfBuffer = await this.pdfService.buildPayslipPdf(slip, template);
+    const pdfBuffer = await this.pdfService.buildPayslipPdf(
+      slip,
+      template,
+      branding,
+    );
 
     await this.emailService.sendPayslip(
       {
@@ -438,8 +443,9 @@ export class PayrollRunService {
 
   async getPayslipPdf(tenantId: string, payslipId: string): Promise<Buffer> {
     const slip = await this.getPayslip(tenantId, payslipId);
-    const template = await this.templateService.getOrCreateTemplate(tenantId);
-    return this.pdfService.buildPayslipPdf(slip, template);
+    const { template, branding } =
+      await this.templateService.getEffective(tenantId);
+    return this.pdfService.buildPayslipPdf(slip, template, branding);
   }
 
   async getPayslipPdfForEmployee(
@@ -447,10 +453,10 @@ export class PayrollRunService {
     employeeId: string,
   ): Promise<Buffer> {
     const slip = await this.getPayslipForEmployee(payslipId, employeeId);
-    const template = await this.templateService.getOrCreateTemplate(
+    const { template, branding } = await this.templateService.getEffective(
       slip.tenantId.toString(),
     );
-    return this.pdfService.buildPayslipPdf(slip, template);
+    return this.pdfService.buildPayslipPdf(slip, template, branding);
   }
 
   async emailAllPayslipsInRun(

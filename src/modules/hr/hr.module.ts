@@ -184,6 +184,12 @@ import {
   NoticeSettingsSchema,
 } from './schemas';
 
+import {
+  FinanceSettings,
+  FinanceSettingsSchema,
+} from '../crm/finance/schemas/finance-settings.schema';
+import { DocumentBrandingService } from '../crm/finance/services/document-branding.service';
+
 @Module({
   imports: [
     MongooseModule.forFeature([
@@ -212,6 +218,7 @@ import {
       { name: PayrollRun.name, schema: PayrollRunSchema },
       { name: Payslip.name, schema: PayslipSchema },
       { name: PayslipTemplate.name, schema: PayslipTemplateSchema },
+      { name: FinanceSettings.name, schema: FinanceSettingsSchema },
       { name: ExchangeRateSnapshot.name, schema: ExchangeRateSnapshotSchema },
       { name: KpiTemplate.name, schema: KpiTemplateSchema },
       { name: CompetencyFramework.name, schema: CompetencyFrameworkSchema },
@@ -311,6 +318,7 @@ import {
     ExchangeRateService,
     PayrollRunService,
     PayslipTemplateService,
+    DocumentBrandingService,
     PayrollExportService,
     PerformanceScoringService,
     KpiTemplateService,

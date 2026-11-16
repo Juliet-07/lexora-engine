@@ -552,6 +552,7 @@ export class CreateRemittanceAccountDto {
   @ApiProperty() @IsString() currency: string;
   @ApiPropertyOptional() @IsOptional() @IsString() branchCode?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() swiftCode?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
 }
 
 export class SetClientInvoiceStatusDto {

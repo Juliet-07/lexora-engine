@@ -40,6 +40,7 @@ import {
   UpsertExpensePolicyDto,
 } from '../dtos';
 import { buildPurchaseOrderPdf } from 'src/common/utils/pdf/purchase-order.util';
+import { FinanceSettingsService } from './finance-settings.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { ExchangeRateService } from 'src/modules/hr/services/exchange-rate.service';
@@ -130,6 +131,7 @@ export class PurchaseOrderService {
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly emailService: EmailService,
+    private readonly settingsService: FinanceSettingsService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -213,14 +215,9 @@ export class PurchaseOrderService {
   // they've set one, business name either way. Never the platform's
   // own name; this document is issued by the firm, not by Lexora.
   private async buildPdfForPo(tenantId: string, po: any): Promise<Buffer> {
+    const branding = await this.settingsService.getBranding(tenantId);
     const tenant = await this.userModel.findById(tenantId).lean();
     const profile = tenant?.tenantProfile;
-    const firmName = profile?.businessName || 'Your firm';
-    const addressLines = [
-      profile?.address?.city,
-      profile?.address?.state,
-      profile?.address?.country,
-    ].filter(Boolean);
 
     return buildPurchaseOrderPdf({
       ref: po.ref,
@@ -241,11 +238,13 @@ export class PurchaseOrderService {
       deliveryAttention: po.deliveryAttention ?? '',
       deliveryPhone: po.deliveryPhone ?? '',
       deliveryInstructions: po.deliveryInstructions ?? '',
-      firmName,
-      firmAddressLines: addressLines,
+      firmName: branding.companyName,
+      firmAddressLines: branding.addressLines,
       firmRegistrationNumber: profile?.registrationNumber || '',
-      firmTaxId: profile?.taxId || '',
-      logoDataUrl: profile?.logoUrl || null,
+      firmTaxId: branding.tin,
+      logoDataUrl: branding.logoDataUrl,
+      branding,
+      isDraft: po.status === 'Draft',
     });
   }
 

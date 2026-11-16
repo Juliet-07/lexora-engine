@@ -11,6 +11,9 @@ import {
   UploadedFile,
 } from '@nestjs/common';
 import { Response } from 'express';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
@@ -415,7 +418,24 @@ export class ClientInvoiceController {
 @RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
 @Controller('finance/remittance-accounts')
 export class RemittanceAccountController {
-  constructor(private readonly service: RemittanceAccountService) {}
+  constructor(
+    private readonly service: RemittanceAccountService,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+  ) {}
+
+  private async actor(userId: string) {
+    const u: any = await this.userModel
+      .findById(userId)
+      .select('firstName lastName tenantProfile.businessName')
+      .lean();
+    return {
+      id: userId,
+      name:
+        [u?.firstName, u?.lastName].filter(Boolean).join(' ') ||
+        u?.tenantProfile?.businessName ||
+        'Account owner',
+    };
+  }
 
   @Get()
   @ApiOperation({ summary: 'All remittance accounts' })
@@ -425,23 +445,23 @@ export class RemittanceAccountController {
 
   @Post()
   @ApiOperation({ summary: 'Add a remittance account' })
-  create(
+  async create(
     @Body() dto: CreateRemittanceAccountDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.create(t || u, dto);
+    return this.service.create(t || u, dto, await this.actor(u));
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update a remittance account' })
-  update(
+  async update(
     @Param('id') id: string,
     @Body() dto: Partial<CreateRemittanceAccountDto>,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.update(t || u, id, dto);
+    return this.service.update(t || u, id, dto, await this.actor(u));
   }
 
   @Post(':id/active')
@@ -449,12 +469,24 @@ export class RemittanceAccountController {
     summary:
       'Activate or deactivate — deactivated accounts stop showing on client invoices and PDFs',
   })
-  setActive(
+  async setActive(
     @Param('id') id: string,
     @Body() body: { active: boolean },
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
   ) {
-    return this.service.setActive(t || u, id, body.active);
+    return this.service.setActive(t || u, id, body.active, await this.actor(u));
+  }
+
+  @Post(':id/primary')
+  @ApiOperation({
+    summary: 'Make this the primary account — shown first on invoices',
+  })
+  async setPrimary(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.setPrimary(t || u, id, await this.actor(u));
   }
 }

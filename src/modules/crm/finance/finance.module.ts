@@ -2,6 +2,11 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ProjectsModule } from 'src/modules/crm/projects/project.module';
 import { HrModule } from 'src/modules/hr/hr.module';
+import {
+  PayslipTemplate,
+  PayslipTemplateSchema,
+} from 'src/modules/hr/schemas/payroll.schema';
+import { FinanceSettingsController } from './controllers/finance-settings.controller';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
 // Direct model registration only (no GovernanceModule import, no
@@ -58,6 +63,10 @@ import {
   ReconciliationSchema,
   TaxObligation,
   TaxObligationSchema,
+  FinanceSettings,
+  FinanceSettingsSchema,
+  FinanceSettingsLog,
+  FinanceSettingsLogSchema,
   WhtCertificate,
   WhtCertificateSchema,
   LedgerAccount,
@@ -137,6 +146,9 @@ import {
   EbmService,
   TaxObligationService,
   TaxObligationReminderService,
+  FinanceSettingsService,
+  FinanceSettingsPreviewService,
+  DocumentBrandingService,
   GlPostingService,
   LedgerAccountService,
   JournalService,
@@ -235,6 +247,9 @@ import {
     HrModule,
     MongooseModule.forFeature([
       { name: Invoice.name, schema: InvoiceSchema },
+      { name: FinanceSettings.name, schema: FinanceSettingsSchema },
+      { name: FinanceSettingsLog.name, schema: FinanceSettingsLogSchema },
+      { name: PayslipTemplate.name, schema: PayslipTemplateSchema },
       { name: RemittanceAccount.name, schema: RemittanceAccountSchema },
       { name: Payment.name, schema: PaymentSchema },
       { name: CalendarEvent.name, schema: CalendarEventSchema },
@@ -316,6 +331,9 @@ import {
     EbmService,
     TaxObligationService,
     TaxObligationReminderService,
+    FinanceSettingsService,
+    FinanceSettingsPreviewService,
+    DocumentBrandingService,
     GlPostingService,
     LedgerAccountService,
     JournalService,
@@ -377,6 +395,7 @@ import {
     CitController,
     EbmController,
     TaxObligationController,
+    FinanceSettingsController,
     AccountingOverviewController,
     LedgerAccountController,
     JournalController,
@@ -407,6 +426,8 @@ import {
     ManagementReportingController,
   ],
   exports: [
+    FinanceSettingsService,
+    DocumentBrandingService,
     InvoiceService,
     WriteOffService,
     ExpenseClaimService,

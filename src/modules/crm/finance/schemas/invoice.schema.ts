@@ -179,6 +179,10 @@ export class RemittanceAccount {
   @Prop({ default: '' }) branchCode: string;
   @Prop({ default: '' }) swiftCode: string;
   @Prop({ default: true }) active: boolean;
+  // The account clients are pointed to first (Finance Settings → Bank
+  // Accounts). Exactly one account per tenant carries it.
+  @Prop({ default: false }) isPrimary: boolean;
+  @Prop({ default: '' }) description: string;
 }
 export const RemittanceAccountSchema =
   SchemaFactory.createForClass(RemittanceAccount);

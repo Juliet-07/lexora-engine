@@ -43,6 +43,7 @@ import {
 } from 'src/modules/crm/projects/services';
 import { WriteOffService } from './write-off.service';
 import { WipBillingStatus } from 'src/modules/crm/projects/schemas';
+import { FinanceSettingsService } from './finance-settings.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { ExpenseClaimService } from './purchases.service';
@@ -86,7 +87,15 @@ export class InvoiceService {
     private readonly whtService: WhtService,
     private readonly glPostingService: GlPostingService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly settingsService: FinanceSettingsService,
   ) {}
+
+  // The tenant's default VAT rate (Finance Settings → Tax). A tenant not
+  // registered for VAT defaults new invoices to 0%.
+  private async defaultVatRate(tenantId: string): Promise<number> {
+    const tax = await this.settingsService.getSection(tenantId, 'tax');
+    return tax.vatRegistered ? tax.standardVatRate : 0;
+  }
 
   // A client can't be told where to send money if the tenant hasn't
   // said where money goes — real guard, not a UI-only nudge, since
@@ -99,7 +108,7 @@ export class InvoiceService {
     });
     if (!hasActive) {
       throw new BadRequestException(
-        'Add your payment details in Settings before creating invoices, so clients know where to send payment.',
+        'Add a bank account in Finance Settings → Bank Accounts before creating invoices, so clients know where to send payment.',
       );
     }
   }
@@ -115,8 +124,10 @@ export class InvoiceService {
     const all = await this.remittanceModel
       .find({ tenantId: new Types.ObjectId(tenantId), active: true })
       .lean();
+    const primaryFirst = (list: typeof all) =>
+      [...list].sort((a, b) => Number(!!b.isPrimary) - Number(!!a.isPrimary));
     const matching = all.filter((a) => a.currency === currency);
-    return matching.length ? matching : all;
+    return primaryFirst(matching.length ? matching : all);
   }
 
   // Which of the tenant's real bank accounts a payment actually
@@ -264,7 +275,7 @@ export class InvoiceService {
       mandateId: new Types.ObjectId(dto.mandateId),
       mandateName: mandate.name,
       currency: dto.currency ?? 'USD',
-      vatRate: dto.vatRate ?? 18,
+      vatRate: dto.vatRate ?? (await this.defaultVatRate(tenantId)),
       whtRate: dto.whtRate ?? 0,
       discount: dto.discount ?? 0,
       model: dto.model,
@@ -396,7 +407,7 @@ export class InvoiceService {
       mandateId: new Types.ObjectId(dto.mandateId),
       mandateName: mandate.name,
       currency: invoiceCurrency,
-      vatRate: dto.vatRate ?? 18,
+      vatRate: dto.vatRate ?? (await this.defaultVatRate(tenantId)),
       whtRate: dto.whtRate ?? 0,
       discount: 0,
       model: 'Time & materials',
@@ -576,14 +587,11 @@ export class InvoiceService {
   async generatePdf(tenantId: string, id: string): Promise<Buffer> {
     const i = await this.getRawDoc(tenantId, id);
     const totals = this.computeTotals(i.toObject());
-    const tenant = await this.userModel.findById(tenantId).lean();
-    const profile: any = tenant?.tenantProfile;
-    const firmName = profile?.businessName || 'Your firm';
-    const addressLines = [
-      profile?.address?.city,
-      profile?.address?.state,
-      profile?.address?.country,
-    ].filter(Boolean);
+    const branding = await this.settingsService.getBranding(tenantId);
+    const invoicing = await this.settingsService.getSection(
+      tenantId,
+      'invoicing',
+    );
     const remittanceAccounts = await this.getRemittanceAccountsFor(
       tenantId,
       i.currency,
@@ -608,9 +616,12 @@ export class InvoiceService {
       payable: totals.payable,
       issuedOn: i.issuedOn,
       dueOn: i.dueOn,
-      firmName,
-      firmAddressLines: addressLines,
-      logoDataUrl: profile?.logoUrl || null,
+      firmName: branding.companyName,
+      firmAddressLines: branding.addressLines,
+      logoDataUrl: branding.logoDataUrl,
+      branding,
+      footerNote: invoicing.invoiceFooter || undefined,
+      isDraft: i.stage === 'Draft',
       remittanceAccounts: remittanceAccounts.map((a: any) => ({
         accountName: a.accountName,
         bankName: a.bankName,
@@ -1429,51 +1440,123 @@ export class RemittanceAccountService {
   constructor(
     @InjectModel(RemittanceAccount.name)
     private readonly model: Model<RemittanceAccountDocument>,
+    private readonly settingsService: FinanceSettingsService,
   ) {}
+
+  private log(
+    tenantId: string,
+    summary: string,
+    actor?: { id: string; name: string },
+  ) {
+    if (!actor) return Promise.resolve();
+    return this.settingsService.logEvent(tenantId, 'banking', summary, actor);
+  }
 
   async getAll(tenantId: string) {
     return this.model
       .find({ tenantId: new Types.ObjectId(tenantId) })
-      .sort({ createdAt: -1 })
+      .sort({ isPrimary: -1, createdAt: -1 })
       .lean();
   }
 
-  async create(tenantId: string, dto: CreateRemittanceAccountDto) {
+  async create(
+    tenantId: string,
+    dto: CreateRemittanceAccountDto,
+    actor?: { id: string; name: string },
+  ) {
+    const tid = new Types.ObjectId(tenantId);
+    const hasAny = await this.model.exists({ tenantId: tid });
     const created = await this.model.create({
-      tenantId: new Types.ObjectId(tenantId),
+      tenantId: tid,
       accountName: dto.accountName,
       bankName: dto.bankName,
       accountNumber: dto.accountNumber,
       currency: dto.currency,
       branchCode: dto.branchCode ?? '',
       swiftCode: dto.swiftCode ?? '',
+      description: dto.description ?? '',
+      // The first account added is the primary one.
+      isPrimary: !hasAny,
     });
+    await this.log(
+      tenantId,
+      `added bank account: ${dto.bankName} (${dto.currency})`,
+      actor,
+    );
     return created.toObject();
+  }
+
+  private async getOwned(tenantId: string, id: string) {
+    const a = await this.model.findOne({
+      _id: id,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!a) throw new NotFoundException('Bank account not found');
+    return a;
   }
 
   async update(
     tenantId: string,
     id: string,
     dto: Partial<CreateRemittanceAccountDto>,
+    actor?: { id: string; name: string },
   ) {
-    const a = await this.model.findOne({
-      _id: id,
-      tenantId: new Types.ObjectId(tenantId),
-    });
-    if (!a) throw new NotFoundException('Remittance account not found');
+    const a = await this.getOwned(tenantId, id);
     Object.assign(a, dto);
     await a.save();
+    await this.log(
+      tenantId,
+      `updated bank account: ${a.bankName} (${a.currency})`,
+      actor,
+    );
     return a.toObject();
   }
 
-  async setActive(tenantId: string, id: string, active: boolean) {
-    const a = await this.model.findOne({
-      _id: id,
-      tenantId: new Types.ObjectId(tenantId),
-    });
-    if (!a) throw new NotFoundException('Remittance account not found');
+  async setActive(
+    tenantId: string,
+    id: string,
+    active: boolean,
+    actor?: { id: string; name: string },
+  ) {
+    const a = await this.getOwned(tenantId, id);
+    if (!active && a.isPrimary) {
+      throw new BadRequestException(
+        'This is the primary account. Make another account primary before deactivating it.',
+      );
+    }
     a.active = active;
     await a.save();
+    await this.log(
+      tenantId,
+      `${active ? 'activated' : 'deactivated'} bank account: ${a.bankName} (${a.currency})`,
+      actor,
+    );
+    return a.toObject();
+  }
+
+  // One primary per tenant — it is shown first on invoices and in the
+  // client portal. An inactive account cannot be the primary one.
+  async setPrimary(
+    tenantId: string,
+    id: string,
+    actor?: { id: string; name: string },
+  ) {
+    const a = await this.getOwned(tenantId, id);
+    if (!a.active)
+      throw new BadRequestException(
+        'Activate this account before making it the primary one.',
+      );
+    await this.model.updateMany(
+      { tenantId: new Types.ObjectId(tenantId), _id: { $ne: a._id } },
+      { $set: { isPrimary: false } },
+    );
+    a.isPrimary = true;
+    await a.save();
+    await this.log(
+      tenantId,
+      `set ${a.bankName} (${a.currency}) as the primary bank account`,
+      actor,
+    );
     return a.toObject();
   }
 }

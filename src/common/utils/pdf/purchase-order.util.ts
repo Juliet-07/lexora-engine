@@ -1,26 +1,20 @@
 import * as PDFDocument from 'pdfkit';
+import {
+  DocumentBranding,
+  drawBrandFooter,
+  drawDraftWatermark,
+  formatDocDate,
+  formatDocNumber,
+  pdfFonts,
+  tintOf,
+  withBranding,
+} from './branding.util';
 
 // The established Lexora brand palette — same purple/gold pairing
 // already used across the email templates, so the PDF and the
 // emails read as the same brand rather than two different systems.
-const PURPLE = '#4B0082';
-const GOLD = '#c9a84c';
-const PURPLE_TINT = '#F3EDF9';
 const INK = '#1a1a1a';
 const MUTED = '#6b7280';
-
-const fmtDate = (d: Date | string) =>
-  new Date(d).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-
-const fmtNumber = (amount: number) =>
-  amount.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 
 export interface PurchaseOrderPdfData {
   ref: string;
@@ -49,6 +43,10 @@ export interface PurchaseOrderPdfData {
   firmRegistrationNumber: string;
   firmTaxId: string;
   logoDataUrl: string | null;
+  // Finance Settings → Document Branding (optional; defaults keep the original look).
+  branding?: DocumentBranding;
+  // A draft carries the DRAFT watermark when the tenant wants it.
+  isDraft?: boolean;
 }
 
 // Clean, document-style layout matching a standard issued PO format
@@ -61,6 +59,15 @@ export function buildPurchaseOrderPdf(
   data: PurchaseOrderPdfData,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    const b = withBranding(data.branding);
+    const PURPLE = b.headerColor;
+    const GOLD = b.highlightColor;
+    const ACCENT = b.accentColor;
+    const PURPLE_TINT = tintOf(b.headerColor);
+    const F = pdfFonts(b, 'body');
+    const FH = pdfFonts(b, 'heading');
+    const fmtDate = (d: Date | string) => formatDocDate(d, b.dateFormat);
+    const fmtNumber = (n: number) => formatDocNumber(n, b.numberFormat);
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
     const chunks: Buffer[] = [];
     doc.on('data', (c) => chunks.push(c));
@@ -97,7 +104,7 @@ export function buildPurchaseOrderPdf(
     }
     if (!data.logoDataUrl) {
       doc
-        .font('Helvetica-Bold')
+        .font(F.bold)
         .fontSize(13)
         .fillColor(INK)
         .text(data.firmName, rightColX, rightY, {
@@ -108,19 +115,19 @@ export function buildPurchaseOrderPdf(
     }
 
     doc
-      .font('Helvetica-Bold')
+      .font(FH.bold)
       .fontSize(24)
       .fillColor(PURPLE)
       .text('PURCHASE ORDER', 50, 50);
     doc.moveDown(0.6);
     doc
-      .font('Helvetica-Bold')
+      .font(F.bold)
       .fontSize(11)
       .fillColor(INK)
       .text(data.vendorName, 50, doc.y);
     if (data.vendorTin) {
       doc
-        .font('Helvetica')
+        .font(F.regular)
         .fontSize(9)
         .fillColor(MUTED)
         .text(`Tax Number: ${data.vendorTin}`, 50, doc.y + 2);
@@ -128,12 +135,12 @@ export function buildPurchaseOrderPdf(
 
     const metaRow = (label: string, value: string, y: number) => {
       doc
-        .font('Helvetica-Bold')
+        .font(F.bold)
         .fontSize(9)
         .fillColor(INK)
         .text(label, rightColX, y, { width: rightColW, align: 'right' });
       doc
-        .font('Helvetica')
+        .font(F.regular)
         .fontSize(9)
         .fillColor(INK)
         .text(value, rightColX, y + 12, { width: rightColW, align: 'right' });
@@ -153,7 +160,7 @@ export function buildPurchaseOrderPdf(
     if (data.notes) rightY = metaRow('Reference', data.notes, rightY);
 
     doc
-      .font('Helvetica-Bold')
+      .font(F.bold)
       .fontSize(9)
       .fillColor(INK)
       .text(data.firmName, rightColX, rightY, {
@@ -161,9 +168,20 @@ export function buildPurchaseOrderPdf(
         align: 'right',
       });
     rightY += 12;
+    if (b.showTagline && b.tagline) {
+      doc
+        .font(F.regular)
+        .fontSize(8.5)
+        .fillColor(MUTED)
+        .text(b.tagline, rightColX, rightY, {
+          width: rightColW,
+          align: 'right',
+        });
+      rightY += 12;
+    }
     data.firmAddressLines.forEach((line) => {
       doc
-        .font('Helvetica')
+        .font(F.regular)
         .fontSize(9)
         .fillColor(MUTED)
         .text(line, rightColX, rightY, { width: rightColW, align: 'right' });
@@ -194,7 +212,7 @@ export function buildPurchaseOrderPdf(
     const colAmountW = 85;
 
     const headerY = doc.y;
-    doc.font('Helvetica-Bold').fontSize(8).fillColor(PURPLE);
+    doc.font(F.bold).fontSize(8).fillColor(PURPLE);
     doc.text('DESCRIPTION', colDesc, headerY, { width: colDescW });
     doc.text('QUANTITY', colQty, headerY, { width: colQtyW, align: 'right' });
     doc.text('UNIT PRICE', colUnit, headerY, {
@@ -225,7 +243,7 @@ export function buildPurchaseOrderPdf(
       const net = gross * (1 - (l.discountPct || 0) / 100);
       subtotal += net;
       const rowY = doc.y;
-      doc.font('Helvetica').fontSize(9).fillColor(INK);
+      doc.font(F.regular).fontSize(9).fillColor(INK);
       doc.text(l.description, colDesc, rowY, { width: colDescW });
       const rowBottom = doc.y;
       doc.text(fmtNumber(l.qty), colQty, rowY, {
@@ -265,7 +283,7 @@ export function buildPurchaseOrderPdf(
       .fill(PURPLE_TINT);
 
     doc
-      .font('Helvetica')
+      .font(F.regular)
       .fontSize(9)
       .fillColor(INK)
       .text('Subtotal', colTax - 60, doc.y + 4, {
@@ -278,9 +296,9 @@ export function buildPurchaseOrderPdf(
     });
     doc.moveDown(0.5);
     doc
-      .font('Helvetica-Bold')
+      .font(F.bold)
       .fontSize(11)
-      .fillColor(PURPLE)
+      .fillColor(ACCENT)
       .text(`TOTAL ${data.currency}`, colTax - 60, doc.y + 2, {
         width: colTaxW + 60,
         align: 'right',
@@ -300,7 +318,7 @@ export function buildPurchaseOrderPdf(
       .strokeColor(GOLD)
       .stroke();
     doc
-      .font('Helvetica-Bold')
+      .font(F.bold)
       .fontSize(15)
       .fillColor(PURPLE)
       .text('DELIVERY DETAILS', 50, deliveryY + 14);
@@ -308,12 +326,12 @@ export function buildPurchaseOrderPdf(
     const colW = contentWidth / 3;
     const fieldsY = deliveryY + 48;
     doc
-      .font('Helvetica-Bold')
+      .font(F.bold)
       .fontSize(9)
       .fillColor(PURPLE)
       .text('Delivery Address', 50, fieldsY, { width: colW - 10 });
     doc
-      .font('Helvetica')
+      .font(F.regular)
       .fontSize(9)
       .fillColor(INK)
       .text(data.deliveryAddress || '—', 50, fieldsY + 14, {
@@ -321,24 +339,24 @@ export function buildPurchaseOrderPdf(
       });
 
     doc
-      .font('Helvetica-Bold')
+      .font(F.bold)
       .fontSize(9)
       .fillColor(PURPLE)
       .text('Attention', 50 + colW, fieldsY, { width: colW - 10 });
     doc
-      .font('Helvetica')
+      .font(F.regular)
       .fontSize(9)
       .fillColor(INK)
       .text(data.deliveryAttention || '—', 50 + colW, fieldsY + 14, {
         width: colW - 10,
       });
     doc
-      .font('Helvetica-Bold')
+      .font(F.bold)
       .fontSize(9)
       .fillColor(PURPLE)
       .text('Telephone', 50 + colW, doc.y + 8, { width: colW - 10 });
     doc
-      .font('Helvetica')
+      .font(F.regular)
       .fontSize(9)
       .fillColor(INK)
       .text(data.deliveryPhone || '—', 50 + colW, doc.y + 14, {
@@ -346,14 +364,14 @@ export function buildPurchaseOrderPdf(
       });
 
     doc
-      .font('Helvetica-Bold')
+      .font(F.bold)
       .fontSize(9)
       .fillColor(PURPLE)
       .text('Delivery Instructions', 50 + colW * 2, fieldsY, {
         width: colW - 10,
       });
     doc
-      .font('Helvetica')
+      .font(F.regular)
       .fontSize(9)
       .fillColor(INK)
       .text(data.deliveryInstructions || '—', 50 + colW * 2, fieldsY + 14, {
@@ -370,9 +388,9 @@ export function buildPurchaseOrderPdf(
         ? `Registered Office: ${data.firmAddressLines.join(', ')}`
         : null,
     ].filter(Boolean);
-    if (footerParts.length) {
+    if (footerParts.length && b.footerEnabled) {
       doc
-        .font('Helvetica')
+        .font(F.regular)
         .fontSize(7.5)
         .fillColor(MUTED)
         .text(footerParts.join('.  '), 50, doc.page.height - 50, {
@@ -380,6 +398,7 @@ export function buildPurchaseOrderPdf(
         });
     }
 
+    if (data.isDraft && b.watermarkDrafts) drawDraftWatermark(doc);
     doc.end();
   });
 }

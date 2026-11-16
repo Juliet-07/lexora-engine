@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { FinanceSettingsService } from './finance-settings.service';
 import * as fs from 'fs';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -13,6 +14,7 @@ import {
   TaxObligation,
   TaxObligationDocument,
   TaxObligationStatus,
+  TaxObligationType,
   TaxPeriodType,
   TaxPriority,
   TaxRecurrence,
@@ -441,6 +443,14 @@ export class EbmService {
 // Who is acting on an obligation. The tenant owner account has the
 // final say on filings; everyone else (an employee with finance
 // access) can prepare and record, but the owner approves.
+// Obligation type → the Finance Settings reminder switch that governs it.
+const REMINDER_SETTING: Record<string, 'vat' | 'paye' | 'cit' | 'pension'> = {
+  [TaxObligationType.VAT]: 'vat',
+  [TaxObligationType.PAYE]: 'paye',
+  [TaxObligationType.CIT]: 'cit',
+  [TaxObligationType.RSSB]: 'pension',
+};
+
 export interface TaxActor {
   id: string;
   name: string;
@@ -477,6 +487,7 @@ export class TaxObligationService {
     private readonly calendarEventModel: Model<CalendarEventDocument>,
     private readonly emailService: EmailService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly settingsService: FinanceSettingsService,
   ) {}
 
   // Read shape: every row carries a structured period (older rows are
@@ -672,6 +683,17 @@ export class TaxObligationService {
   // responsible person when one is assigned. Shared with the chain
   // roll so a new period is announced exactly like a created one.
   async remind(o: TaxObligationDocument, tenant?: any) {
+    // Finance Settings → Tax → filing reminders: the tenant can switch
+    // off the reminder for VAT, PAYE, CIT or pension. Other tax types
+    // have no switch and always remind.
+    const key = REMINDER_SETTING[o.type];
+    if (key) {
+      const tax = await this.settingsService.getSection(
+        String(o.tenantId),
+        'tax',
+      );
+      if (tax.reminders?.[key] === false) return;
+    }
     const t = tenant ?? (await this.userModel.findById(o.tenantId).lean());
     const profile = t?.tenantProfile;
     const firmName = profile?.businessName || 'Your firm';

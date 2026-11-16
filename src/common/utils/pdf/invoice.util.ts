@@ -1,24 +1,18 @@
 import * as PDFDocument from 'pdfkit';
+import {
+  DocumentBranding,
+  drawBrandFooter,
+  drawDraftWatermark,
+  formatDocDate,
+  formatDocNumber,
+  pdfFonts,
+  withBranding,
+} from './branding.util';
 
 // Same brand palette as the Quote and Purchase Order PDFs, for one
 // consistent document identity across everything the firm issues.
-const PURPLE = '#4B0082';
-const GOLD = '#c9a84c';
 const INK = '#1a1a1a';
 const MUTED = '#6b7280';
-
-const fmtDate = (d: Date | string) =>
-  new Date(d).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-
-const fmtNumber = (n: number) =>
-  n.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 
 export interface InvoicePdfLine {
   description: string;
@@ -60,10 +54,25 @@ export interface InvoicePdfData {
   // if the tenant hasn't added any yet, in which case this section
   // is simply omitted rather than shown blank.
   remittanceAccounts: InvoicePdfRemittanceAccount[];
+  // Finance Settings → Document Branding. Optional: without it the
+  // document keeps its original palette.
+  branding?: DocumentBranding;
+  // Standing text from Finance Settings → Invoicing (invoice footer).
+  footerNote?: string;
+  // A draft invoice carries the DRAFT watermark when the tenant wants it.
+  isDraft?: boolean;
 }
 
 export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    const b = withBranding(data.branding);
+    const PURPLE = b.headerColor;
+    const GOLD = b.highlightColor;
+    const ACCENT = b.accentColor;
+    const F = pdfFonts(b, 'body');
+    const FH = pdfFonts(b, 'heading');
+    const fmtDate = (d: Date | string) => formatDocDate(d, b.dateFormat);
+    const fmtNumber = (n: number) => formatDocNumber(n, b.numberFormat);
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
     const chunks: Buffer[] = [];
     doc.on('data', (c) => chunks.push(c));
@@ -96,7 +105,7 @@ export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
     }
     if (!data.logoDataUrl) {
       doc
-        .font('Helvetica-Bold')
+        .font(F.bold)
         .fontSize(13)
         .fillColor(INK)
         .text(data.firmName, rightColX, rightY, {
@@ -107,30 +116,30 @@ export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
     }
 
     doc
-      .font('Helvetica-Bold')
+      .font(FH.bold)
       .fontSize(24)
       .fillColor(PURPLE)
       .text(data.isPaid ? 'RECEIPT' : 'INVOICE', 50, 50);
     doc.moveDown(0.4);
     doc
-      .font('Helvetica-Bold')
+      .font(F.bold)
       .fontSize(11)
       .fillColor(INK)
       .text(data.clientName, 50, doc.y);
     doc
-      .font('Helvetica')
+      .font(F.regular)
       .fontSize(9)
       .fillColor(MUTED)
       .text(data.mandateName, 50, doc.y + 2);
 
     const metaRow = (label: string, value: string, y: number) => {
       doc
-        .font('Helvetica-Bold')
+        .font(F.bold)
         .fontSize(9)
         .fillColor(INK)
         .text(label, rightColX, y, { width: rightColW, align: 'right' });
       doc
-        .font('Helvetica')
+        .font(F.regular)
         .fontSize(9)
         .fillColor(INK)
         .text(value, rightColX, y + 12, { width: rightColW, align: 'right' });
@@ -148,7 +157,7 @@ export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
     rightY = metaRow('Due', fmtDate(data.dueOn), rightY);
 
     doc
-      .font('Helvetica-Bold')
+      .font(F.bold)
       .fontSize(9)
       .fillColor(INK)
       .text(data.firmName, rightColX, rightY, {
@@ -156,9 +165,20 @@ export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
         align: 'right',
       });
     rightY += 12;
+    if (b.showTagline && b.tagline) {
+      doc
+        .font(F.regular)
+        .fontSize(8.5)
+        .fillColor(MUTED)
+        .text(b.tagline, rightColX, rightY, {
+          width: rightColW,
+          align: 'right',
+        });
+      rightY += 12;
+    }
     data.firmAddressLines.forEach((line) => {
       doc
-        .font('Helvetica')
+        .font(F.regular)
         .fontSize(9)
         .fillColor(MUTED)
         .text(line, rightColX, rightY, { width: rightColW, align: 'right' });
@@ -181,7 +201,7 @@ export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
     const amountX = unitX + 100;
 
     const tableY = doc.y;
-    doc.font('Helvetica-Bold').fontSize(8).fillColor(PURPLE);
+    doc.font(F.bold).fontSize(8).fillColor(PURPLE);
     doc.text('DESCRIPTION', 50, tableY, { width: descW });
     doc.text('QTY', qtyX, tableY, { width: 60, align: 'right' });
     doc.text('UNIT PRICE', unitX, tableY, { width: 100, align: 'right' });
@@ -201,7 +221,7 @@ export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
     data.lines.forEach((l) => {
       const rowY = doc.y;
       doc
-        .font('Helvetica')
+        .font(F.regular)
         .fontSize(10)
         .fillColor(INK)
         .text(l.description, 50, rowY, { width: descW });
@@ -230,8 +250,8 @@ export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
     const totalsRow = (label: string, value: string, bold = false) => {
       const rowY = doc.y;
       const size = bold ? 11 : 9.5;
-      const color = bold ? PURPLE : INK;
-      const font = bold ? 'Helvetica-Bold' : 'Helvetica';
+      const color = bold ? ACCENT : INK;
+      const font = bold ? F.bold : F.regular;
       doc
         .font(font)
         .fontSize(size)
@@ -271,7 +291,7 @@ export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
         .stroke();
       doc.moveDown(0.6);
       doc
-        .font('Helvetica-Bold')
+        .font(F.bold)
         .fontSize(9)
         .fillColor(PURPLE)
         .text('PAYMENT DETAILS', 50, doc.y);
@@ -280,7 +300,7 @@ export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
       data.remittanceAccounts.forEach((acc, idx) => {
         const boxY = doc.y;
         doc
-          .font('Helvetica-Bold')
+          .font(F.bold)
           .fontSize(10)
           .fillColor(INK)
           .text(acc.accountName, 50, boxY, { width: contentWidth });
@@ -293,7 +313,7 @@ export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
           acc.swiftCode ? `SWIFT ${acc.swiftCode}` : null,
         ].filter(Boolean);
         doc
-          .font('Helvetica')
+          .font(F.regular)
           .fontSize(9)
           .fillColor(MUTED)
           .text(detailParts.join('  ·  '), 50, doc.y, { width: contentWidth });
@@ -301,6 +321,17 @@ export function buildInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
       });
     }
 
+    if (data.footerNote) {
+      doc.moveDown(1.2);
+      doc
+        .font(F.regular)
+        .fontSize(8.5)
+        .fillColor(MUTED)
+        .text(data.footerNote, 50, doc.y, { width: contentWidth });
+    }
+
+    drawBrandFooter(doc, b);
+    if (data.isDraft && b.watermarkDrafts) drawDraftWatermark(doc);
     doc.end();
   });
 }
