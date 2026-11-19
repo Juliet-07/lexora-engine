@@ -27,6 +27,7 @@ import {
   HoldWipDto,
 } from 'src/modules/crm/projects/dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
+import { FinanceApprovalService } from '../services/finance-approval.service';
 import {
   PlatformModuleKey,
   UserType,
@@ -42,8 +43,8 @@ import { RequiresModule } from 'src/common/decorators/requires-module.decorator'
 
 @ApiTags('CRM — Finance — Sales')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/wip')
 export class WipController {
   constructor(private readonly service: WipService) {}
@@ -116,8 +117,8 @@ export class WipController {
 
 @ApiTags('CRM — Finance — Sales')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/credit-notes')
 export class CreditNoteController {
   constructor(private readonly service: CreditNoteService) {}
@@ -141,20 +142,53 @@ export class CreditNoteController {
 
 @ApiTags('CRM — Finance — Sales')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/quotes')
 export class QuoteController {
-  constructor(private readonly service: QuoteService) {}
+  constructor(
+    private readonly service: QuoteService,
+    private readonly approvals: FinanceApprovalService,
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a quote or proforma' })
-  create(
+  async create(
     @Body() dto: CreateQuoteDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
   ) {
-    return this.service.create(t || u, dto);
+    const actor = await this.approvals.actorFor(u, t || u, userType);
+    return this.service.create(t || u, dto, actor);
+  }
+
+  @Post(':id/approve')
+  @ApiOperation({
+    summary:
+      'Approve an employee-prepared quote — it becomes a Draft ready to send',
+  })
+  async approve(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    const actor = await this.approvals.actorFor(u, t || u, userType);
+    return this.service.approve(t || u, id, actor);
+  }
+
+  @Post(':id/reject')
+  @ApiOperation({ summary: 'Send an employee-prepared quote back' })
+  async reject(
+    @Param('id') id: string,
+    @Body() body: { reason?: string },
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    const actor = await this.approvals.actorFor(u, t || u, userType);
+    return this.service.reject(t || u, id, actor, body?.reason ?? '');
   }
 
   @Get()
@@ -220,8 +254,8 @@ export class QuoteController {
 
 @ApiTags('CRM — Finance — Sales')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/recurring-invoices')
 export class RecurringInvoiceController {
   constructor(private readonly service: RecurringInvoiceService) {}

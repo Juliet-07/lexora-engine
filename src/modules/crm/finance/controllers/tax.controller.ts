@@ -254,8 +254,8 @@ export class TaxObligationController {
 
 @ApiTags('CRM — Finance — Tax')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/vat')
 export class VatController {
   constructor(private readonly service: VatService) {}
@@ -283,8 +283,8 @@ export class VatController {
 
 @ApiTags('CRM — Finance — Tax')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/payroll-tax')
 export class PayrollTaxController {
   constructor(private readonly service: PayrollTaxService) {}
@@ -306,8 +306,8 @@ export class PayrollTaxController {
 
 @ApiTags('CRM — Finance — Tax')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/cit')
 export class CitController {
   constructor(private readonly service: CitService) {}
@@ -331,8 +331,8 @@ export class CitController {
 
 @ApiTags('CRM — Finance — Tax')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/wht')
 export class WhtController {
   constructor(private readonly service: WhtService) {}
@@ -352,8 +352,8 @@ export class WhtController {
 
 @ApiTags('CRM — Finance — Tax')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/ebm')
 export class EbmController {
   constructor(private readonly service: EbmService) {}

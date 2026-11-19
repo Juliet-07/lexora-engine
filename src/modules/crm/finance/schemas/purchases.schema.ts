@@ -164,6 +164,17 @@ export class Bill {
   // it going forward.
   @Prop({ default: null }) receiptUrl: string | null;
   @Prop({ default: null }) receiptFileName: string | null;
+
+  // Set when someone other than the account owner captures the bill
+  // (an employee from their workspace, or a finance manager). It
+  // records who submitted it and who is allowed to approve it, per the
+  // tenant's Finance Settings → Approvals. The owner always has the
+  // final say, so an owner-captured bill carries no routing at all.
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null, index: true })
+  submittedById: Types.ObjectId | null;
+  @Prop({ default: '' }) submittedByName: string;
+  @Prop({ type: Object, default: null }) approval: Record<string, any> | null;
+  @Prop({ default: '' }) rejectedReason: string;
 }
 export const BillSchema = SchemaFactory.createForClass(Bill);
 

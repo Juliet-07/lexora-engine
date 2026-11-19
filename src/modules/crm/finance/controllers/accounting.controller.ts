@@ -42,8 +42,8 @@ import { RequiresModule } from 'src/common/decorators/requires-module.decorator'
 
 @ApiTags('CRM — Finance — Accounting')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/accounting-overview')
 export class AccountingOverviewController {
   constructor(private readonly service: AccountingOverviewService) {}
@@ -64,8 +64,8 @@ export class AccountingOverviewController {
 
 @ApiTags('CRM — Finance — Accounting')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/accounts')
 export class LedgerAccountController {
   constructor(private readonly service: LedgerAccountService) {}
@@ -101,8 +101,8 @@ export class LedgerAccountController {
 
 @ApiTags('CRM — Finance — Accounting')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/journals')
 export class JournalController {
   constructor(private readonly service: JournalService) {}
@@ -149,8 +149,8 @@ export class JournalController {
 
 @ApiTags('CRM — Finance — Accounting')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/general-ledger')
 export class GeneralLedgerController {
   constructor(private readonly service: GeneralLedgerService) {}
@@ -203,8 +203,8 @@ export class GeneralLedgerController {
 
 @ApiTags('CRM — Finance — Accounting')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/trial-balance')
 export class TrialBalanceController {
   constructor(private readonly service: TrialBalanceService) {}
@@ -225,8 +225,8 @@ export class TrialBalanceController {
 
 @ApiTags('CRM — Finance — Accounting')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/period-close')
 export class PeriodCloseController {
   constructor(private readonly service: PeriodCloseService) {}
@@ -318,8 +318,8 @@ export class PeriodCloseController {
 
 @ApiTags('CRM — Finance — Accounting')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/recode')
 export class RecodeController {
   constructor(private readonly service: RecodeService) {}
@@ -351,8 +351,8 @@ export class RecodeController {
 
 @ApiTags('CRM — Finance — Asset Register')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/assets')
 export class AssetController {
   constructor(private readonly service: AssetService) {}
@@ -410,8 +410,8 @@ export class AssetController {
 
 @ApiTags('CRM — Finance — Asset Register')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/asset-maintenance')
 export class MaintenanceLogController {
   constructor(private readonly service: MaintenanceLogService) {}
@@ -438,8 +438,8 @@ export class MaintenanceLogController {
 // ── Financials — P&L, Balance Sheet, Cash Flow ─────────────────
 @ApiTags('CRM — Finance — Financials')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/financials')
 export class FinancialStatementsController {
   constructor(private readonly service: FinancialStatementsService) {}
@@ -539,8 +539,8 @@ export class FinancialStatementsController {
 
 @ApiTags('CRM — Finance — Financials')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/budgets')
 export class BudgetController {
   constructor(private readonly service: BudgetService) {}

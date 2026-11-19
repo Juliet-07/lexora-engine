@@ -12,6 +12,11 @@ export enum EbmStatus {
 }
 
 export enum QuoteStatus {
+  // An employee-prepared quote waits here until a finance manager or
+  // the account owner approves it (then it becomes a normal Draft), or
+  // sends it back (Rejected).
+  PENDING_APPROVAL = 'Pending approval',
+  REJECTED = 'Rejected',
   DRAFT = 'Draft',
   SENT = 'Sent',
   ACCEPTED = 'Accepted',
@@ -105,6 +110,14 @@ export class Quote {
   // Set once converted, so it can't be converted twice.
   @Prop({ type: Types.ObjectId, ref: 'Invoice', default: null })
   convertedInvoiceId: Types.ObjectId | null;
+
+  // Who prepared it and who may approve it — see Bill for the same
+  // fields. Empty for a quote the owner or a finance manager wrote.
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null, index: true })
+  submittedById: Types.ObjectId | null;
+  @Prop({ default: '' }) submittedByName: string;
+  @Prop({ type: Object, default: null }) approval: Record<string, any> | null;
+  @Prop({ default: '' }) rejectedReason: string;
 }
 export const QuoteSchema = SchemaFactory.createForClass(Quote);
 

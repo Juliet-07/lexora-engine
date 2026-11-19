@@ -4,6 +4,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { UserType } from 'src/common/interfaces/user-role.enum';
 import { Model, Types } from 'mongoose';
 import {
   PurchaseOrder,
@@ -34,6 +35,7 @@ import {
 } from 'src/modules/grc/governance/schemas';
 import {
   CreatePurchaseOrderDto,
+  UpdatePurchaseOrderDto,
   CreateBillDto,
   CreateExpenseClaimDto,
   SubmitMyExpenseClaimDto,
@@ -41,6 +43,10 @@ import {
 } from '../dtos';
 import { buildPurchaseOrderPdf } from 'src/common/utils/pdf/purchase-order.util';
 import { FinanceSettingsService } from './finance-settings.service';
+import {
+  FinanceApprovalService,
+  FinanceActor,
+} from './finance-approval.service';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserDocument } from 'src/modules/auth/schemas/user.schema';
 import { ExchangeRateService } from 'src/modules/hr/services/exchange-rate.service';
@@ -211,6 +217,59 @@ export class PurchaseOrderService {
     return this.normalize(created.toObject());
   }
 
+  // Edit a PO. Draft and Issued POs can be edited (an issued PO often
+  // needs a corrected quantity or delivery date); Fulfilled and
+  // Cancelled ones are closed records and stay as they are. Editing an
+  // issued PO does not re-send it — the user re-downloads the PDF or
+  // sends it again themselves.
+  async update(
+    tenantId: string,
+    id: string,
+    dto: UpdatePurchaseOrderDto,
+    vendorName?: string,
+    vendorTin?: string,
+  ) {
+    const po = await this.getRawDoc(tenantId, id);
+    if (po.status !== PoStatus.DRAFT && po.status !== PoStatus.ISSUED) {
+      throw new BadRequestException(
+        `A ${po.status.toLowerCase()} purchase order can no longer be edited`,
+      );
+    }
+    if (dto.lines !== undefined && dto.lines.length === 0) {
+      throw new BadRequestException('A purchase order needs at least one line');
+    }
+    if (dto.vendorId) {
+      po.vendorId = new Types.ObjectId(dto.vendorId);
+      po.vendorName = vendorName ?? po.vendorName;
+      po.vendorTin = vendorTin ?? po.vendorTin;
+    }
+    if (dto.currency !== undefined) po.currency = dto.currency;
+    if (dto.expectedDelivery !== undefined) {
+      po.expectedDelivery = dto.expectedDelivery
+        ? new Date(dto.expectedDelivery)
+        : null;
+    }
+    if (dto.notes !== undefined) po.notes = dto.notes;
+    if (dto.deliveryAddress !== undefined)
+      po.deliveryAddress = dto.deliveryAddress;
+    if (dto.deliveryAttention !== undefined)
+      po.deliveryAttention = dto.deliveryAttention;
+    if (dto.deliveryPhone !== undefined) po.deliveryPhone = dto.deliveryPhone;
+    if (dto.deliveryInstructions !== undefined)
+      po.deliveryInstructions = dto.deliveryInstructions;
+    if (dto.lines !== undefined) {
+      po.lines = dto.lines.map((l) => ({
+        description: l.description,
+        qty: l.qty,
+        unit: l.unit,
+        discountPct: l.discountPct ?? 0,
+        taxLabel: l.taxLabel ?? '',
+      })) as any;
+    }
+    await po.save();
+    return this.normalize(po.toObject());
+  }
+
   // Builds the real PDF using the tenant's own branding — logo if
   // they've set one, business name either way. Never the platform's
   // own name; this document is issued by the firm, not by Lexora.
@@ -320,6 +379,7 @@ export class BillService {
     private readonly boardMemberModel: Model<BoardMemberDocument>,
     private readonly whtService: WhtService,
     private readonly glPostingService: GlPostingService,
+    private readonly approvals: FinanceApprovalService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -350,6 +410,7 @@ export class BillService {
     dto: CreateBillDto,
     resolvedVendorName: string | null,
     receiptFile?: Express.Multer.File,
+    actor?: FinanceActor,
   ) {
     if (!receiptFile) {
       throw new BadRequestException(
@@ -375,6 +436,14 @@ export class BillService {
       }
       boardMemberName = boardMember.name;
     }
+
+    // Anything captured by someone other than the account owner is
+    // routed for approval per Finance Settings; the owner has the
+    // final say and needs no routing.
+    const routing =
+      actor && actor.userType !== UserType.TENANT
+        ? await this.approvals.route(tenantId, dto.amount, actor.id)
+        : null;
 
     const created = await this.model.create({
       tenantId: tId,
@@ -407,7 +476,24 @@ export class BillService {
       recurring: dto.recurring ?? false,
       receiptUrl: `/uploads/finance/bills/${receiptFile.filename}`,
       receiptFileName: receiptFile.originalname,
+      ...(routing
+        ? {
+            submittedById: new Types.ObjectId(actor!.id),
+            submittedByName: actor!.name,
+            approval: routing,
+          }
+        : {}),
     });
+
+    if (routing) {
+      this.approvals.notifyRequested(tenantId, routing, {
+        kind: 'Bill',
+        ref: created.ref,
+        submittedBy: actor!.name,
+        amountLabel: `${created.currency} ${created.amount.toLocaleString()}`,
+        link: '/finance/purchases',
+      });
+    }
 
     if (created.recurring) {
       await this.calendarEventModel.create({
@@ -444,16 +530,51 @@ export class BillService {
     return b.toObject();
   }
 
-  async approve(tenantId: string, id: string, approvedBy: string) {
+  async approve(
+    tenantId: string,
+    id: string,
+    approvedBy: string,
+    actor?: FinanceActor,
+  ) {
     const b = await this.getRawDoc(tenantId, id);
     if (b.status !== BillStatus.AWAITING_APPROVAL) {
       throw new BadRequestException(
         'Only a bill awaiting approval can be approved',
       );
     }
+    const submitterId = b.submittedById ? String(b.submittedById) : null;
+    if (actor) {
+      await this.approvals.assertCanDecide(
+        tenantId,
+        (b.approval as any) ?? null,
+        submitterId,
+        actor,
+      );
+      if (b.approval) {
+        const { state, complete } = this.approvals.record(
+          b.approval as any,
+          actor,
+        );
+        b.approval = state as any;
+        b.markModified('approval');
+        // A dual-approval tier still needs its second approver.
+        if (!complete) {
+          await b.save();
+          return b.toObject();
+        }
+      }
+    }
     b.status = BillStatus.APPROVED;
-    b.approvedBy = approvedBy;
+    b.approvedBy = actor?.name ?? approvedBy;
     await b.save();
+    if (actor) {
+      this.approvals.notifyDecided(tenantId, submitterId, {
+        kind: 'Bill',
+        ref: b.ref,
+        decision: 'approved',
+        decidedBy: actor.name,
+      });
+    }
 
     await this.glPostingService.post(
       tenantId,
@@ -485,11 +606,52 @@ export class BillService {
     return b.toObject();
   }
 
-  async reject(tenantId: string, id: string) {
+  async reject(
+    tenantId: string,
+    id: string,
+    actor?: FinanceActor,
+    reason = '',
+  ) {
     const b = await this.getRawDoc(tenantId, id);
+    if (b.status !== BillStatus.AWAITING_APPROVAL) {
+      throw new BadRequestException(
+        'Only a bill awaiting approval can be rejected',
+      );
+    }
+    const submitterId = b.submittedById ? String(b.submittedById) : null;
+    if (actor) {
+      await this.approvals.assertCanDecide(
+        tenantId,
+        (b.approval as any) ?? null,
+        submitterId,
+        actor,
+      );
+    }
     b.status = BillStatus.REJECTED;
+    b.rejectedReason = reason;
     await b.save();
+    if (actor) {
+      this.approvals.notifyDecided(tenantId, submitterId, {
+        kind: 'Bill',
+        ref: b.ref,
+        decision: 'rejected',
+        decidedBy: actor.name,
+        reason,
+      });
+    }
     return b.toObject();
+  }
+
+  // The bills this person captured themselves — the employee
+  // workspace Finance page.
+  async getSubmittedBy(tenantId: string, userId: string) {
+    return this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        submittedById: new Types.ObjectId(userId),
+      })
+      .sort({ createdAt: -1 })
+      .lean();
   }
 
   async schedulePayment(

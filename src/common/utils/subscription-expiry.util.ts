@@ -2,6 +2,16 @@
 // reminder emails (SubscriptionExpiryService) and the tenant dashboard
 // indicator, so the two can never disagree about when a warning starts.
 
+/** Length of the free trial, in days. */
+export const TRIAL_DAYS = 14;
+
+/** End of a trial that starts at `from`. */
+export function trialEndDate(from: Date = new Date()): Date {
+  const end = new Date(from);
+  end.setDate(end.getDate() + TRIAL_DAYS);
+  return end;
+}
+
 /** Days before expiry on which a reminder email goes out. */
 export const EXPIRY_WARNING_DAYS = [7, 3, 1];
 

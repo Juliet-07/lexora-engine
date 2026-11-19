@@ -55,8 +55,8 @@ import { RequiresModule } from 'src/common/decorators/requires-module.decorator'
 
 @ApiTags('CRM — Finance — Invoicing')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/invoices')
 export class InvoiceController {
   constructor(
@@ -218,8 +218,8 @@ export class InvoiceController {
 
 @ApiTags('CRM — Finance — Invoicing')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/payments')
 export class PaymentController {
   constructor(private readonly service: PaymentService) {}
@@ -240,8 +240,8 @@ export class PaymentController {
 
 @ApiTags('CRM — Finance — Invoicing')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/payment-plans')
 export class PaymentPlanController {
   constructor(private readonly service: PaymentPlanService) {}
@@ -414,8 +414,8 @@ export class ClientInvoiceController {
 // to clients via ClientInvoiceService.getMyInvoice and on the PDF. ──
 @ApiTags('CRM — Finance — Remittance Accounts')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/remittance-accounts')
 export class RemittanceAccountController {
   constructor(

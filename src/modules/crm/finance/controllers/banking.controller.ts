@@ -40,8 +40,8 @@ import { RequiresModule } from 'src/common/decorators/requires-module.decorator'
 
 @ApiTags('CRM — Finance — Banking')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/bank-accounts')
 export class BankAccountController {
   constructor(private readonly service: BankAccountService) {}
@@ -68,8 +68,8 @@ export class BankAccountController {
 
 @ApiTags('CRM — Finance — Banking')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/bank-transactions')
 export class BankTransactionController {
   constructor(private readonly service: BankTransactionService) {}
@@ -113,8 +113,8 @@ export class BankTransactionController {
 
 @ApiTags('CRM — Finance — Banking')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/bank-rules')
 export class BankRuleController {
   constructor(private readonly service: BankRuleService) {}
@@ -151,8 +151,8 @@ export class BankRuleController {
 
 @ApiTags('CRM — Finance — Banking')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/transfers')
 export class TransferController {
   constructor(private readonly service: TransferService) {}
@@ -176,8 +176,8 @@ export class TransferController {
 
 @ApiTags('CRM — Finance — Banking')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/reconciliation')
 export class ReconciliationController {
   constructor(private readonly service: ReconciliationService) {}
@@ -228,8 +228,8 @@ export class ReconciliationController {
 
 @ApiTags('CRM — Finance — Banking')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/cash-forecast')
 export class CashForecastController {
   constructor(private readonly service: CashForecastService) {}

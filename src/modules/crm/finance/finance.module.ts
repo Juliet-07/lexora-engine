@@ -6,7 +6,6 @@ import {
   PayslipTemplate,
   PayslipTemplateSchema,
 } from 'src/modules/hr/schemas/payroll.schema';
-import { FinanceSettingsController } from './controllers/finance-settings.controller';
 import { EmailService } from 'src/common/utils/mailing/email.service';
 import { User, UserSchema } from 'src/modules/auth/schemas/user.schema';
 // Direct model registration only (no GovernanceModule import, no
@@ -179,6 +178,7 @@ import {
   BudgetService,
   ManagementReportingService,
   ReportPackService,
+  FinanceApprovalService,
 } from './services';
 import {
   WriteOffController,
@@ -209,6 +209,8 @@ import {
   CitController,
   EbmController,
   TaxObligationController,
+  EmployeeFinanceController,
+  FinanceSettingsController,
 } from './controllers';
 import {
   AccountingOverviewController,
@@ -314,6 +316,7 @@ import {
     VendorService,
     PurchaseOrderService,
     BillService,
+    FinanceApprovalService,
     ExpenseClaimService,
     ExpensePolicyService,
     PurchasesOverviewService,
@@ -380,6 +383,7 @@ import {
     VendorController,
     PurchaseOrderController,
     BillController,
+    EmployeeFinanceController,
     ExpenseClaimController,
     ExpensePolicyController,
     PurchasesOverviewController,

@@ -3,6 +3,8 @@ export * from './banking.service';
 export * from './bill-payment-reminder.service';
 export * from './budget.service';
 export * from './document-branding.service';
+export * from './finance-approval.logic';
+export * from './finance-approval.service';
 export * from './finance-settings-preview.service';
 export * from './finance-settings.logic';
 export * from './finance-settings.service';

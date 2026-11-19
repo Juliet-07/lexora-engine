@@ -222,6 +222,31 @@ export class CreatePurchaseOrderDto {
   lines: PoLineDto[];
 }
 
+// Editing a PO — every field optional; whatever is sent replaces the
+// stored value (lines are replaced as a whole set when provided).
+export class UpdatePurchaseOrderDto {
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() vendorId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  expectedDelivery?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() deliveryAddress?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() deliveryAttention?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() deliveryPhone?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  deliveryInstructions?: string;
+  @ApiPropertyOptional({ type: [PoLineDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PoLineDto)
+  lines?: PoLineDto[];
+}
+
 // ── Purchases: bills ──────────────────────────────────────────
 
 export class CreateBillDto {

@@ -35,6 +35,10 @@ import {
   GovernanceCodeSchema,
   GovernanceMeeting,
   GovernanceMeetingSchema,
+  ShareClass,
+  ShareClassSchema,
+  ShareTransaction,
+  ShareTransactionSchema,
 } from '../governance/schemas';
 import {
   ComplianceObligation,
@@ -72,6 +76,8 @@ import { EmailService } from 'src/common/utils/mailing/email.service';
       // Direct, real access to Governance/HR/Compliance data — the
       // "infused" scoring approach, reading raw module data rather
       // than proxying each module's own dashboard.
+      { name: ShareClass.name, schema: ShareClassSchema },
+      { name: ShareTransaction.name, schema: ShareTransactionSchema },
       { name: BoardMember.name, schema: BoardMemberSchema },
       { name: Committee.name, schema: CommitteeSchema },
       { name: GovernanceCode.name, schema: GovernanceCodeSchema },

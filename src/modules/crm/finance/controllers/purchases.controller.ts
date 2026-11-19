@@ -26,6 +26,7 @@ import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import { FinanceApprovalService } from '../services/finance-approval.service';
 import {
   VendorService,
   PurchaseOrderService,
@@ -36,6 +37,7 @@ import {
 } from '../services';
 import {
   CreatePurchaseOrderDto,
+  UpdatePurchaseOrderDto,
   CreateBillDto,
   SchedulePaymentDto,
   CreateExpenseClaimDto,
@@ -103,8 +105,8 @@ const expenseReceiptFileFilter = (
 
 @ApiTags('CRM — Finance — Purchases')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/vendors')
 export class VendorController {
   constructor(private readonly service: VendorService) {}
@@ -121,8 +123,8 @@ export class VendorController {
 
 @ApiTags('CRM — Finance — Purchases')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/purchase-orders')
 export class PurchaseOrderController {
   constructor(
@@ -161,6 +163,25 @@ export class PurchaseOrderController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.getById(t || u, id);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Edit a draft or issued purchase order' })
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdatePurchaseOrderDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    let vendorName: string | undefined;
+    let vendorTin: string | undefined;
+    if (dto.vendorId) {
+      const vendors = await this.vendorService.getAll(t || u);
+      const vendor = vendors.find((v: any) => String(v._id) === dto.vendorId);
+      vendorName = vendor?.name ?? undefined;
+      vendorTin = vendor?.tin ?? undefined;
+    }
+    return this.service.update(t || u, id, dto, vendorName, vendorTin);
   }
 
   @Post(':id/issue')
@@ -216,13 +237,14 @@ export class PurchaseOrderController {
 
 @ApiTags('CRM — Finance — Purchases')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/bills')
 export class BillController {
   constructor(
     private readonly service: BillService,
     private readonly vendorService: VendorService,
+    private readonly approvals: FinanceApprovalService,
   ) {}
 
   @Post()
@@ -243,6 +265,7 @@ export class BillController {
     @UploadedFile() file: Express.Multer.File | undefined,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
   ) {
     let resolvedVendorName: string | null = null;
     if (dto.vendorId) {
@@ -250,7 +273,8 @@ export class BillController {
       const vendor = vendors.find((v: any) => String(v._id) === dto.vendorId);
       resolvedVendorName = vendor?.name ?? null;
     }
-    return this.service.create(t || u, dto, resolvedVendorName, file);
+    const actor = await this.approvals.actorFor(u, t || u, userType);
+    return this.service.create(t || u, dto, resolvedVendorName, file, actor);
   }
 
   @Post(':id/receipt')
@@ -302,23 +326,28 @@ export class BillController {
 
   @Post(':id/approve')
   @ApiOperation({ summary: 'Approve for payment' })
-  approve(
+  async approve(
     @Param('id') id: string,
-    @Body() body: { approvedBy: string },
+    @Body() body: { approvedBy?: string },
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
   ) {
-    return this.service.approve(t || u, id, body.approvedBy);
+    const actor = await this.approvals.actorFor(u, t || u, userType);
+    return this.service.approve(t || u, id, body?.approvedBy ?? '', actor);
   }
 
   @Post(':id/reject')
   @ApiOperation({ summary: 'Reject' })
-  reject(
+  async reject(
     @Param('id') id: string,
+    @Body() body: { reason?: string },
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
   ) {
-    return this.service.reject(t || u, id);
+    const actor = await this.approvals.actorFor(u, t || u, userType);
+    return this.service.reject(t || u, id, actor, body?.reason ?? '');
   }
 
   @Post(':id/schedule-payment')
@@ -348,8 +377,8 @@ export class BillController {
 
 @ApiTags('CRM — Finance — Purchases')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/expense-claims')
 export class ExpenseClaimController {
   constructor(private readonly service: ExpenseClaimService) {}
@@ -457,8 +486,8 @@ export class ExpenseClaimController {
 
 @ApiTags('CRM — Finance — Purchases')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/expense-policies')
 export class ExpensePolicyController {
   constructor(private readonly service: ExpensePolicyService) {}
@@ -485,8 +514,8 @@ export class ExpensePolicyController {
 
 @ApiTags('CRM — Finance — Purchases')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/purchases-overview')
 export class PurchasesOverviewController {
   constructor(private readonly service: PurchasesOverviewService) {}

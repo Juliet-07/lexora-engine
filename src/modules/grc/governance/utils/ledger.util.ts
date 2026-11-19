@@ -3,12 +3,22 @@
 // guards (a node that still holds shares can't lose its Shareholder
 // role or be deleted) and the smoke tests.
 //
-// Holdings are never stored. They are the running total of the
-// transaction ledger:
-//   Issuance  company → holder      (+ to)
+// The share register starts out belonging to the COMPANY and is shared
+// out to shareholders. Holdings are never stored; they are the running
+// total of the transaction ledger:
+//   Issuance  company → holder      (+ to; counts against the authorised cap)
 //   Transfer  holder  → holder      (− from, + to)
-//   Buyback   holder  → company     (− from)
+//             company → holder      (resale of treasury shares: fromNodeId empty)
+//   Buyback   holder  → company     (− from; the shares go back to the
+//                                    company as treasury shares — they are
+//                                    NOT cancelled and NOT spread across the
+//                                    other shareholders)
 //   Valuation sets a price only; no shares move.
+//
+// Shares the company holds (bought back, not yet resold) stay in the
+// register total, so no other holder's percentage moves when a holder
+// sells back. They carry no vote and are not valued as owned by anyone
+// else.
 
 export interface LedgerTx {
   type: string;
@@ -37,7 +47,8 @@ export function chronological<T extends LedgerTx>(txs: T[]): T[] {
     .map((x) => x.t);
 }
 
-/** Shares held per (node, class), zero/negative rows dropped. */
+/** Shares held per (node, class), zero/negative rows dropped. The company
+ *  itself is not a node — see `computeTreasury`. */
 export function computeHoldings(txs: LedgerTx[]): Map<string, number> {
   const held = new Map<string, number>();
   const add = (node: string | null, cls: string | null, n: number) => {
@@ -58,7 +69,31 @@ export function computeHoldings(txs: LedgerTx[]): Map<string, number> {
   return held;
 }
 
-/** Shares in issue per class (issued − bought back). */
+/**
+ * Shares the company itself holds, per class: everything bought back from
+ * shareholders, less any it has resold (a Transfer with no seller).
+ */
+export function computeTreasury(txs: LedgerTx[]): Map<string, number> {
+  const treasury = new Map<string, number>();
+  const add = (cls: string | null, n: number) => {
+    if (!cls) return;
+    treasury.set(cls, (treasury.get(cls) ?? 0) + n);
+  };
+  for (const t of chronological(txs)) {
+    const n = t.shares ?? 0;
+    const cls = str(t.shareClassId);
+    if (t.type === 'Buyback') add(cls, n);
+    else if (t.type === 'Transfer' && !str(t.fromNodeId)) add(cls, -n);
+  }
+  for (const [k, v] of [...treasury]) if (v <= 0) treasury.delete(k);
+  return treasury;
+}
+
+/**
+ * Shares in issue per class — everything issued out of the authorised
+ * amount, including shares now held by the company as treasury. A buyback
+ * does not take shares out of issue; it moves them to the company.
+ */
 export function computeIssuedByClass(txs: LedgerTx[]): Map<string, number> {
   const issued = new Map<string, number>();
   for (const t of txs) {
@@ -66,8 +101,6 @@ export function computeIssuedByClass(txs: LedgerTx[]): Map<string, number> {
     if (!cls) continue;
     if (t.type === 'Issuance')
       issued.set(cls, (issued.get(cls) ?? 0) + (t.shares ?? 0));
-    if (t.type === 'Buyback')
-      issued.set(cls, (issued.get(cls) ?? 0) - (t.shares ?? 0));
   }
   return issued;
 }

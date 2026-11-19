@@ -560,6 +560,52 @@ export class TenantNotificationService {
     );
   }
 
+  // An employee submitted a bill or quote — everyone who may approve it
+  // (the owner always included) is told, in-app and by email.
+  @OnEvent('finance.approval_requested')
+  async onFinanceApprovalRequested(e: {
+    tenantId: string;
+    recipientId: string;
+    kind: 'Bill' | 'Quote';
+    ref: string;
+    submittedBy: string;
+    amountLabel: string;
+    link: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.recipientId,
+      TenantNotificationType.GENERAL,
+      `${e.kind} awaiting your approval — ${e.ref}`,
+      `${e.submittedBy} submitted ${e.kind === 'Bill' ? 'a bill' : 'a quote'} for ${e.amountLabel}. Review it and approve or send it back.`,
+      e.link,
+    );
+  }
+
+  // Approved or sent back — whoever submitted it is told.
+  @OnEvent('finance.approval_decided')
+  async onFinanceApprovalDecided(e: {
+    tenantId: string;
+    recipientId: string;
+    kind: 'Bill' | 'Quote';
+    ref: string;
+    decision: 'approved' | 'rejected';
+    decidedBy: string;
+    reason?: string;
+  }) {
+    if (!e.recipientId) return;
+    await this.create(
+      e.tenantId,
+      e.recipientId,
+      TenantNotificationType.GENERAL,
+      `Your ${e.kind.toLowerCase()} ${e.ref} was ${e.decision}`,
+      e.reason
+        ? `${e.decidedBy}: ${e.reason}`
+        : `${e.decidedBy} ${e.decision} it.`,
+      '/my/finance',
+    );
+  }
+
   @OnEvent('tenant.vendor_approval.decided')
   async onVendorApprovalDecided(e: {
     tenantId: string;

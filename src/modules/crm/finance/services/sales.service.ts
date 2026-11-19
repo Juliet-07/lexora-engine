@@ -26,6 +26,11 @@ import {
 } from '../schemas';
 import { InvoiceService } from './invoice.service';
 import { FinanceSettingsService } from './finance-settings.service';
+import {
+  FinanceApprovalService,
+  FinanceActor,
+} from './finance-approval.service';
+import { UserType } from 'src/common/interfaces/user-role.enum';
 import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
 import {
   CreateCreditNoteDto,
@@ -236,6 +241,7 @@ export class QuoteService {
     private readonly emailService: EmailService,
     private readonly mandateService: MandateService,
     private readonly settingsService: FinanceSettingsService,
+    private readonly approvals: FinanceApprovalService,
   ) {}
 
   private async nextRef(
@@ -266,7 +272,7 @@ export class QuoteService {
     return q;
   }
 
-  async create(tenantId: string, dto: CreateQuoteDto) {
+  async create(tenantId: string, dto: CreateQuoteDto, actor?: FinanceActor) {
     // A quote for a prospect (no clientUserId) can only ever be
     // sent to an address captured right here — there's no client
     // account to look an email up on later.
@@ -280,6 +286,15 @@ export class QuoteService {
     const vatPercent = dto.vatPercent ?? 0;
     const vatAmount = Number(((dto.amount * vatPercent) / 100).toFixed(2));
     const totalAmount = Number((dto.amount + vatAmount).toFixed(2));
+    // A quote prepared by an employee waits for a finance manager or the
+    // owner; one the owner writes needs no approval. A finance manager's
+    // own quotes are also routed so the owner / another manager sees them
+    // when self-approval is restricted.
+    const routing =
+      actor && actor.userType !== UserType.TENANT
+        ? await this.approvals.route(tenantId, dto.amount, actor.id, true)
+        : null;
+
     const created = await this.model.create({
       tenantId: tId,
       ref,
@@ -300,8 +315,111 @@ export class QuoteService {
       issued: new Date(),
       expires: new Date(dto.expires),
       kind: dto.kind,
+      ...(routing
+        ? {
+            status: QuoteStatus.PENDING_APPROVAL,
+            submittedById: new Types.ObjectId(actor!.id),
+            submittedByName: actor!.name,
+            approval: routing,
+          }
+        : {}),
     });
+    if (routing) {
+      this.approvals.notifyRequested(tenantId, routing, {
+        kind: 'Quote',
+        ref: created.ref,
+        submittedBy: actor!.name,
+        amountLabel: `${created.currency} ${created.totalAmount.toLocaleString()}`,
+        link: '/finance/sales',
+      });
+    }
     return created.toObject();
+  }
+
+  // The owner or a finance manager approves an employee-prepared quote:
+  // it becomes a normal Draft that can then be sent.
+  async approve(tenantId: string, id: string, actor: FinanceActor) {
+    const q = await this.getRawDoc(tenantId, id);
+    if (q.status !== QuoteStatus.PENDING_APPROVAL) {
+      throw new BadRequestException('This quote is not waiting for approval');
+    }
+    const submitterId = q.submittedById ? String(q.submittedById) : null;
+    await this.approvals.assertCanDecide(
+      tenantId,
+      (q.approval as any) ?? null,
+      submitterId,
+      actor,
+    );
+    if (q.approval) {
+      const { state, complete } = this.approvals.record(
+        q.approval as any,
+        actor,
+      );
+      q.approval = state as any;
+      q.markModified('approval');
+      if (!complete) {
+        await q.save();
+        return q.toObject();
+      }
+    }
+    q.status = QuoteStatus.DRAFT;
+    await q.save();
+    this.approvals.notifyDecided(tenantId, submitterId, {
+      kind: 'Quote',
+      ref: q.ref,
+      decision: 'approved',
+      decidedBy: actor.name,
+    });
+    return q.toObject();
+  }
+
+  async reject(tenantId: string, id: string, actor: FinanceActor, reason = '') {
+    const q = await this.getRawDoc(tenantId, id);
+    if (q.status !== QuoteStatus.PENDING_APPROVAL) {
+      throw new BadRequestException('This quote is not waiting for approval');
+    }
+    const submitterId = q.submittedById ? String(q.submittedById) : null;
+    await this.approvals.assertCanDecide(
+      tenantId,
+      (q.approval as any) ?? null,
+      submitterId,
+      actor,
+    );
+    q.status = QuoteStatus.REJECTED;
+    q.rejectedReason = reason;
+    await q.save();
+    this.approvals.notifyDecided(tenantId, submitterId, {
+      kind: 'Quote',
+      ref: q.ref,
+      decision: 'rejected',
+      decidedBy: actor.name,
+      reason,
+    });
+    return q.toObject();
+  }
+
+  // The quotes this person prepared — the employee workspace Finance page.
+  async getSubmittedBy(tenantId: string, userId: string) {
+    return this.model
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        submittedById: new Types.ObjectId(userId),
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  private assertApproved(q: { status: string }) {
+    if (
+      q.status === QuoteStatus.PENDING_APPROVAL ||
+      q.status === QuoteStatus.REJECTED
+    ) {
+      throw new BadRequestException(
+        q.status === QuoteStatus.PENDING_APPROVAL
+          ? 'This quote is still waiting for approval'
+          : 'This quote was rejected — it cannot be sent or converted',
+      );
+    }
   }
 
   private async getRawDoc(tenantId: string, id: string) {
@@ -320,6 +438,7 @@ export class QuoteService {
   // silently failing.
   async setStatus(tenantId: string, id: string, status: QuoteStatus) {
     const q = await this.getRawDoc(tenantId, id);
+    this.assertApproved(q);
     const wasNotSent = q.status !== QuoteStatus.SENT;
 
     if (status === QuoteStatus.SENT && wasNotSent) {
@@ -413,6 +532,7 @@ export class QuoteService {
   // one created first.
   async convertToInvoice(tenantId: string, id: string, dueOn: string) {
     const q = await this.getRawDoc(tenantId, id);
+    this.assertApproved(q);
     if (q.convertedInvoiceId) {
       throw new BadRequestException('This quote has already been converted');
     }

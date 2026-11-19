@@ -1,5 +1,6 @@
 export * from './accounting.controller';
 export * from './banking.controller';
+export * from './employee-finance.controller';
 export * from './finance-settings.controller';
 export * from './fund.controller';
 export * from './invoice.controller';

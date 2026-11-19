@@ -199,17 +199,18 @@ export function buildPurchaseOrderPdf(
 
     // ── Line item table ──
     const colDesc = 50;
-    const colDescW = 210;
-    const colQty = 262;
-    const colQtyW = 45;
-    const colUnit = 310;
-    const colUnitW = 75;
-    const colDiscount = 388;
-    const colDiscountW = 55;
-    const colTax = 446;
-    const colTaxW = 65;
-    const colAmount = 50 + contentWidth - 85;
-    const colAmountW = 85;
+    const colDescW = 160;
+    const colQty = 212;
+    const colQtyW = 48;
+    const colUnit = 260;
+    const colUnitW = 70;
+    const colDiscount = 332;
+    const colDiscountW = 48;
+    const colTax = 384;
+    const colTaxW = 62;
+    // Amount column starts after the tax column ends (no overlap).
+    const colAmount = 50 + contentWidth - 90;
+    const colAmountW = 90;
 
     const headerY = doc.y;
     doc.font(F.bold).fontSize(8).fillColor(PURPLE);
@@ -277,17 +278,27 @@ export function buildPurchaseOrderPdf(
       .stroke();
     doc.moveDown(0.6);
 
+    // The labels sit in their own space to the left of the amount column
+    // (they used to run right up to the page edge and collided with the
+    // figure, e.g. "TOTAL USD" over "1,250,000.00").
+    const totalsLabelX = colUnit;
+    const totalsLabelW = colAmount - 10 - totalsLabelX;
     const totalsBandY = doc.y - 4;
     doc
-      .rect(colTax - 60, totalsBandY, 50 + contentWidth - (colTax - 60), 46)
+      .rect(
+        totalsLabelX - 10,
+        totalsBandY,
+        50 + contentWidth - (totalsLabelX - 10),
+        46,
+      )
       .fill(PURPLE_TINT);
 
     doc
       .font(F.regular)
       .fontSize(9)
       .fillColor(INK)
-      .text('Subtotal', colTax - 60, doc.y + 4, {
-        width: colTaxW + 60,
+      .text('Subtotal', totalsLabelX, doc.y + 4, {
+        width: totalsLabelW,
         align: 'right',
       });
     doc.text(fmtNumber(subtotal), colAmount, doc.y - doc.currentLineHeight(), {
@@ -299,8 +310,8 @@ export function buildPurchaseOrderPdf(
       .font(F.bold)
       .fontSize(11)
       .fillColor(ACCENT)
-      .text(`TOTAL ${data.currency}`, colTax - 60, doc.y + 2, {
-        width: colTaxW + 60,
+      .text(`TOTAL ${data.currency}`, totalsLabelX, doc.y + 2, {
+        width: totalsLabelW,
         align: 'right',
       });
     doc.text(fmtNumber(subtotal), colAmount, doc.y - doc.currentLineHeight(), {
@@ -389,6 +400,10 @@ export function buildPurchaseOrderPdf(
         : null,
     ].filter(Boolean);
     if (footerParts.length && b.footerEnabled) {
+      // Drop the bottom margin while drawing the footer, otherwise PDFKit
+      // treats it as overflow and pushes the footer onto a blank page 2.
+      const bottomMargin = doc.page.margins.bottom;
+      doc.page.margins.bottom = 0;
       doc
         .font(F.regular)
         .fontSize(7.5)
@@ -396,6 +411,7 @@ export function buildPurchaseOrderPdf(
         .text(footerParts.join('.  '), 50, doc.page.height - 50, {
           width: contentWidth,
         });
+      doc.page.margins.bottom = bottomMargin;
     }
 
     if (data.isDraft && b.watermarkDrafts) drawDraftWatermark(doc);

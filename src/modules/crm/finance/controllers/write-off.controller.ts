@@ -20,8 +20,8 @@ import { RequiresModule } from 'src/common/decorators/requires-module.decorator'
 // audit trail across all three checkpoints of the lifecycle.
 @ApiTags('CRM — Finance — Write-offs')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
-@RequiresModule(PlatformModuleKey.CRM, PlatformModuleKey.FINANCE)
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
+@RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/write-offs')
 export class WriteOffController {
   constructor(private readonly service: WriteOffService) {}

@@ -43,6 +43,7 @@ import {
 import { PaginationDto, paginate } from '../../../common/pagination.dto';
 import { EmailService } from '../../../common/utils/mailing/email.service';
 import { SubscriptionExpiryService } from './subscription-expiry.service';
+import { trialEndDate } from '../../../common/utils/subscription-expiry.util';
 import {
   PaymentTransaction,
   PaymentTransactionDocument,
@@ -904,9 +905,7 @@ export class SuperAdminService {
         new Date(now.getFullYear(), now.getMonth() + 1, now.getDate()),
     );
 
-    const trialEndsAt = isFree
-      ? new Date(new Date().setDate(new Date().getDate() + 7))
-      : null;
+    const trialEndsAt = isFree ? trialEndDate() : null;
 
     const subscription = await this.subscriptionModel.findOneAndUpdate(
       { tenantId: new Types.ObjectId(tenantId) },
@@ -1143,8 +1142,7 @@ export class SuperAdminService {
       .lean();
     const baseModules = allModules.map((m) => m.key);
 
-    const trialEndsAt = new Date();
-    trialEndsAt.setDate(trialEndsAt.getDate() + 7); // 7-day trial
+    const trialEndsAt = trialEndDate(); // 14-day trial
 
     // For paid plans, no trial - just a standard period
     const isPaidPlan = plan != SubscriptionPlan.FREE;

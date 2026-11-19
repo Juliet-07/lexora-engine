@@ -1,7 +1,31 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Valuation, ValuationDocument } from '../schemas';
+import {
+  ShareClass,
+  ShareClassDocument,
+  ShareTransaction,
+  ShareTransactionDocument,
+  ShareTransactionType,
+} from '../../governance/schemas';
+import {
+  LedgerAccount,
+  LedgerAccountDocument,
+  GlEntry,
+  GlEntryDocument,
+} from 'src/modules/crm/finance/schemas';
+import { User, UserDocument } from 'src/modules/auth/schemas';
+import {
+  computeIssuedByClass,
+  computeTreasury,
+  latestPrice,
+} from '../../governance/utils/ledger.util';
+import { deriveCompanyFinancials } from '../utils/company-financials.util';
 import {
   UpdateDcfDto,
   AddCompRowDto,
@@ -24,7 +48,120 @@ export class ValuationService {
   constructor(
     @InjectModel(Valuation.name)
     private readonly model: Model<ValuationDocument>,
+    @InjectModel(ShareTransaction.name)
+    private readonly txModel: Model<ShareTransactionDocument>,
+    @InjectModel(ShareClass.name)
+    private readonly classModel: Model<ShareClassDocument>,
+    @InjectModel(LedgerAccount.name)
+    private readonly accountModel: Model<LedgerAccountDocument>,
+    @InjectModel(GlEntry.name)
+    private readonly glModel: Model<GlEntryDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
   ) {}
+
+  // ── Company context ──────────────────────────────────────────
+  // What the tenant's own records say about the company, so the model
+  // is anchored to them instead of free-floating numbers:
+  //   • shares  — the share register (cap table): shares outstanding
+  //     (issued less the company's own treasury shares) and the last
+  //     price per share
+  //   • finance — revenue, margin, net debt and net assets from the
+  //     general ledger
+  // The share count is ALWAYS taken from the register when one exists.
+
+  private async baseCurrency(tenantId: string): Promise<string> {
+    const u = await this.userModel
+      .findById(tenantId)
+      .select('tenantProfile.baseCurrency')
+      .lean();
+    return ((u as any)?.tenantProfile?.baseCurrency || 'USD').toUpperCase();
+  }
+
+  async companyContext(tenantId: string) {
+    const tId = new Types.ObjectId(tenantId);
+    const from = new Date();
+    from.setFullYear(from.getFullYear() - 1);
+    const group = {
+      $group: {
+        _id: '$accountCode',
+        debit: { $sum: '$debit' },
+        credit: { $sum: '$credit' },
+      },
+    };
+    const [txs, classes, accounts, ttmRows, closingRows, baseCurrency] =
+      await Promise.all([
+        this.txModel.find({ tenantId: tId }).lean(),
+        this.classModel.find({ tenantId: tId }).lean(),
+        this.accountModel.find({ tenantId: tId }).lean(),
+        this.glModel.aggregate([
+          { $match: { tenantId: tId, date: { $gte: from } } },
+          group,
+        ]),
+        this.glModel.aggregate([{ $match: { tenantId: tId } }, group]),
+        this.baseCurrency(tenantId),
+      ]);
+
+    const sum = (m: Map<string, number>) =>
+      [...m.values()].reduce((a, b) => a + b, 0);
+    const issued = sum(computeIssuedByClass(txs as any[]));
+    const treasury = sum(computeTreasury(txs as any[]));
+    const outstanding = issued - treasury;
+    const price = latestPrice(txs as any[]);
+    const authorised = classes.reduce(
+      (a: number, c: any) => a + (c.authorised ?? 0),
+      0,
+    );
+
+    const toMap = (rows: any[]) =>
+      new Map<string, number>(rows.map((r) => [r._id, r.debit - r.credit]));
+    const hasBooks = accounts.length > 0 && closingRows.length > 0;
+
+    return {
+      baseCurrency,
+      shares: {
+        source: outstanding > 0 ? 'cap-table' : 'none',
+        authorised,
+        issued,
+        treasury,
+        outstanding,
+        pricePerShare: price,
+        // What the share register currently values the company at.
+        registerValuation: outstanding * price,
+      },
+      finance: hasBooks
+        ? {
+            available: true,
+            periodFrom: from.toISOString().slice(0, 10),
+            periodTo: new Date().toISOString().slice(0, 10),
+            ...deriveCompanyFinancials(
+              accounts as any[],
+              toMap(ttmRows),
+              toMap(closingRows),
+            ),
+          }
+        : { available: false as const },
+    };
+  }
+
+  /** The model as shown/calculated: share count comes from the register. */
+  private async present(tenantId: string, v: any, ctx?: any) {
+    const context = ctx ?? (await this.companyContext(tenantId));
+    const live = this.withRegisterShares(v, context);
+    return {
+      ...this.withComputed(live),
+      context,
+      sharesSource: context.shares.source,
+    };
+  }
+
+  private withRegisterShares(v: any, context: any) {
+    if (!(context.shares.outstanding > 0)) return v;
+    return {
+      ...v,
+      dcf: { ...v.dcf, sharesOutstanding: context.shares.outstanding },
+    };
+  }
 
   // ── Pure formulas — hand-transcribed with exact fidelity from the
   // confirmed prototype. Any deviation here is a real correctness
@@ -204,7 +341,24 @@ export class ValuationService {
   // ── CRUD ─────────────────────────────────────────────────────
 
   async create(tenantId: string) {
+    // Start from the company's own numbers, not placeholders.
+    const ctx = await this.companyContext(tenantId);
+    const fin: any = ctx.finance;
+    const seed: any = { currency: ctx.baseCurrency, dcf: {}, nav: {} };
+    if (fin.available) {
+      seed.dcf.baseRevenue = fin.revenueTtm;
+      if (fin.ebitdaMarginPct !== null)
+        seed.dcf.ebitdaMargin = fin.ebitdaMarginPct;
+      if (fin.daPct !== null) seed.dcf.daPct = fin.daPct;
+      seed.dcf.netDebt = fin.netDebt;
+      seed.nav.bookAssets = fin.totalAssets;
+      seed.nav.liabilities = fin.totalLiabilities;
+    } else {
+      seed.dcf.baseRevenue = 0;
+    }
+    seed.dcf.sharesOutstanding = ctx.shares.outstanding;
     const v = await this.model.create({
+      ...seed,
       tenantId: new Types.ObjectId(tenantId),
       history: [
         {
@@ -215,7 +369,7 @@ export class ValuationService {
         },
       ],
     });
-    return this.withComputed(v.toObject());
+    return this.present(tenantId, v.toObject(), ctx);
   }
 
   async getAll(tenantId: string) {
@@ -223,7 +377,8 @@ export class ValuationService {
       .find({ tenantId: new Types.ObjectId(tenantId) })
       .sort({ createdAt: -1 })
       .lean();
-    return rows.map((v) => this.withComputed(v));
+    const ctx = await this.companyContext(tenantId);
+    return Promise.all(rows.map((v) => this.present(tenantId, v, ctx)));
   }
 
   async getById(tenantId: string, id: string) {
@@ -231,7 +386,7 @@ export class ValuationService {
       .findOne({ _id: id, tenantId: new Types.ObjectId(tenantId) })
       .lean();
     if (!v) throw new NotFoundException('Valuation not found');
-    return this.withComputed(v);
+    return this.present(tenantId, v);
   }
 
   private async getRawDoc(
@@ -255,11 +410,88 @@ export class ValuationService {
     } as any);
   }
 
+  /**
+   * Refresh the model's inputs from the company's books: revenue, EBITDA
+   * margin, D&A, net debt and the NAV balance-sheet figures. Growth,
+   * WACC, tax and the other forward-looking assumptions are judgement
+   * calls and are left exactly as the user set them.
+   */
+  async syncFromCompany(tenantId: string, id: string) {
+    const v = await this.getRawDoc(tenantId, id);
+    const ctx = await this.companyContext(tenantId);
+    const fin: any = ctx.finance;
+    if (!fin.available) {
+      throw new BadRequestException(
+        'There are no Finance records to read yet — post some transactions (or set up the chart of accounts) first.',
+      );
+    }
+    v.dcf.baseRevenue = fin.revenueTtm;
+    if (fin.ebitdaMarginPct !== null) v.dcf.ebitdaMargin = fin.ebitdaMarginPct;
+    if (fin.daPct !== null) v.dcf.daPct = fin.daPct;
+    v.dcf.netDebt = fin.netDebt;
+    v.nav.bookAssets = fin.totalAssets;
+    v.nav.liabilities = fin.totalLiabilities;
+    this.appendHistory(
+      v,
+      `Inputs refreshed from Finance (revenue ${fin.periodFrom} → ${fin.periodTo}, net debt, net assets)`,
+    );
+    await v.save();
+    return this.present(tenantId, v.toObject(), ctx);
+  }
+
+  /**
+   * Record this model's equity value per share as the share register's
+   * current valuation mark, so the cap table (outstanding shares × price)
+   * and Deal Intelligence agree on what the company is worth.
+   */
+  async applyToRegister(tenantId: string, id: string) {
+    const v = await this.getRawDoc(tenantId, id);
+    const ctx = await this.companyContext(tenantId);
+    if (!(ctx.shares.outstanding > 0)) {
+      throw new BadRequestException(
+        'The share register has no shares in issue yet — issue shares first so the value can be spread across them.',
+      );
+    }
+    if (v.currency.toUpperCase() !== ctx.baseCurrency) {
+      throw new BadRequestException(
+        `This model is in ${v.currency} but the share register is in ${ctx.baseCurrency}. Create a new model (it starts in ${ctx.baseCurrency}) before applying it.`,
+      );
+    }
+    const live: any = this.withRegisterShares(v.toObject(), ctx);
+    const blend = this.blendedValuation(live);
+    if (!(blend.equity > 0)) {
+      throw new BadRequestException(
+        'The blended equity value is not positive, so there is no price per share to record.',
+      );
+    }
+    const pricePerShare =
+      Math.round((blend.equity / ctx.shares.outstanding) * 10000) / 10000;
+    await this.txModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      date: new Date(),
+      type: ShareTransactionType.VALUATION,
+      fromNodeId: null,
+      toNodeId: null,
+      shareClassId: null,
+      shares: 0,
+      pricePerShare,
+      note: `Deal Intelligence valuation v${v.history.length + 1} — equity value ${Math.round(blend.equity)} over ${ctx.shares.outstanding} shares outstanding`,
+      reference: 'Deal Intelligence',
+    } as any);
+    this.appendHistory(
+      v,
+      `Applied to share register: ${pricePerShare} per share (equity value ÷ ${ctx.shares.outstanding} shares outstanding)`,
+    );
+    await v.save();
+    const fresh = await this.companyContext(tenantId);
+    return this.present(tenantId, v.toObject(), fresh);
+  }
+
   async updateDcf(tenantId: string, id: string, dto: UpdateDcfDto) {
     const v = await this.getRawDoc(tenantId, id);
     Object.assign(v.dcf, dto);
     await v.save();
-    return this.withComputed(v.toObject());
+    return this.present(tenantId, v.toObject());
   }
 
   async addComp(tenantId: string, id: string, dto: AddCompRowDto) {
@@ -274,7 +506,7 @@ export class ValuationService {
     } as any);
     this.appendHistory(v, `Added peer ${dto.company}`);
     await v.save();
-    return this.withComputed(v.toObject());
+    return this.present(tenantId, v.toObject());
   }
 
   async removeComp(tenantId: string, id: string, index: number) {
@@ -285,7 +517,7 @@ export class ValuationService {
     v.comps.splice(index, 1);
     this.appendHistory(v, `Removed peer ${name}`);
     await v.save();
-    return this.withComputed(v.toObject());
+    return this.present(tenantId, v.toObject());
   }
 
   async updatePrivateDiscount(
@@ -296,7 +528,7 @@ export class ValuationService {
     const v = await this.getRawDoc(tenantId, id);
     v.privateDiscount = dto.privateDiscount;
     await v.save();
-    return this.withComputed(v.toObject());
+    return this.present(tenantId, v.toObject());
   }
 
   // Precedent add/remove — a real gap-fill: the confirmed prototype
@@ -315,7 +547,7 @@ export class ValuationService {
     } as any);
     this.appendHistory(v, `Added precedent ${dto.target}`);
     await v.save();
-    return this.withComputed(v.toObject());
+    return this.present(tenantId, v.toObject());
   }
 
   async removePrecedent(tenantId: string, id: string, index: number) {
@@ -326,21 +558,21 @@ export class ValuationService {
     v.precedents.splice(index, 1);
     this.appendHistory(v, `Removed precedent ${name}`);
     await v.save();
-    return this.withComputed(v.toObject());
+    return this.present(tenantId, v.toObject());
   }
 
   async updateNav(tenantId: string, id: string, dto: UpdateNavDto) {
     const v = await this.getRawDoc(tenantId, id);
     Object.assign(v.nav, dto);
     await v.save();
-    return this.withComputed(v.toObject());
+    return this.present(tenantId, v.toObject());
   }
 
   async updateDdm(tenantId: string, id: string, dto: UpdateDdmDto) {
     const v = await this.getRawDoc(tenantId, id);
     Object.assign(v.ddm, dto);
     await v.save();
-    return this.withComputed(v.toObject());
+    return this.present(tenantId, v.toObject());
   }
 
   async updateBlendEntry(
@@ -364,14 +596,14 @@ export class ValuationService {
       );
     }
     await v.save();
-    return this.withComputed(v.toObject());
+    return this.present(tenantId, v.toObject());
   }
 
   async snapshotVersion(tenantId: string, id: string) {
     const v = await this.getRawDoc(tenantId, id);
     this.appendHistory(v, 'Blend assumptions committed to version history');
     await v.save();
-    return this.withComputed(v.toObject());
+    return this.present(tenantId, v.toObject());
   }
 
   async getReportPdf(
@@ -380,7 +612,10 @@ export class ValuationService {
     businessName: string,
   ): Promise<Buffer> {
     const raw = await this.getRawDoc(tenantId, id);
-    const v = raw.toObject();
+    const v: any = this.withRegisterShares(
+      raw.toObject(),
+      await this.companyContext(tenantId),
+    );
 
     const dcf = this.runDcf(v.dcf);
     const comps = this.runComps(v);

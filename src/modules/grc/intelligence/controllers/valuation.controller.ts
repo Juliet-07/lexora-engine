@@ -42,6 +42,16 @@ export class ValuationController {
     return this.service.create(t || u);
   }
 
+  // What the company's own records say (cap table shares + price, Finance
+  // revenue / net debt / net assets) — the model is anchored to these.
+  @Get('company-context')
+  companyContext(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.companyContext(t || u);
+  }
+
   @Get()
   getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
     return this.service.getAll(t || u);
@@ -54,6 +64,24 @@ export class ValuationController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.getById(t || u, id);
+  }
+
+  @Post(':id/sync-company')
+  syncFromCompany(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.syncFromCompany(t || u, id);
+  }
+
+  @Post(':id/apply-to-register')
+  applyToRegister(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.applyToRegister(t || u, id);
   }
 
   @Patch(':id/dcf')

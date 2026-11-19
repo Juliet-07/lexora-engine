@@ -44,6 +44,7 @@ import {
   chronological,
   computeHoldings,
   computeIssuedByClass,
+  computeTreasury,
   latestPrice,
   vestedShares,
 } from '../utils/ledger.util';
@@ -126,6 +127,8 @@ export class CapTableService {
     const classById = new Map(classes.map((c) => [String(c._id), c]));
     const bal = new Map<string, number>();
     const issued = new Map<string, number>();
+    // Shares the company itself holds (bought back, not yet resold).
+    const treasury = new Map<string, number>();
     const key = (n: any, c: any) => `${String(n)}|${String(c)}`;
 
     for (const t of chronological(txs)) {
@@ -133,22 +136,31 @@ export class CapTableService {
       const n = t.shares ?? 0;
       const cls = classById.get(String(t.shareClassId));
       if (!cls) throw new BadRequestException('Share class not found.');
+      const cid = String(cls._id);
       const when = new Date(t.date as any).toISOString().slice(0, 10);
 
       if (t.type === ShareTransactionType.ISSUANCE) {
-        const total = (issued.get(String(cls._id)) ?? 0) + n;
+        const total = (issued.get(cid) ?? 0) + n;
         if (total > cls.authorised) {
           throw new BadRequestException(
             `Issuing ${fmt(n)} ${cls.name} shares${when ? ` (${when})` : ''} would take issued shares to ${fmt(total)}, above the ${fmt(cls.authorised)} authorised. Increase the authorised amount first.`,
           );
         }
-        issued.set(String(cls._id), total);
-        bal.set(
-          key(t.toNodeId, cls._id),
-          (bal.get(key(t.toNodeId, cls._id)) ?? 0) + n,
-        );
+        issued.set(cid, total);
+        bal.set(key(t.toNodeId, cid), (bal.get(key(t.toNodeId, cid)) ?? 0) + n);
+      } else if (t.type === ShareTransactionType.TRANSFER && !t.fromNodeId) {
+        // Resale of treasury shares — the company is the seller.
+        const have = treasury.get(cid) ?? 0;
+        if (have < n) {
+          throw new BadRequestException(
+            `The company only holds ${fmt(have)} ${cls.name} treasury shares${when ? ` on ${when}` : ''}, so ${fmt(n)} can't be resold.`,
+          );
+        }
+        treasury.set(cid, have - n);
+        const k2 = key(t.toNodeId, cid);
+        bal.set(k2, (bal.get(k2) ?? 0) + n);
       } else {
-        const k = key(t.fromNodeId, cls._id);
+        const k = key(t.fromNodeId, cid);
         const have = bal.get(k) ?? 0;
         if (have < n) {
           throw new BadRequestException(
@@ -157,10 +169,12 @@ export class CapTableService {
         }
         bal.set(k, have - n);
         if (t.type === ShareTransactionType.TRANSFER) {
-          const k2 = key(t.toNodeId, cls._id);
+          const k2 = key(t.toNodeId, cid);
           bal.set(k2, (bal.get(k2) ?? 0) + n);
         } else {
-          issued.set(String(cls._id), (issued.get(String(cls._id)) ?? 0) - n);
+          // Buyback — the shares go back to the company, not out of issue
+          // and not to the other holders.
+          treasury.set(cid, (treasury.get(cid) ?? 0) + n);
         }
       }
     }
@@ -189,11 +203,20 @@ export class CapTableService {
     const price = latestPrice(txs as any[]);
     const holdings = computeHoldings(txs as any[]);
     const issuedBy = computeIssuedByClass(txs as any[]);
+    const treasuryBy = computeTreasury(txs as any[]);
     const classById = new Map(classes.map((c) => [String(c._id), c]));
 
+    // The register starts as the company's and is shared out. Shares the
+    // company has bought back stay in the register total (so no other
+    // holder's percentage moves), but they hold no vote and are not valued
+    // as owned by a shareholder.
     const totalIssued = [...issuedBy.values()].reduce((a, b) => a + b, 0);
-    const votingIssued = [...issuedBy].reduce(
-      (a, [cid, n]) => a + (classById.get(cid)?.votingRights ? n : 0),
+    const totalTreasury = [...treasuryBy.values()].reduce((a, b) => a + b, 0);
+    const outstanding = totalIssued - totalTreasury;
+    const votingOutstanding = [...issuedBy].reduce(
+      (a, [cid, n]) =>
+        a +
+        (classById.get(cid)?.votingRights ? n - (treasuryBy.get(cid) ?? 0) : 0),
       0,
     );
     const totalAuthorised = classes.reduce((a, c) => a + c.authorised, 0);
@@ -247,7 +270,9 @@ export class CapTableService {
           totalShares: total,
           votingShares: voteShares,
           pct: totalIssued ? (total / totalIssued) * 100 : 0,
-          votingPct: votingIssued ? (voteShares / votingIssued) * 100 : 0,
+          votingPct: votingOutstanding
+            ? (voteShares / votingOutstanding) * 100
+            : 0,
           value: total * price,
           vesting: mine.length ? { total: vestTotal, vested } : null,
         };
@@ -262,8 +287,24 @@ export class CapTableService {
         authorised: totalAuthorised,
         issued: totalIssued,
         unissued: Math.max(0, totalAuthorised - totalIssued),
+        // Held by the company after buybacks, and what shareholders hold.
+        treasury: totalTreasury,
+        outstanding,
         shareholders: holders.filter((h: any) => h.totalShares > 0).length,
-        valuation: totalIssued * price,
+        valuation: outstanding * price,
+      },
+      // The company as a holder: what it has bought back (treasury) plus
+      // what is still unissued out of the authorised amount.
+      company: {
+        name: 'Company (treasury)',
+        treasuryShares: totalTreasury,
+        unissuedShares: Math.max(0, totalAuthorised - totalIssued),
+        pct: totalIssued ? (totalTreasury / totalIssued) * 100 : 0,
+        holdings: [...treasuryBy].map(([cid, shares]) => ({
+          classId: cid,
+          className: classById.get(cid)?.name ?? 'Unknown',
+          shares,
+        })),
       },
       classes: classes.map((c) => ({
         id: String(c._id),
@@ -279,6 +320,7 @@ export class CapTableService {
         conversion: c.conversion ?? 'None',
         rights: c.rights,
         issued: issuedBy.get(String(c._id)) ?? 0,
+        treasury: treasuryBy.get(String(c._id)) ?? 0,
         holders: [...holdings].filter(
           ([k]) => k.split('|')[1] === String(c._id),
         ).length,
@@ -397,7 +439,8 @@ export class CapTableService {
       type: t.type,
       fromNodeId: t.fromNodeId ? String(t.fromNodeId) : null,
       from:
-        t.type === ShareTransactionType.ISSUANCE
+        t.type === ShareTransactionType.ISSUANCE ||
+        (t.type === ShareTransactionType.TRANSFER && !t.fromNodeId)
           ? 'Company'
           : t.fromNodeId
             ? (names.get(String(t.fromNodeId)) ?? 'Removed holder')
@@ -476,9 +519,10 @@ export class CapTableService {
         }
         tx.toNodeId = to._id;
       } else if (dto.type === ShareTransactionType.TRANSFER) {
-        const from = needNode(dto.fromNodeId, 'seller');
+        // No seller = the company reselling treasury shares it bought back.
+        const from = dto.fromNodeId ? needNode(dto.fromNodeId, 'seller') : null;
         const to = needNode(dto.toNodeId, 'buyer');
-        if (String(from._id) === String(to._id)) {
+        if (from && String(from._id) === String(to._id)) {
           throw new BadRequestException(
             'Seller and buyer can’t be the same holder.',
           );
@@ -488,7 +532,7 @@ export class CapTableService {
             `${to.name} isn't a shareholder yet — add the Shareholder role first.`,
           );
         }
-        tx.fromNodeId = from._id;
+        tx.fromNodeId = from ? from._id : null;
         tx.toNodeId = to._id;
       } else {
         tx.fromNodeId = needNode(dto.fromNodeId, 'holder selling back')._id;
