@@ -23,7 +23,15 @@ export interface ApprovalState {
   // Everyone (other than the owner) allowed to approve this item.
   approverIds: string[];
   approverNames: string[];
-  approvals: { userId: string; name: string; at: Date }[];
+  // When it was sent for approval.
+  submittedAt?: Date;
+  // `isOwner` marks the account owner's decision — it completes the
+  // approval on its own.
+  approvals: { userId: string; name: string; at: Date; isOwner?: boolean }[];
+  // Who sent it back, when, and why.
+  rejectedById?: string;
+  rejectedBy?: string;
+  rejectedAt?: Date;
   rejectedReason?: string;
 }
 
@@ -121,9 +129,25 @@ export function recordApproval(
 ): { state: ApprovalState; complete: boolean } {
   const approvals = [
     ...state.approvals,
-    { userId: actor.id, name: actor.name, at: now },
+    { userId: actor.id, name: actor.name, at: now, isOwner: actor.isOwner },
   ];
   const needed = state.mode === 'dual' ? 2 : 1;
   const complete = actor.isOwner || approvals.length >= needed;
   return { state: { ...state, approvals }, complete };
+}
+
+// Records who sent an item back, when and why.
+export function recordRejection(
+  state: ApprovalState,
+  actor: ApprovalActor,
+  reason = '',
+  now = new Date(),
+): ApprovalState {
+  return {
+    ...state,
+    rejectedById: actor.id,
+    rejectedBy: actor.name,
+    rejectedAt: now,
+    rejectedReason: reason,
+  };
 }

@@ -381,7 +381,10 @@ export class BillController {
 @RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/expense-claims')
 export class ExpenseClaimController {
-  constructor(private readonly service: ExpenseClaimService) {}
+  constructor(
+    private readonly service: ExpenseClaimService,
+    private readonly approvals: FinanceApprovalService,
+  ) {}
 
   @Post()
   @UseInterceptors(
@@ -428,22 +431,26 @@ export class ExpenseClaimController {
     summary:
       'Approve for reimbursement — rechargeable claims join the WIP disbursement register',
   })
-  approve(
+  async approve(
     @Param('id') id: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
   ) {
-    return this.service.approve(t || u, id);
+    const actor = await this.approvals.actorFor(u, t || u, userType);
+    return this.service.approve(t || u, id, actor.name);
   }
 
   @Post(':id/reject')
   @ApiOperation({ summary: 'Reject' })
-  reject(
+  async reject(
     @Param('id') id: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
   ) {
-    return this.service.reject(t || u, id);
+    const actor = await this.approvals.actorFor(u, t || u, userType);
+    return this.service.reject(t || u, id, actor.name);
   }
 
   @Post(':id/mark-paid')

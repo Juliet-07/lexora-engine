@@ -140,6 +140,7 @@ export class Bill {
   status: BillStatus;
   @Prop({ default: false }) recurring: boolean;
   @Prop({ default: null }) approvedBy: string | null;
+  @Prop({ default: null }) approvedAt: Date | null;
   @Prop({ default: null }) paidAt: Date | null;
 
   // Set when a real payment date/time is chosen via
@@ -267,6 +268,9 @@ export class ExpenseClaim {
   @Prop({ default: false }) rechargeable: boolean;
   @Prop({ enum: ClaimStatus, default: ClaimStatus.SUBMITTED, index: true })
   status: ClaimStatus;
+  // Who approved or rejected it, and when.
+  @Prop({ default: '' }) decidedByName: string;
+  @Prop({ default: null }) decidedAt: Date | null;
 
   // Proof of the expense — a receipt photo or document. Optional at
   // the schema level since it's attached via its own upload endpoint

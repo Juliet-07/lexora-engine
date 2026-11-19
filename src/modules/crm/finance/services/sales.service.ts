@@ -387,6 +387,14 @@ export class QuoteService {
     );
     q.status = QuoteStatus.REJECTED;
     q.rejectedReason = reason;
+    if (q.approval) {
+      q.approval = this.approvals.rejection(
+        q.approval as any,
+        actor,
+        reason,
+      ) as any;
+      q.markModified('approval');
+    }
     await q.save();
     this.approvals.notifyDecided(tenantId, submitterId, {
       kind: 'Quote',

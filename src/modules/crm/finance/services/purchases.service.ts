@@ -566,6 +566,7 @@ export class BillService {
     }
     b.status = BillStatus.APPROVED;
     b.approvedBy = actor?.name ?? approvedBy;
+    b.approvedAt = new Date();
     await b.save();
     if (actor) {
       this.approvals.notifyDecided(tenantId, submitterId, {
@@ -629,6 +630,14 @@ export class BillService {
     }
     b.status = BillStatus.REJECTED;
     b.rejectedReason = reason;
+    if (actor && b.approval) {
+      b.approval = this.approvals.rejection(
+        b.approval as any,
+        actor,
+        reason,
+      ) as any;
+      b.markModified('approval');
+    }
     await b.save();
     if (actor) {
       this.approvals.notifyDecided(tenantId, submitterId, {
@@ -950,9 +959,11 @@ export class ExpenseClaimService {
     return c;
   }
 
-  async approve(tenantId: string, id: string) {
+  async approve(tenantId: string, id: string, decidedBy = '') {
     const c = await this.getRawDoc(tenantId, id);
     c.status = ClaimStatus.APPROVED;
+    c.decidedByName = decidedBy;
+    c.decidedAt = new Date();
     await c.save();
 
     // Rechargeable claims sit in Unbilled disbursements — the same
@@ -992,9 +1003,11 @@ export class ExpenseClaimService {
     return c.toObject();
   }
 
-  async reject(tenantId: string, id: string) {
+  async reject(tenantId: string, id: string, decidedBy = '') {
     const c = await this.getRawDoc(tenantId, id);
     c.status = ClaimStatus.REJECTED;
+    c.decidedByName = decidedBy;
+    c.decidedAt = new Date();
     await c.save();
     return c.toObject();
   }

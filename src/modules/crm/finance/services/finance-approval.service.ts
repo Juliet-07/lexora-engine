@@ -14,6 +14,7 @@ import {
   ApprovalState,
   canApprove,
   recordApproval,
+  recordRejection,
   routeApproval,
 } from './finance-approval.logic';
 
@@ -114,6 +115,7 @@ export class FinanceApprovalService {
       approverIds: routed.approverIds,
       approverNames: routed.approverIds.map(nameOf),
       approvals: [],
+      submittedAt: new Date(),
     };
   }
 
@@ -190,5 +192,10 @@ export class FinanceApprovalService {
 
   record(state: ApprovalState, actor: FinanceActor) {
     return recordApproval(state, toApprovalActor(actor));
+  }
+
+  /** Stamps who sent an item back, when and why onto its approval state. */
+  rejection(state: ApprovalState, actor: FinanceActor, reason = '') {
+    return recordRejection(state, toApprovalActor(actor), reason);
   }
 }
