@@ -13,6 +13,7 @@ import {
   IsEmail,
   Min,
   Max,
+  Length,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { BillingModel } from '../schemas';
@@ -941,4 +942,11 @@ export class SaveReportContentDto {
   @ValidateNested({ each: true })
   @Type(() => ReportActionDto)
   actions?: ReportActionDto[];
+}
+
+export class SetBaseCurrencyDto {
+  @ApiProperty({ example: 'RWF', description: '3-letter currency code' })
+  @IsString()
+  @Length(3, 3)
+  baseCurrency: string;
 }

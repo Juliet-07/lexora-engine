@@ -35,6 +35,7 @@ import {
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
 import { FinanceSettingsService } from '../services/finance-settings.service';
 import { FinanceSettingsPreviewService } from '../services/finance-settings-preview.service';
+import { SetBaseCurrencyDto } from '../dtos/finance.dto';
 
 const logoUpload = {
   storage: memoryStorage(),
@@ -144,6 +145,24 @@ export class FinanceSettingsController {
     return this.service.resetSection(t || u, section, await this.actor(u));
   }
 
+  // Declared before ':section' so it is not read as a section name.
+  @Put('base-currency')
+  @ApiOperation({
+    summary:
+      'Change the account base currency — restates the ledger and budgets into it',
+  })
+  async setBaseCurrency(
+    @Body() body: SetBaseCurrencyDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.setBaseCurrency(
+      t || u,
+      body.baseCurrency,
+      await this.actor(u),
+    );
+  }
+
   @Put(':section')
   @ApiOperation({
     summary:
@@ -156,7 +175,14 @@ export class FinanceSettingsController {
     @CurrentUser('tenantId') t: string,
   ) {
     if (!body || typeof body !== 'object')
-      throw new BadRequestException('Send the settings to change as an object.');
-    return this.service.updateSection(t || u, section, body, await this.actor(u));
+      throw new BadRequestException(
+        'Send the settings to change as an object.',
+      );
+    return this.service.updateSection(
+      t || u,
+      section,
+      body,
+      await this.actor(u),
+    );
   }
 }

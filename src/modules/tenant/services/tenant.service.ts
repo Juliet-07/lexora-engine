@@ -4,7 +4,6 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
-  ConflictException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -650,32 +649,19 @@ export class TenantService {
 
   /**
    * The account's base currency — what every screen defaults to and shows
-   * money in. `locked` once the ledger holds entries, because those are
-   * kept in this currency and cannot be silently re-denominated.
+   * money in. It is set in Finance Settings (owner only) and read here by
+   * every user of the tenant.
    */
-  async getBaseCurrencyState(tenantId: string): Promise<{
-    baseCurrency: string;
-    locked: boolean;
-    lockedReason: string | null;
-  }> {
+  async getBaseCurrency(tenantId: string): Promise<{ baseCurrency: string }> {
     const tenant = await this.userModel
       .findById(tenantId)
       .select('tenantProfile.baseCurrency')
       .lean();
     if (!tenant) throw new NotFoundException('Tenant not found');
-    const baseCurrency = String(
-      (tenant as any)?.tenantProfile?.baseCurrency || 'USD',
-    ).toUpperCase();
-    const entries = await this.userModel.db
-      .collection('crm_gl_entries')
-      .countDocuments({ tenantId: new Types.ObjectId(tenantId) }, { limit: 1 });
-    const locked = entries > 0;
     return {
-      baseCurrency,
-      locked,
-      lockedReason: locked
-        ? `Your accounts already have ledger entries recorded in ${baseCurrency}, so the base currency can no longer be changed. Set it before you start recording finance transactions.`
-        : null,
+      baseCurrency: String(
+        (tenant as any)?.tenantProfile?.baseCurrency || 'USD',
+      ).toUpperCase(),
     };
   }
 
@@ -686,22 +672,6 @@ export class TenantService {
     const update: any = {};
     if (dto.phone) update.phone = dto.phone;
 
-    // The base currency is the one currency the whole account is kept in.
-    // Validate it, and refuse a change once the ledger has entries: those
-    // entries are stored in the old currency, so switching would leave the
-    // books in two currencies and every report wrong.
-    if (dto.baseCurrency !== undefined) {
-      const next = String(dto.baseCurrency).trim().toUpperCase();
-      if (!/^[A-Z]{3}$/.test(next))
-        throw new BadRequestException(
-          'Choose a valid 3-letter currency code, e.g. USD or RWF.',
-        );
-      dto.baseCurrency = next;
-      const current = await this.getBaseCurrencyState(tenantId);
-      if (next !== current.baseCurrency && current.locked)
-        throw new ConflictException(current.lockedReason);
-    }
-
     const profileFields = [
       'businessName',
       'industry',
@@ -710,7 +680,6 @@ export class TenantService {
       'taxId',
       'address',
       'contactPerson',
-      'baseCurrency',
     ];
     for (const field of profileFields) {
       if (dto[field] !== undefined) {
