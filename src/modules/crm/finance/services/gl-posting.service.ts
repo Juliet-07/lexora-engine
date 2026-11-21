@@ -49,11 +49,12 @@ export class GlPostingService {
       credit?: number;
       sourceId?: Types.ObjectId | string | null;
     }[],
-    sourceCurrency: string = 'USD',
+    sourceCurrency?: string,
   ) {
     const tId = new Types.ObjectId(tenantId);
     const baseCurrency = await this.getBaseCurrency(tenantId);
-    const currency = (sourceCurrency || 'USD').toUpperCase();
+    // A document with no currency of its own is in the account's currency.
+    const currency = (sourceCurrency || baseCurrency).toUpperCase();
 
     const { rate } =
       currency === baseCurrency

@@ -71,12 +71,28 @@ export class TenantController {
     return this.service.getMyProfile(userId);
   }
 
+  @Get('currency')
+  @ApiOperation({
+    summary:
+      'The account base currency every screen defaults to (any user of the tenant)',
+  })
+  getCurrency(
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getBaseCurrencyState(t || u);
+  }
+
   @Patch('profile')
   @ApiOperation({ summary: 'Update tenant business profile' })
   updateMyProfile(
     @CurrentUser('sub') userId: string,
+    @CurrentUser('userType') userType: string,
     @Body() dto: UpdateTenantProfileDto,
   ) {
+    // Only the account owner's record is the tenant's profile; the base
+    // currency is an account-wide setting and is never taken from anyone else.
+    if (userType !== UserType.TENANT) delete dto.baseCurrency;
     return this.service.updateMyProfile(userId, dto);
   }
 
