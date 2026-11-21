@@ -5,6 +5,7 @@ import {
   CalendarEventSchema,
 } from '../crm/tools/schemas/calendar.schema';
 import { MongooseModule } from '@nestjs/mongoose';
+import { EmployeeIndexMigration } from './services/employee-index.migration';
 import {
   PlatformContractTemplate,
   PlatformContractTemplateSchema,
@@ -305,6 +306,7 @@ import { DocumentBrandingService } from '../crm/finance/services/document-brandi
     NoticeEmployeeController,
   ],
   providers: [
+    EmployeeIndexMigration,
     EmployeeService,
     EmailService,
     LeaveService,

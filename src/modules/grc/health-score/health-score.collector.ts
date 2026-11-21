@@ -647,7 +647,11 @@ export class HealthScoreCollector {
   // ── HR and Payroll ─────────────────────────────────────────────
   private hr(add: Add, c: Ctx) {
     const { tid, now, yearAgo } = c;
+    // The tenant owner's own record is an account, not a measured part of
+    // the workforce, so it is left out of every HR indicator.
+    const notOwner = { 'metadata.isOwnerRecord': { $ne: true } };
     const current = {
+      ...notOwner,
       employmentStatus: {
         $in: ['active', 'on_leave', 'probation', 'suspended'],
       },
@@ -755,7 +759,7 @@ export class HealthScoreCollector {
     });
 
     add('hr.turnover_rate', async () => {
-      const emps = await this.rows('hr_employees', tid);
+      const emps = await this.rows('hr_employees', tid, notOwner);
       const headcount = emps.filter(
         (e) =>
           e.employmentStatus !== 'terminated' ||

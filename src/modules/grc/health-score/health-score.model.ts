@@ -2,16 +2,19 @@
 // GRC Health Score — the model the product owner specified.
 //
 //   HealthScore  = Σ ( ModuleWeight × ModuleScore )      five modules
-//   ModuleScore  = Σ ( w × normalise(indicator) ) / Σ w   then × 0.95
-//                  for every indicator that scores below 50
+//   ModuleScore  = Σ ( w × normalise(indicator) ) / Σ w   over ALL the
+//                  module's indicators (unmeasured = 0), then × 0.95
+//                  for every measured indicator that scores below 50
 //   normalise(x) = clamp( (x − floor) / (target − floor) × 100, 0, 100 )
 //
-// Two things differ from the prototype, on purpose:
-//   • Every value is measured from the tenant's own records. An
-//     indicator the system has nothing to measure yet is shown as
-//     "Not measured" and left out — its weight is shared out among the
-//     indicators that are measured, so a missing record never counts
-//     as a perfect score or a zero.
+// How it behaves on purpose:
+//   • Every value is measured from the tenant's own records. Nothing is
+//     assumed: an indicator the system has nothing to measure yet earns
+//     0 but keeps its full weight, so a tenant that has not used a module
+//     scores 0 there and the score rises only as the tenant actually
+//     records work in the platform. A brand-new tenant starts at 0.
+//   • A module (or the company) with nothing measured at all has no grade
+//     — it is "Not started" rather than "Critical".
 //   • Floors, targets and weights can be changed per tenant (Settings
 //     tab); the defaults below are the product owner's.
 // ═══════════════════════════════════════════════════════════════
@@ -618,8 +621,7 @@ export interface HsIndicatorResult extends HsIndicatorDef {
   normalised: number | null;
   basis: string;
   sample: number;
-  /** Share of the module score this indicator carries, after leaving out
-   *  anything not measured. */
+  /** Share of the module score this indicator carries. */
   effectiveWeight: number;
   /** True if the tenant changed floor, target or weight from the default. */
   customised: boolean;
@@ -631,8 +633,8 @@ export interface HsModuleResult {
   fullName: string;
   weight: number;
   effectiveWeight: number;
-  /** null when none of the module's indicators could be measured. */
-  score: number | null;
+  /** 0 when nothing in the module has been measured yet. */
+  score: number;
   rawScore: number | null;
   penalty: number;
   critCount: number;
@@ -685,27 +687,31 @@ export function computeHealthScore(
         isMeasured: !!m,
         value: m ? m.value : null,
         normalised: m ? normalise(m.value, d.floor, d.target) : null,
-        basis: m?.basis ?? 'Nothing recorded yet to measure this from.',
+        basis:
+          m?.basis ?? 'Nothing recorded yet — counts as 0 until it is used.',
         sample: m?.sample ?? 0,
         effectiveWeight: 0,
         customised: customised.has(d.key),
       } as HsIndicatorResult;
     });
     const live = rows.filter((r) => r.isMeasured);
-    const wSum = live.reduce((s, r) => s + r.weight, 0);
-    let raw: number | null = null;
+    // Every indicator keeps its weight; one with nothing measured earns 0.
+    const wSum = rows.reduce((s, r) => s + r.weight, 0);
+    let raw = 0;
     let penalty = 1;
     let critCount = 0;
-    if (live.length && wSum > 0) {
+    if (wSum > 0) {
       raw =
         live.reduce((s, r) => s + r.weight * (r.normalised as number), 0) /
         wSum;
+      rows.forEach((r) => (r.effectiveWeight = r1((r.weight / wSum) * 100)));
+    }
+    if (live.length) {
       critCount = live.filter((r) => (r.normalised as number) < 50).length;
       penalty = Math.pow(0.95, critCount);
-      live.forEach((r) => (r.effectiveWeight = r1((r.weight / wSum) * 100)));
     }
-    const score = raw === null ? null : r1(raw * penalty);
-    const g = score === null ? null : gradeFor(score);
+    const score = r1(raw * penalty);
+    const g = live.length ? gradeFor(score) : null;
     return {
       key: mod.key,
       name: mod.name,
@@ -713,7 +719,7 @@ export function computeHealthScore(
       weight,
       effectiveWeight: 0,
       score,
-      rawScore: raw === null ? null : r1(raw),
+      rawScore: r1(raw),
       penalty: r1(penalty * 100) / 100,
       critCount,
       measuredCount: live.length,
@@ -724,18 +730,19 @@ export function computeHealthScore(
     };
   });
 
-  const scored = modules.filter((m) => m.score !== null);
-  const wTotal = scored.reduce((s, m) => s + m.weight, 0);
-  let composite: number | null = null;
-  if (scored.length && wTotal > 0) {
+  // The company score weighs all five modules; one with nothing measured
+  // contributes 0, so the composite starts at 0 and grows with use.
+  const wTotal = modules.reduce((s, m) => s + m.weight, 0);
+  let composite = 0;
+  if (wTotal > 0) {
     composite = r1(
-      scored.reduce((s, m) => s + (m.weight / wTotal) * (m.score as number), 0),
+      modules.reduce((s, m) => s + (m.weight / wTotal) * m.score, 0),
     );
-    scored.forEach((m) => (m.effectiveWeight = r1((m.weight / wTotal) * 100)));
+    modules.forEach((m) => (m.effectiveWeight = r1((m.weight / wTotal) * 100)));
   }
   const total = modules.reduce((s, m) => s + m.totalCount, 0);
   const live = modules.reduce((s, m) => s + m.measuredCount, 0);
-  const g = composite === null ? null : gradeFor(composite);
+  const g = live ? gradeFor(composite) : null;
   return {
     composite,
     grade: g?.grade ?? null,

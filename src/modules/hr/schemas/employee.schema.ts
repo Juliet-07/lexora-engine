@@ -203,7 +203,8 @@ export class Employee {
   certificates: EmployeeCertificate[];
 
   // ── Employment Info ────────────────────────────────────────
-  @Prop({ required: true, unique: true })
+  // Unique per tenant — see the (tenantId, employeeNumber) index below.
+  @Prop({ required: true })
   employeeNumber: string;
 
   @Prop({ required: true })
@@ -345,6 +346,13 @@ export class Employee {
 }
 
 export const EmployeeSchema = SchemaFactory.createForClass(Employee);
+
+// Employee numbers are a per-tenant sequence (EMP-0001 in every tenant), so
+// they are unique per tenant — never globally.
+EmployeeSchema.index(
+  { tenantId: 1, employeeNumber: 1 },
+  { unique: true, name: 'tenantId_1_employeeNumber_1' },
+);
 
 // ── Attendance — clientId removed ─────────────────────────────
 

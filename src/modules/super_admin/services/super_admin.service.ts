@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import { createWithEmployeeNumber } from '../../hr/utils/employee-number.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import type { QueryFilter } from 'mongoose';
@@ -1170,31 +1171,32 @@ export class SuperAdminService {
     lastName: string,
     email: string,
   ): Promise<void> {
-    const count = await this.employeeModel.countDocuments({ tenantId });
-    const employeeNumber = `EMP-${String(count + 1).padStart(4, '0')}`;
-
-    await this.employeeModel.create({
+    await createWithEmployeeNumber(
+      this.employeeModel,
       tenantId,
-      teamId: null,
-      locationId: null,
-      userId,
-      firstName,
-      lastName,
-      email: email.toLowerCase(),
-      employeeNumber,
-      jobTitle: 'Owner',
-      hierarchyRole: EmployeeHierarchyRole.OWNER,
-      reportsToManagerId: null,
-      reportsToTenantId: tenantId,
-      employmentType: EmploymentType.FULL_TIME,
-      employmentStatus: EmploymentStatus.ACTIVE,
-      startDate: new Date(),
-      salaryCurrency: 'RWF',
-      salaryFrequency: 'monthly',
-      annualLeaveBalance: 21,
-      sickLeaveBalance: 10,
-      metadata: { isOwnerRecord: true },
-    });
+      (employeeNumber) => ({
+        tenantId,
+        teamId: null,
+        locationId: null,
+        userId,
+        firstName,
+        lastName,
+        email: email.toLowerCase(),
+        employeeNumber,
+        jobTitle: 'Owner',
+        hierarchyRole: EmployeeHierarchyRole.OWNER,
+        reportsToManagerId: null,
+        reportsToTenantId: tenantId,
+        employmentType: EmploymentType.FULL_TIME,
+        employmentStatus: EmploymentStatus.ACTIVE,
+        startDate: new Date(),
+        salaryCurrency: 'RWF',
+        salaryFrequency: 'monthly',
+        annualLeaveBalance: 21,
+        sickLeaveBalance: 10,
+        metadata: { isOwnerRecord: true },
+      }),
+    );
   }
 
   private async createDefaultPayrollPolicy(

@@ -6,6 +6,7 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
+import { createWithEmployeeNumber } from '../utils/employee-number.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
@@ -383,31 +384,32 @@ export class EmployeeService {
     });
     if (existing) return existing;
 
-    const count = await this.employeeModel.countDocuments({ tenantId: tId });
-    const employeeNumber = `EMP-${String(count + 1).padStart(4, '0')}`;
-
-    return this.employeeModel.create({
-      tenantId: tId,
-      teamId: null,
-      locationId: null,
-      userId: new Types.ObjectId(userId),
-      firstName,
-      lastName,
-      email: email.toLowerCase(),
-      employeeNumber,
-      jobTitle: 'Owner',
-      hierarchyRole: EmployeeHierarchyRole.OWNER,
-      reportsToManagerId: null,
-      reportsToTenantId: tId,
-      employmentType: EmploymentType.FULL_TIME,
-      employmentStatus: EmploymentStatus.ACTIVE,
-      startDate: new Date(),
-      salaryCurrency: 'USD',
-      salaryFrequency: 'monthly',
-      annualLeaveBalance: 21,
-      sickLeaveBalance: 10,
-      metadata: { createdBy: userId, isOwnerRecord: true },
-    });
+    return createWithEmployeeNumber<EmployeeDocument>(
+      this.employeeModel,
+      tId,
+      (employeeNumber) => ({
+        tenantId: tId,
+        teamId: null,
+        locationId: null,
+        userId: new Types.ObjectId(userId),
+        firstName,
+        lastName,
+        email: email.toLowerCase(),
+        employeeNumber,
+        jobTitle: 'Owner',
+        hierarchyRole: EmployeeHierarchyRole.OWNER,
+        reportsToManagerId: null,
+        reportsToTenantId: tId,
+        employmentType: EmploymentType.FULL_TIME,
+        employmentStatus: EmploymentStatus.ACTIVE,
+        startDate: new Date(),
+        salaryCurrency: 'USD',
+        salaryFrequency: 'monthly',
+        annualLeaveBalance: 21,
+        sickLeaveBalance: 10,
+        metadata: { createdBy: userId, isOwnerRecord: true },
+      }),
+    );
   }
 
   // Real enforcement — the tenant's subscription plan (or a
@@ -571,10 +573,6 @@ export class EmployeeService {
       reportsToManagerId = target._id as Types.ObjectId;
     }
 
-    // ── Generate employee number ─────────────────────────────
-    const count = await this.employeeModel.countDocuments({ tenantId: tId });
-    const employeeNumber = `EMP-${String(count + 1).padStart(4, '0')}`;
-
     // ── Create portal User account ───────────────────────────
     // Employees log into the TENANT app — UserType.EMPLOYEE
     const tempPassword = this.generateTempPassword();
@@ -594,54 +592,60 @@ export class EmployeeService {
     });
 
     // ── Create employee record ────────────────────────────────
-    const employee = await this.employeeModel.create({
-      tenantId: tId,
-      teamId: dto.teamId ? new Types.ObjectId(dto.teamId) : null,
-      locationId: dto.locationId ? new Types.ObjectId(dto.locationId) : null,
-      userId: user._id,
-      firstName: dto.firstName,
-      lastName: dto.lastName,
-      email: dto.email.toLowerCase(),
-      phone: dto.phone ?? null,
-      gender: dto.gender ?? null,
-      dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
-      nationality: dto.nationality ?? null,
-      nationalId: dto.nationalId ?? null,
-      address: dto.address ?? null,
-      emergencyContactName: dto.emergencyContactName ?? null,
-      emergencyContactPhone: dto.emergencyContactPhone ?? null,
-      employeeNumber,
-      jobTitle: dto.jobTitle,
-      hierarchyRole,
-      reportsToManagerId,
-      reportsToTenantId,
-      employmentType: dto.employmentType ?? 'full_time',
-      employmentStatus: dto.probationEndDate
-        ? EmploymentStatus.PROBATION
-        : EmploymentStatus.ACTIVE,
-      startDate: new Date(dto.startDate),
-      probationEndDate: dto.probationEndDate
-        ? new Date(dto.probationEndDate)
-        : null,
-      salary: dto.salary ?? null,
-      salaryCurrency: dto.salaryCurrency ?? 'RWF',
-      salaryFrequency: dto.salaryFrequency ?? 'monthly',
-      bankName: dto.bankName ?? null,
-      bankAccountNumber: dto.bankAccountNumber ?? null,
-      taxId: dto.taxId ?? null,
-      // Every allowance always carries the employee's own salary
-      // currency — never a currency picked independently per
-      // allowance — so it's set here, not accepted from the client.
-      allowances: (dto.allowances ?? []).map((a) => ({
-        key: a.key,
-        label: a.label,
-        amount: a.amount,
-        currency: dto.salaryCurrency ?? 'RWF',
-      })),
-      annualLeaveBalance: dto.annualLeaveBalance ?? 21,
-      sickLeaveBalance: dto.sickLeaveBalance ?? 10,
-      metadata: { createdBy },
-    });
+    // The number is issued here (per tenant, collision-safe) — see
+    // employee-number.util.
+    const employee = await createWithEmployeeNumber<EmployeeDocument>(
+      this.employeeModel,
+      tId,
+      (employeeNumber) => ({
+        tenantId: tId,
+        teamId: dto.teamId ? new Types.ObjectId(dto.teamId) : null,
+        locationId: dto.locationId ? new Types.ObjectId(dto.locationId) : null,
+        userId: user._id,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        email: dto.email.toLowerCase(),
+        phone: dto.phone ?? null,
+        gender: dto.gender ?? null,
+        dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
+        nationality: dto.nationality ?? null,
+        nationalId: dto.nationalId ?? null,
+        address: dto.address ?? null,
+        emergencyContactName: dto.emergencyContactName ?? null,
+        emergencyContactPhone: dto.emergencyContactPhone ?? null,
+        employeeNumber,
+        jobTitle: dto.jobTitle,
+        hierarchyRole,
+        reportsToManagerId,
+        reportsToTenantId,
+        employmentType: dto.employmentType ?? 'full_time',
+        employmentStatus: dto.probationEndDate
+          ? EmploymentStatus.PROBATION
+          : EmploymentStatus.ACTIVE,
+        startDate: new Date(dto.startDate),
+        probationEndDate: dto.probationEndDate
+          ? new Date(dto.probationEndDate)
+          : null,
+        salary: dto.salary ?? null,
+        salaryCurrency: dto.salaryCurrency ?? 'RWF',
+        salaryFrequency: dto.salaryFrequency ?? 'monthly',
+        bankName: dto.bankName ?? null,
+        bankAccountNumber: dto.bankAccountNumber ?? null,
+        taxId: dto.taxId ?? null,
+        // Every allowance always carries the employee's own salary
+        // currency — never a currency picked independently per
+        // allowance — so it's set here, not accepted from the client.
+        allowances: (dto.allowances ?? []).map((a) => ({
+          key: a.key,
+          label: a.label,
+          amount: a.amount,
+          currency: dto.salaryCurrency ?? 'RWF',
+        })),
+        annualLeaveBalance: dto.annualLeaveBalance ?? 21,
+        sickLeaveBalance: dto.sickLeaveBalance ?? 10,
+        metadata: { createdBy },
+      }),
+    );
 
     // if (dto.probationEndDate) {
     //   await this.probationService.createProbationRecord(
@@ -673,7 +677,7 @@ export class EmployeeService {
       to: dto.email,
       firstName: dto.firstName,
       businessName,
-      employeeNumber,
+      employeeNumber: employee.employeeNumber,
       jobTitle: dto.jobTitle,
       tempPassword,
       loginUrl: `${process.env.TENANT_APP_URL}`,
@@ -983,8 +987,24 @@ export class EmployeeService {
     if (dto.dateOfBirth) update.dateOfBirth = new Date(dto.dateOfBirth);
     if (dto.probationEndDate)
       update.probationEndDate = new Date(dto.probationEndDate);
-    if (dto.teamId) update.teamId = new Types.ObjectId(dto.teamId);
-    if (dto.locationId) update.locationId = new Types.ObjectId(dto.locationId);
+    // Team and location must belong to this tenant (this is also how the
+    // Owner's record is placed in a team and location).
+    if (dto.teamId) {
+      const team = await this.teamModel.findOne({
+        _id: new Types.ObjectId(dto.teamId),
+        tenantId: new Types.ObjectId(tenantId),
+      });
+      if (!team) throw new NotFoundException('Team not found');
+      update.teamId = team._id;
+    }
+    if (dto.locationId) {
+      const loc = await this.locationModel.findOne({
+        _id: new Types.ObjectId(dto.locationId),
+        tenantId: new Types.ObjectId(tenantId),
+      });
+      if (!loc) throw new NotFoundException('Location not found');
+      update.locationId = loc._id;
+    }
 
     // Changing an employee's email must also change their login email —
     // they're the same person logging in with it. Previously only

@@ -405,7 +405,7 @@ export class TenantService {
     // being worked out again here. The ring is the company score; each
     // module card shows that module's own score from the same model, so the
     // dashboard can never disagree with the GRC pages (PO feedback, Nov
-    // 2026). A null module score means nothing in it could be measured yet.
+    // 2026). A module nothing has been recorded in scores 0 ("not started").
     const hs = await this.healthScoreService.summary(tenantId);
     const kycScore = hs.modules.aml?.score ?? null;
     const hrScore = hs.modules.hr?.score ?? null;
