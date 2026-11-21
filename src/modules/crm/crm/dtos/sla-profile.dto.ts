@@ -1,5 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsEnum, IsNumber, ValidateNested } from 'class-validator';
+import {
+  IsString,
+  IsEnum,
+  IsNumber,
+  IsNotEmpty,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { SlaTier } from '../schemas';
 
@@ -12,7 +18,10 @@ export class SlaHoursDto {
 
 export class UpsertSlaProfileDto {
   @ApiProperty({ enum: SlaTier }) @IsEnum(SlaTier) tier: SlaTier;
-  @ApiProperty() @IsString() serviceType: string;
+  @ApiProperty({ description: 'Tenant-defined service line this SLA covers' })
+  @IsString()
+  @IsNotEmpty()
+  serviceType: string;
 
   @ApiProperty({ type: SlaHoursDto })
   @ValidateNested()
