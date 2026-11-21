@@ -31,7 +31,9 @@ import { RequiresModule } from 'src/common/decorators/requires-module.decorator'
 
 @ApiTags('CRM — Projects — Timesheets (Tenant)')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
+// The tenant owner, and any employee who has been given CRM access (the
+// module guard checks their CRM staff role), can approve and manage time.
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
 @RequiresModule(PlatformModuleKey.CRM)
 @Controller('crm/time-entries')
 export class TimeEntryController {
@@ -103,20 +105,9 @@ export class TimeEntryController {
     return this.service.submit(t || u, id);
   }
 
-  @Post(':id/lead-approve')
-  @ApiOperation({ summary: 'Submitted → Lead Approved' })
-  leadApprove(
-    @Param('id') id: string,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
-  ) {
-    return this.service.leadApprove(t || u, id);
-  }
-
   @Post(':id/approve')
   @ApiOperation({
-    summary:
-      'Submitted or Lead Approved → Approved. This is what counts toward WIP.',
+    summary: 'Submitted → Approved. This is what counts toward WIP.',
   })
   approve(
     @Param('id') id: string,
@@ -128,7 +119,7 @@ export class TimeEntryController {
 
   @Post(':id/reject')
   @ApiOperation({
-    summary: 'Submitted or Lead Approved → Rejected, with a reason',
+    summary: 'Submitted → Rejected, with a reason',
   })
   reject(
     @Param('id') id: string,

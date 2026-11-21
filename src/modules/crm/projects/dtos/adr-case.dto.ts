@@ -60,6 +60,15 @@ export class CreateAdrCaseDto {
 }
 
 export class UpdateAdrCaseDetailsDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() title?: string;
+  @ApiPropertyOptional({ enum: AdrType })
+  @IsOptional()
+  @IsEnum(AdrType)
+  type?: AdrType;
+  // Empty string unlinks the case from its mandate.
+  @ApiPropertyOptional() @IsOptional() @IsString() mandateId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() neutral?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() category?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() teamId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() teamName?: string;
@@ -273,5 +282,6 @@ export class LogAdrTenantTimeDto {
   @ApiProperty() @IsDateString() date: string;
   @ApiProperty() @IsNumber() @Min(0.01) hours: number;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() billable?: boolean;
-  @ApiProperty() @IsNumber() @Min(0) rate: number;
+  // Optional: when omitted the time is priced from the logger's rate card.
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) rate?: number;
 }

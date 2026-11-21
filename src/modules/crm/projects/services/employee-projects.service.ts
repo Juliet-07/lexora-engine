@@ -2,7 +2,9 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -21,9 +23,15 @@ import {
   LitigationCaseDocument,
   LitigationTimelineSource,
 } from '../schemas';
-import { Employee, EmployeeDocument } from 'src/modules/hr/schemas';
+import {
+  Employee,
+  EmployeeDocument,
+  EmployeeHierarchyRole,
+} from 'src/modules/hr/schemas';
 import {
   UpdateMyTaskDto,
+  CreateManagerTaskDto,
+  UpdateManagerTaskDto,
   CreateEmployeeMessageDto,
   CreateMyTimeEntryDto,
   UpdateTicketStatusDto,
@@ -51,7 +59,21 @@ export class MyProjectsService {
     private readonly workspaceService: MandateWorkspaceService,
     private readonly taskService: TaskService,
     private readonly timeEntryService: TimeEntryService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  // The mandate's manager is its team's Head of Department — an
+  // employee is "the manager" of a mandate when they are an active HOD
+  // of the team it is assigned to. Checked live, so it follows the team.
+  private isManagerOf(employee: any, mandate: any): boolean {
+    return (
+      !!employee &&
+      employee.hierarchyRole === EmployeeHierarchyRole.HEAD_OF_DEPARTMENT &&
+      !!employee.teamId &&
+      !!mandate.teamId &&
+      String(employee.teamId) === String(mandate.teamId)
+    );
+  }
 
   // Every method here needs to know which real Employee record the
   // caller is — `userId` (the JWT subject) is the employee's own
@@ -106,11 +128,34 @@ export class MyProjectsService {
       assigneeUserId: employee._id,
     });
 
+    // A Head of Department also sees every mandate assigned to their
+    // team — they manage it and assign its work, even before they hold a
+    // task on it themselves.
+    const managesTeam =
+      employee.hierarchyRole === EmployeeHierarchyRole.HEAD_OF_DEPARTMENT &&
+      employee.teamId;
     const rows = await this.mandateModel
-      .find({ tenantId: tId, _id: { $in: taskMandateIds } })
+      .find({
+        tenantId: tId,
+        $or: [
+          { _id: { $in: taskMandateIds } },
+          ...(managesTeam ? [{ teamId: employee.teamId }] : []),
+        ],
+      })
       .sort({ createdAt: -1 })
       .lean();
-    return rows.map((m) => this.normalizeMandate(m));
+    return rows.map((m) => this.withManagerFlag(m, employee));
+  }
+
+  private withManagerFlag(m: any, employee: any) {
+    const isManager = this.isManagerOf(employee, m);
+    return {
+      ...this.normalizeMandate(m),
+      isManager,
+      ...(isManager
+        ? { manager: `${employee.firstName} ${employee.lastName}`.trim() }
+        : {}),
+    };
   }
 
   // Same distinction as getMyMandates — a tenant-type caller is
@@ -137,7 +182,7 @@ export class MyProjectsService {
         tenantId: tId,
         userId: new Types.ObjectId(userId),
       });
-      return { employee, mandate };
+      return { employee, mandate, isManager: false };
     }
 
     const employee = await this.resolveEmployee(tenantId, userId);
@@ -154,7 +199,11 @@ export class MyProjectsService {
     if (!onTeam && !hasTask) {
       throw new ForbiddenException("You don't have access to this mandate");
     }
-    return { employee, mandate };
+    return {
+      employee,
+      mandate,
+      isManager: this.isManagerOf(employee, mandate),
+    };
   }
 
   async getMandateDetail(
@@ -163,13 +212,15 @@ export class MyProjectsService {
     mandateId: string,
     userType: string,
   ) {
-    const { mandate } = await this.getAuthorizedMandate(
+    const { mandate, employee, isManager } = await this.getAuthorizedMandate(
       tenantId,
       userId,
       mandateId,
       userType,
     );
-    return this.normalizeMandate(mandate);
+    return isManager
+      ? this.withManagerFlag(mandate, employee)
+      : { ...this.normalizeMandate(mandate), isManager: false };
   }
 
   // The "Board" view. A tenant-type caller sees every task on the
@@ -188,13 +239,15 @@ export class MyProjectsService {
     mandateId: string,
     userType: string,
   ) {
-    const { employee } = await this.getAuthorizedMandate(
+    const { employee, isManager } = await this.getAuthorizedMandate(
       tenantId,
       userId,
       mandateId,
       userType,
     );
-    if (userType === 'tenant') {
+    // The tenant owner and the mandate's manager (team HOD) see every
+    // task on the mandate; other team members see only their own.
+    if (userType === 'tenant' || isManager) {
       return this.taskService.getAll(tenantId, { mandateId });
     }
     return this.taskService.getAll(tenantId, {
@@ -316,6 +369,214 @@ export class MyProjectsService {
       mandateId,
       String(employee._id),
     );
+  }
+
+  // ── Manager (team HOD) task assignment ───────────────────────
+
+  private async requireManager(
+    tenantId: string,
+    userId: string,
+    mandateId: string,
+    userType: string,
+  ) {
+    const ctx = await this.getAuthorizedMandate(
+      tenantId,
+      userId,
+      mandateId,
+      userType,
+    );
+    if (!ctx.isManager) {
+      throw new ForbiddenException(
+        "Only the Head of Department of this mandate's team can assign its tasks",
+      );
+    }
+    return ctx;
+  }
+
+  private async resolveTeamMember(
+    tenantId: string,
+    mandate: any,
+    employeeId: string,
+  ) {
+    const member = await this.employeeModel
+      .findOne({
+        _id: employeeId,
+        tenantId: new Types.ObjectId(tenantId),
+        teamId: mandate.teamId,
+        employmentStatus: { $nin: ['terminated', 'resigned'] },
+      })
+      .select('firstName lastName userId')
+      .lean();
+    if (!member) {
+      throw new BadRequestException(
+        "Tasks can only be assigned to members of this mandate's team",
+      );
+    }
+    return {
+      id: String(member._id),
+      name: `${member.firstName ?? ''} ${member.lastName ?? ''}`.trim(),
+      userId: member.userId ? String(member.userId) : null,
+    };
+  }
+
+  private notifyAssigned(
+    tenantId: string,
+    mandate: any,
+    taskTitle: string,
+    assignee: { userId: string | null },
+    assignedBy: string,
+  ) {
+    if (!assignee.userId) return;
+    this.eventEmitter.emit('employee.mandate_task_assigned', {
+      tenantId,
+      employeeUserId: assignee.userId,
+      mandateId: String(mandate._id),
+      mandateName: mandate.name,
+      taskTitle,
+      assignedBy,
+    });
+  }
+
+  async getManagerTeamMembers(
+    tenantId: string,
+    userId: string,
+    mandateId: string,
+    userType: string,
+  ) {
+    const { mandate } = await this.requireManager(
+      tenantId,
+      userId,
+      mandateId,
+      userType,
+    );
+    const members = await this.employeeModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        teamId: mandate.teamId,
+        employmentStatus: { $nin: ['terminated', 'resigned'] },
+      })
+      .select('firstName lastName jobTitle')
+      .sort({ firstName: 1 })
+      .lean();
+    return (members as any[]).map((e) => ({
+      _id: String(e._id),
+      name: `${e.firstName ?? ''} ${e.lastName ?? ''}`.trim(),
+      jobTitle: e.jobTitle ?? '',
+    }));
+  }
+
+  async createTaskAsManager(
+    tenantId: string,
+    userId: string,
+    mandateId: string,
+    userType: string,
+    dto: CreateManagerTaskDto,
+  ) {
+    const { mandate, employee } = await this.requireManager(
+      tenantId,
+      userId,
+      mandateId,
+      userType,
+    );
+    const assignee = await this.resolveTeamMember(
+      tenantId,
+      mandate,
+      dto.assigneeEmployeeId,
+    );
+    const task = await this.taskService.create(tenantId, {
+      title: dto.title,
+      mandateId,
+      assignee: assignee.name,
+      assigneeUserId: assignee.id,
+      priority: dto.priority,
+      startDate: dto.startDate,
+      dueDate: dto.dueDate,
+      estimateHrs: dto.estimateHrs,
+      phase: dto.phase,
+    });
+    this.notifyAssigned(
+      tenantId,
+      mandate,
+      dto.title,
+      assignee,
+      `${employee?.firstName ?? ''} ${employee?.lastName ?? ''}`.trim(),
+    );
+    return task;
+  }
+
+  async updateTaskAsManager(
+    tenantId: string,
+    userId: string,
+    mandateId: string,
+    taskId: string,
+    userType: string,
+    dto: UpdateManagerTaskDto,
+  ) {
+    const { mandate, employee } = await this.requireManager(
+      tenantId,
+      userId,
+      mandateId,
+      userType,
+    );
+    const existing = await this.taskModel
+      .findOne({
+        _id: taskId,
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+      })
+      .lean();
+    if (!existing) throw new NotFoundException('Task not found');
+
+    const patch: any = {
+      title: dto.title,
+      priority: dto.priority,
+      status: dto.status,
+      startDate: dto.startDate,
+      dueDate: dto.dueDate,
+      estimateHrs: dto.estimateHrs,
+    };
+    let reassignedTo: { userId: string | null } | null = null;
+    if (
+      dto.assigneeEmployeeId &&
+      String(existing.assigneeUserId ?? '') !== dto.assigneeEmployeeId
+    ) {
+      const assignee = await this.resolveTeamMember(
+        tenantId,
+        mandate,
+        dto.assigneeEmployeeId,
+      );
+      patch.assignee = assignee.name;
+      patch.assigneeUserId = assignee.id;
+      reassignedTo = assignee;
+    }
+    const task = await this.taskService.update(tenantId, taskId, patch);
+    if (reassignedTo) {
+      this.notifyAssigned(
+        tenantId,
+        mandate,
+        (task as any).title,
+        reassignedTo,
+        `${employee?.firstName ?? ''} ${employee?.lastName ?? ''}`.trim(),
+      );
+    }
+    return task;
+  }
+
+  async deleteTaskAsManager(
+    tenantId: string,
+    userId: string,
+    mandateId: string,
+    taskId: string,
+    userType: string,
+  ) {
+    await this.requireManager(tenantId, userId, mandateId, userType);
+    const existing = await this.taskModel.exists({
+      _id: taskId,
+      tenantId: new Types.ObjectId(tenantId),
+      mandateId: new Types.ObjectId(mandateId),
+    });
+    if (!existing) throw new NotFoundException('Task not found');
+    return this.taskService.delete(tenantId, taskId);
   }
 
   // Just this employee's own tasks — across every mandate, or one

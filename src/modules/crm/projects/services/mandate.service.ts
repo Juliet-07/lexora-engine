@@ -23,6 +23,14 @@ import {
 } from '../dtos';
 import { TimeEntryService } from './time-entry.service';
 import { User, UserDocument } from '../../../auth/schemas/user.schema';
+import {
+  Employee,
+  EmployeeDocument,
+  EmployeeHierarchyRole,
+  HrTeam,
+  HrTeamDocument,
+} from '../../../hr/schemas';
+import { MandateCascadeService } from './mandate-cascade.service';
 import { UserType } from '../../../../common/interfaces/user-role.enum';
 
 // Legal-entity suffixes and generic words that would otherwise make
@@ -89,7 +97,83 @@ export class MandateService {
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly timeEntryService: TimeEntryService,
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
+    @InjectModel(HrTeam.name)
+    private readonly teamModel: Model<HrTeamDocument>,
+    private readonly cascade: MandateCascadeService,
   ) {}
+
+  // ── Team → manager ───────────────────────────────────────────
+  // A mandate's manager is always the Head of Department of the team
+  // it is assigned to — never typed in by hand. It's resolved live, so
+  // when a team's HOD changes the mandate's manager follows.
+
+  private async hodsByTeam(tenantId: Types.ObjectId, teamIds: any[]) {
+    const ids = [...new Set(teamIds.filter(Boolean).map(String))];
+    const map = new Map<
+      string,
+      { _id: string; userId: string | null; name: string }
+    >();
+    if (!ids.length) return map;
+    const hods = await this.employeeModel
+      .find({
+        tenantId,
+        teamId: { $in: ids.map((i) => new Types.ObjectId(i)) },
+        hierarchyRole: EmployeeHierarchyRole.HEAD_OF_DEPARTMENT,
+        employmentStatus: { $nin: ['terminated', 'resigned'] },
+      })
+      .select('teamId userId firstName lastName')
+      .lean();
+    for (const h of hods as any[]) {
+      map.set(String(h.teamId), {
+        _id: String(h._id),
+        userId: h.userId ? String(h.userId) : null,
+        name: `${h.firstName ?? ''} ${h.lastName ?? ''}`.trim(),
+      });
+    }
+    return map;
+  }
+
+  private async resolveTeam(tenantId: Types.ObjectId, teamId: string) {
+    const team = await this.teamModel
+      .findOne({ _id: teamId, tenantId })
+      .select('name')
+      .lean();
+    if (!team) throw new BadRequestException('Team not found');
+    const hod = (await this.hodsByTeam(tenantId, [teamId])).get(String(teamId));
+    return { name: team.name as string, hodName: hod?.name ?? '' };
+  }
+
+  /** Employees on the mandate's team — who a Head of Department can assign to. */
+  async getTeamMembers(tenantId: string, mandateId: string) {
+    const m = await this.getRawDoc(tenantId, mandateId);
+    if (!m.teamId) return [];
+    const members = await this.employeeModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        teamId: m.teamId,
+        employmentStatus: { $nin: ['terminated', 'resigned'] },
+      })
+      .select('firstName lastName jobTitle hierarchyRole')
+      .sort({ firstName: 1 })
+      .lean();
+    return (members as any[]).map((e) => ({
+      _id: String(e._id),
+      name: `${e.firstName ?? ''} ${e.lastName ?? ''}`.trim(),
+      jobTitle: e.jobTitle ?? '',
+      isHod: e.hierarchyRole === EmployeeHierarchyRole.HEAD_OF_DEPARTMENT,
+    }));
+  }
+
+  async deleteImpact(tenantId: string, id: string) {
+    return this.cascade.impact(tenantId, id);
+  }
+
+  /** Delete the mandate and everything that belongs to it. */
+  async delete(tenantId: string, id: string) {
+    return this.cascade.purge(tenantId, id);
+  }
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
     const year = new Date().getFullYear();
@@ -109,9 +193,28 @@ export class MandateService {
   // wip is no longer a stored value the tenant sets by hand — it's
   // the sum of this mandate's Approved, billable time entries, so
   // this normalization is now async.
-  private async normalize(m: any, wip?: number, actualCost?: number) {
+  private async normalize(
+    m: any,
+    wip?: number,
+    actualCost?: number,
+    hodMap?: Map<string, { _id: string; userId: string | null; name: string }>,
+  ) {
+    const hod = m.teamId
+      ? (
+          hodMap ??
+          (await this.hodsByTeam(new Types.ObjectId(String(m.tenantId)), [
+            m.teamId,
+          ]))
+        ).get(String(m.teamId))
+      : undefined;
     return {
       ...m,
+      // Live from the team's Head of Department; falls back to whatever
+      // was stored for mandates that predate this rule or whose team has
+      // no HOD yet.
+      manager: hod?.name ?? m.manager ?? '',
+      managerEmployeeId: hod?._id ?? null,
+      managerMissing: !!m.teamId && !hod,
       description: m.description ?? '',
       milestones: m.milestones ?? [],
       customFolders: m.customFolders ?? [],
@@ -157,6 +260,10 @@ export class MandateService {
     });
     await Promise.all(docs.map((d) => this.healClosureChecklist(d)));
     const rows = docs.map((d) => d.toObject());
+    const hodMap = await this.hodsByTeam(
+      tId,
+      rows.map((r) => r.teamId),
+    );
     const [wipMap, actualCostMap] = await Promise.all([
       this.timeEntryService.getApprovedBillableValueByMandateIds(
         tenantId,
@@ -173,6 +280,7 @@ export class MandateService {
           m,
           wipMap.get(String(m._id)) ?? 0,
           actualCostMap.get(String(m._id)) ?? 0,
+          hodMap,
         ),
       ),
     );
@@ -197,6 +305,9 @@ export class MandateService {
     const tId = new Types.ObjectId(tenantId);
     const ref = await this.nextRef(tId);
     const parties = (dto.parties ?? []).map((p) => p.trim()).filter(Boolean);
+    // The manager is not chosen: it is the Head of Department of the
+    // selected team.
+    const team = dto.teamId ? await this.resolveTeam(tId, dto.teamId) : null;
     const created = await this.model.create({
       tenantId: tId,
       ref,
@@ -205,9 +316,9 @@ export class MandateService {
       clientUserId: new Types.ObjectId(dto.clientUserId),
       clientName: dto.clientName,
       type: dto.type,
-      manager: dto.manager ?? '',
+      manager: team?.hodName ?? '',
       teamId: dto.teamId ? new Types.ObjectId(dto.teamId) : null,
-      teamName: dto.teamName ?? '',
+      teamName: team?.name ?? dto.teamName ?? '',
       team: [],
       startDate: new Date(),
       targetDate: new Date(dto.targetDate),
@@ -307,9 +418,13 @@ export class MandateService {
     if (dto.name !== undefined) m.name = dto.name;
     if (dto.description !== undefined) m.description = dto.description;
     if (dto.rag !== undefined) m.rag = dto.rag;
-    if (dto.manager !== undefined) m.manager = dto.manager;
-    if (dto.teamId !== undefined) m.teamId = new Types.ObjectId(dto.teamId);
-    if (dto.teamName !== undefined) m.teamName = dto.teamName;
+    // Changing the team re-derives the manager from that team's HOD.
+    if (dto.teamId !== undefined) {
+      const team = await this.resolveTeam(m.tenantId, dto.teamId);
+      m.teamId = new Types.ObjectId(dto.teamId);
+      m.teamName = team.name;
+      m.manager = team.hodName;
+    }
     if (dto.team !== undefined) m.team = dto.team;
     if (dto.targetDate !== undefined) m.targetDate = new Date(dto.targetDate);
     if (dto.budget !== undefined) m.budget = dto.budget;

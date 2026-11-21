@@ -325,7 +325,8 @@ export enum AdrDraftStatus {
 @Schema({ _id: true })
 export class AdrDraftVersion {
   @Prop({ required: true }) versionNumber: number;
-  @Prop({ required: true }) content: string;
+  // A blank document is a valid draft — '' must not trip `required`.
+  @Prop({ default: '' }) content: string;
   @Prop({ required: true }) savedBy: string;
   @Prop({ required: true, default: () => new Date() }) savedAt: Date;
 }
@@ -343,7 +344,7 @@ export class AdrCaseDraft {
   caseId: Types.ObjectId;
 
   @Prop({ required: true }) title: string;
-  @Prop({ required: true, default: '' }) content: string;
+  @Prop({ default: '' }) content: string;
   @Prop({ enum: AdrDraftStatus, default: AdrDraftStatus.DRAFT })
   status: AdrDraftStatus;
 

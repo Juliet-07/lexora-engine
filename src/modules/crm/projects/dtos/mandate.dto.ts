@@ -18,7 +18,6 @@ export class CreateMandateDto {
   @ApiProperty() @IsString() clientName: string;
   @ApiProperty({ enum: MandateType }) @IsEnum(MandateType) type: MandateType;
 
-  @ApiPropertyOptional() @IsOptional() @IsString() manager?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() teamId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() teamName?: string;
 
@@ -45,7 +44,6 @@ export class UpdateMandateDto {
   @ApiPropertyOptional() @IsOptional() @IsString() name?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
   @ApiPropertyOptional({ enum: Rag }) @IsOptional() @IsEnum(Rag) rag?: Rag;
-  @ApiPropertyOptional() @IsOptional() @IsString() manager?: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() teamId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() teamName?: string;
   @ApiPropertyOptional({ type: [String] })

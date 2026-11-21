@@ -54,6 +54,19 @@ const documentStorage = diskStorage({
 export class MandateWorkspaceController {
   constructor(private readonly service: MandateWorkspaceService) {}
 
+  @Get('overview')
+  @ApiOperation({
+    summary:
+      'Everything on this mandate at a glance: all tasks and all communication threads',
+  })
+  overview(
+    @Param('mandateId') mandateId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getOverview(t || u, mandateId);
+  }
+
   // ── Messages ─────────────────────────────────────────────────
 
   @Get('messages')

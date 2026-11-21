@@ -458,6 +458,25 @@ export class TenantNotificationService {
     );
   }
 
+  @OnEvent('employee.mandate_task_assigned')
+  async onMandateTaskAssigned(e: {
+    tenantId: string;
+    employeeUserId: string;
+    mandateId: string;
+    mandateName: string;
+    taskTitle: string;
+    assignedBy: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.employeeUserId,
+      TenantNotificationType.GENERAL,
+      `New task — ${e.taskTitle}`,
+      `${e.assignedBy || 'Your Head of Department'} assigned you a task on "${e.mandateName}".`,
+      `/projects/${e.mandateId}`,
+    );
+  }
+
   @OnEvent('employee.lead_assigned')
   async onLeadAssigned(e: {
     tenantId: string;

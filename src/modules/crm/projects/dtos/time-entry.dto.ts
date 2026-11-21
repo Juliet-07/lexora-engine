@@ -15,8 +15,10 @@ export class CreateTimeEntryDto {
   @ApiProperty() @IsMongoId() memberUserId: string;
   @ApiProperty() @IsString() member: string;
 
-  @ApiProperty() @IsMongoId() mandateId: string;
-  @ApiProperty() @IsString() mandateName: string;
+  // Either a mandate or a case (adrCaseId / litigationCaseId) is required;
+  // checked in TimeEntryService.create.
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() mandateName?: string;
 
   @ApiPropertyOptional() @IsOptional() @IsMongoId() taskId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() taskTitle?: string;

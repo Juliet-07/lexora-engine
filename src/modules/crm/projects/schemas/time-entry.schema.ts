@@ -8,6 +8,9 @@ export type TimeEntryDocument = TimeEntry & Document;
 export enum TimesheetStatus {
   DRAFT = 'Draft',
   SUBMITTED = 'Submitted',
+  // Retired: there is a single approval step now. Kept only so entries
+  // that were already in this state still load; they are treated exactly
+  // like Submitted and can be approved or rejected directly.
   LEAD_APPROVED = 'Lead Approved',
   APPROVED = 'Approved',
   REJECTED = 'Rejected',
@@ -47,9 +50,13 @@ export class TimeEntry {
   // the other way, depending on TimeEntryService for their computed
   // loggedHrs/wip, and that direction would become circular if this
   // one also depended on them.
-  @Prop({ type: Types.ObjectId, ref: 'Mandate', required: true, index: true })
-  mandateId: Types.ObjectId;
-  @Prop({ required: true }) mandateName: string;
+  // Optional: time can be logged straight against an ADR/litigation case
+  // that isn't linked to a mandate. In that case mandateId is null and
+  // mandateName carries the case's label (e.g. "ADR-001 · Title") so the
+  // timesheet still shows what the time was for.
+  @Prop({ type: Types.ObjectId, ref: 'Mandate', default: null, index: true })
+  mandateId: Types.ObjectId | null;
+  @Prop({ default: '' }) mandateName: string;
 
   @Prop({ type: Types.ObjectId, ref: 'Task', default: null, index: true })
   taskId: Types.ObjectId | null;

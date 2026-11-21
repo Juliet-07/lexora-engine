@@ -146,7 +146,6 @@ export class TicketController {
       clientUserId: String(ticket.clientUserId),
       clientName: ticket.clientName,
       type: dto.type,
-      manager: dto.manager,
       teamId: dto.teamId,
       teamName: dto.teamName,
       targetDate: dto.targetDate,

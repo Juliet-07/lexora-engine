@@ -68,6 +68,41 @@ export class MandateController {
     return this.service.update(t || u, id, dto);
   }
 
+  @Get(':id/delete-impact')
+  @ApiOperation({
+    summary: 'What deleting this mandate would remove or detach (for confirm)',
+  })
+  deleteImpact(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.deleteImpact(t || u, id);
+  }
+
+  @Get(':id/team-members')
+  @ApiOperation({ summary: "Employees on this mandate's team" })
+  teamMembers(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.getTeamMembers(t || u, id);
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary:
+      'Delete the mandate and everything tied to it (tasks, time, billing, communications, documents)',
+  })
+  remove(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.delete(t || u, id);
+  }
+
   @Post(':id/advance')
   @ApiOperation({ summary: 'Advance to the next lifecycle stage' })
   advance(

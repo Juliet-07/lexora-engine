@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   ConflictException,
@@ -49,6 +50,7 @@ import {
   LinkAdrSettlementDeedDto,
   LogAdrTenantTimeDto,
 } from '../dtos';
+import { CaseCascadeService } from './case-cascade.service';
 import { MandateService } from './mandate.service';
 import { TimeEntryService } from './time-entry.service';
 import { LitigationCaseService } from './litigation-case.service';
@@ -89,6 +91,7 @@ export class AdrCaseService {
     private readonly emailService: EmailService,
     private readonly eventEmitter: EventEmitter2,
     private readonly closurePdfService: CaseClosurePdfService,
+    private readonly cascade: CaseCascadeService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -917,12 +920,54 @@ export class AdrCaseService {
     return created.toObject();
   }
 
+  async deleteImpact(tenantId: string, id: string) {
+    return this.cascade.impact('adr', tenantId, id);
+  }
+
+  async deleteCase(tenantId: string, id: string) {
+    return this.cascade.purge('adr', tenantId, id);
+  }
+
   async updateDetails(
     tenantId: string,
     id: string,
     dto: UpdateAdrCaseDetailsDto,
   ) {
     const c = await this.getRawDoc(tenantId, id);
+    if (dto.title !== undefined) {
+      const title = dto.title.trim();
+      if (!title) throw new BadRequestException('A case needs a title');
+      c.title = title;
+    }
+    if (dto.type !== undefined) c.type = dto.type;
+    if (dto.neutral !== undefined) c.neutral = dto.neutral;
+    if (dto.currency !== undefined && dto.currency) c.currency = dto.currency;
+    if (dto.mandateId !== undefined) {
+      const current = c.mandateId ? String(c.mandateId) : '';
+      if (dto.mandateId !== current) {
+        let mandateName = '';
+        if (dto.mandateId) {
+          const m: any = await this.mandateService.getById(
+            tenantId,
+            dto.mandateId,
+          );
+          mandateName = m.name;
+          c.mandateId = new Types.ObjectId(dto.mandateId) as any;
+        } else {
+          c.mandateId = null;
+        }
+        c.mandateName = mandateName;
+        await this.timeEntryService.reassignCaseEntries(
+          tenantId,
+          'adrCaseId',
+          id,
+          {
+            mandateId: dto.mandateId || null,
+            mandateName: mandateName || `${c.ref} · ${c.title}`,
+          },
+        );
+      }
+    }
     if (dto.category !== undefined) c.category = dto.category;
     if (dto.settlementTargetMin !== undefined)
       c.settlementTargetMin = dto.settlementTargetMin;
@@ -1201,17 +1246,11 @@ export class AdrCaseService {
     dto: LogAdrTenantTimeDto,
   ) {
     const c = await this.getRawDoc(tenantId, caseId);
-    if (!c.mandateId) {
-      throw new NotFoundException(
-        "This case isn't linked to a mandate yet, so time can't be logged against it.",
-      );
-    }
-    const mandate: any = await this.mandateService
-      .getById(tenantId, String(c.mandateId))
-      .catch(() => null);
-    if (!mandate) {
-      throw new NotFoundException('The linked mandate no longer exists');
-    }
+    const mandate: any = c.mandateId
+      ? await this.mandateService
+          .getById(tenantId, String(c.mandateId))
+          .catch(() => null)
+      : null;
     const tenant = await this.userModel
       .findById(tenantId)
       .select('firstName lastName')
@@ -1219,19 +1258,27 @@ export class AdrCaseService {
     const tenantName = tenant
       ? `${(tenant as any).firstName} ${(tenant as any).lastName}`.trim()
       : 'Tenant';
+    const keeper = await this.timeEntryService.resolveTenantTimekeeper(
+      tenantId,
+      tenantName,
+    );
 
+    // The case does not need a mandate: time is tied to the case itself and
+    // shows up in Timesheets either way. With no mandate, the entry is
+    // labelled with the case.
     return this.timeEntryService.create(tenantId, {
-      memberUserId: tenantId,
-      member: tenantName,
-      mandateId: String(c.mandateId),
-      mandateName: (mandate as any).name,
+      memberUserId: keeper.memberUserId,
+      member: keeper.member,
+      mandateId: mandate ? String(mandate._id) : undefined,
+      mandateName: mandate ? mandate.name : `${c.ref} · ${c.title}`,
       adrCaseId: String(c._id),
       narrative: dto.narrative,
       date: dto.date,
       hours: dto.hours,
       billable: dto.billable,
+      // Priced from the rate card unless a rate is given explicitly.
       rate: dto.billable === false ? 0 : dto.rate,
-      currency: c.currency,
+      currency: dto.rate !== undefined ? c.currency : undefined,
     });
   }
 

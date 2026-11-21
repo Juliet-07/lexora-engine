@@ -57,6 +57,19 @@ export class MandateEmployeeMessage {
   direction: EmployeeMessageDirection;
   @Prop({ required: true }) author: string;
   @Prop({ required: true }) body: string;
+
+  // Group conversation: one message addressed to several people (or the
+  // whole team) who all see it and can all answer in the same thread.
+  // `groupId` is the shared thread id (null for a 1:1 message); the
+  // recipient list is repeated on every message so membership is checked
+  // without a join. `employeeUserId` stays set (it is required) — the
+  // sender for an employee message, the first recipient for a tenant one.
+  @Prop({ type: Types.ObjectId, default: null, index: true })
+  groupId: Types.ObjectId | null;
+  @Prop({ type: [Types.ObjectId], default: [] })
+  recipientIds: Types.ObjectId[];
+  @Prop({ type: [String], default: [] }) recipientNames: string[];
+  @Prop({ default: '' }) groupKey: string;
 }
 export const MandateEmployeeMessageSchema = SchemaFactory.createForClass(
   MandateEmployeeMessage,

@@ -18,6 +18,7 @@ import {
   SetTimeEntryRateDto,
 } from '../dtos';
 import { RateCardService } from './rate-card.service';
+import { Employee, EmployeeDocument } from '../../../hr/schemas';
 
 @Injectable()
 export class TimeEntryService {
@@ -25,7 +26,36 @@ export class TimeEntryService {
     @InjectModel(TimeEntry.name)
     private readonly model: Model<TimeEntryDocument>,
     private readonly rateCardService: RateCardService,
+    @InjectModel(Employee.name)
+    private readonly employeeModel: Model<EmployeeDocument>,
   ) {}
+
+  /**
+   * Who the tenant owner is on a timesheet. The owner has an Employee
+   * record, so time they log shows under that record — and can be priced
+   * from a rate card set for them in Timesheets — just like anyone else's.
+   * Falls back to the account itself if no owner record exists.
+   */
+  async resolveTenantTimekeeper(
+    tenantId: string,
+    fallbackName: string,
+  ): Promise<{ memberUserId: string; member: string }> {
+    const owner = await this.employeeModel
+      .findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        userId: new Types.ObjectId(tenantId),
+      })
+      .select('firstName lastName')
+      .lean();
+    return owner
+      ? {
+          memberUserId: String((owner as any)._id),
+          member:
+            `${(owner as any).firstName ?? ''} ${(owner as any).lastName ?? ''}`.trim() ||
+            fallbackName,
+        }
+      : { memberUserId: tenantId, member: fallbackName };
+  }
 
   async getAll(
     tenantId: string,
@@ -50,6 +80,34 @@ export class TimeEntryService {
     return this.model.find(query).sort({ date: -1, createdAt: -1 }).lean();
   }
 
+  /**
+   * Re-point the not-yet-invoiced time on a case at a different mandate (or
+   * none) after the case's mandate link is edited, so the Timesheet, WIP and
+   * mandate budgets stay truthful.
+   */
+  async reassignCaseEntries(
+    tenantId: string,
+    field: 'adrCaseId' | 'litigationCaseId',
+    caseId: string,
+    target: { mandateId: string | null; mandateName: string },
+  ) {
+    await this.model.updateMany(
+      {
+        tenantId: new Types.ObjectId(tenantId),
+        [field]: new Types.ObjectId(caseId),
+        wipBillingStatus: { $ne: 'Invoiced' },
+      },
+      {
+        $set: {
+          mandateId: target.mandateId
+            ? new Types.ObjectId(target.mandateId)
+            : null,
+          mandateName: target.mandateName,
+        },
+      },
+    );
+  }
+
   async getById(tenantId: string, id: string) {
     const e = await this.model
       .findOne({ _id: id, tenantId: new Types.ObjectId(tenantId) })
@@ -59,6 +117,11 @@ export class TimeEntryService {
   }
 
   async create(tenantId: string, dto: CreateTimeEntryDto) {
+    if (!dto.mandateId && !dto.adrCaseId && !dto.litigationCaseId) {
+      throw new BadRequestException(
+        'Time must be logged against a mandate or a case',
+      );
+    }
     const cardRate =
       dto.rate !== undefined
         ? { rate: dto.rate, currency: dto.currency ?? 'USD' }
@@ -71,8 +134,8 @@ export class TimeEntryService {
       tenantId: new Types.ObjectId(tenantId),
       memberUserId: new Types.ObjectId(dto.memberUserId),
       member: dto.member,
-      mandateId: new Types.ObjectId(dto.mandateId),
-      mandateName: dto.mandateName,
+      mandateId: dto.mandateId ? new Types.ObjectId(dto.mandateId) : null,
+      mandateName: dto.mandateName ?? '',
       taskId: dto.taskId ? new Types.ObjectId(dto.taskId) : null,
       taskTitle: dto.taskTitle ?? 'Ad-hoc work',
       adrCaseId: dto.adrCaseId ? new Types.ObjectId(dto.adrCaseId) : null,
@@ -186,15 +249,6 @@ export class TimeEntryService {
     );
   }
 
-  async leadApprove(tenantId: string, id: string) {
-    return this.transition(
-      tenantId,
-      id,
-      [TimesheetStatus.SUBMITTED],
-      TimesheetStatus.LEAD_APPROVED,
-    );
-  }
-
   async approve(tenantId: string, id: string) {
     const e = await this.model.findOne({
       _id: id,
@@ -208,7 +262,10 @@ export class TimeEntryService {
     // one to exist, and its rate must never be backfilled away from
     // 0. Skipping this whole block for a non-billable entry is what
     // keeps it at $0 through approval, not just at creation.
-    if (e.billable) {
+    // An entry that already carries a value (an explicit rate, or one
+    // snapshotted from a rate card) doesn't need a card to be approved;
+    // only an unpriced entry does.
+    if (e.billable && e.rate === 0) {
       const hasRateCard = await this.rateCardService.exists(
         tenantId,
         String(e.memberUserId),
@@ -237,6 +294,7 @@ export class TimeEntryService {
     return this.transition(
       tenantId,
       id,
+      // LEAD_APPROVED is retired but may still exist on older entries.
       [TimesheetStatus.SUBMITTED, TimesheetStatus.LEAD_APPROVED],
       TimesheetStatus.APPROVED,
     );
@@ -410,8 +468,10 @@ export class TimeEntryService {
       status: TimesheetStatus.APPROVED,
       billable: true,
       invoiceId: null,
+      // Invoicing is done per mandate, so time logged on a case that has
+      // no mandate isn't part of the billable WIP register.
+      mandateId: mandateId ? new Types.ObjectId(mandateId) : { $ne: null },
     };
-    if (mandateId) query.mandateId = new Types.ObjectId(mandateId);
     return this.model.find(query).sort({ date: 1 }).lean();
   }
 

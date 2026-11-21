@@ -59,6 +59,10 @@ export class CreateLitigationCaseDto {
 }
 
 export class UpdateLitigationDetailsDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() title?: string;
+  // Empty string unlinks the case from its mandate.
+  @ApiPropertyOptional() @IsOptional() @IsString() mandateId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() court?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() courtDivision?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() courtCaseNumber?: string;
@@ -233,7 +237,8 @@ export class LogLitigationTenantTimeDto {
   @ApiProperty() @IsDateString() date: string;
   @ApiProperty() @IsNumber() @Min(0.01) hours: number;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() billable?: boolean;
-  @ApiProperty() @IsNumber() @Min(0) rate: number;
+  // Optional: when omitted the time is priced from the logger's rate card.
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) rate?: number;
 }
 
 // ── Closure — FIRAC ──────────────────────────────────────────────

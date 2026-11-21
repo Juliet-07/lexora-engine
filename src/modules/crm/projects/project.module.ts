@@ -56,6 +56,8 @@ import {
 } from './schemas';
 import {
   MandateService,
+  MandateCascadeService,
+  CaseCascadeService,
   MandateWorkspaceService,
   MyProjectsService,
   ClientProjectsService,
@@ -93,7 +95,12 @@ import {
   LitigationCaseController,
   PortfolioRiskController,
 } from './controllers';
-import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
+import {
+  Employee,
+  EmployeeSchema,
+  HrTeam,
+  HrTeamSchema,
+} from 'src/modules/hr/schemas';
 
 /**
  * The "Projects" sidebar section (Mandates, Tasks, Gantt & Planning,
@@ -155,6 +162,7 @@ import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
       },
       { name: PortfolioRisk.name, schema: PortfolioRiskSchema },
       { name: Employee.name, schema: EmployeeSchema },
+      { name: HrTeam.name, schema: HrTeamSchema },
     ]),
   ],
   providers: [
@@ -173,6 +181,8 @@ import { Employee, EmployeeSchema } from 'src/modules/hr/schemas';
     CaseClosurePdfService,
     PortfolioRiskService,
     MandateService,
+    MandateCascadeService,
+    CaseCascadeService,
     MandateWorkspaceService,
     TaskService,
     MyProjectsService,

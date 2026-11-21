@@ -72,3 +72,34 @@ export class UpdateMyTaskDto {
   @IsEnum(TaskStatus)
   status?: TaskStatus;
 }
+
+// What a mandate's manager (the team's Head of Department) sends to
+// assign work to a member of their team. assigneeEmployeeId is the
+// Employee _id; the display name is resolved server-side.
+export class CreateManagerTaskDto {
+  @ApiProperty() @IsString() title: string;
+  @ApiProperty() @IsMongoId() assigneeEmployeeId: string;
+  @ApiProperty({ enum: TaskPriority })
+  @IsEnum(TaskPriority)
+  priority: TaskPriority;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() startDate?: string;
+  @ApiProperty() @IsDateString() dueDate: string;
+  @ApiProperty() @IsNumber() estimateHrs: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() phase?: string;
+}
+
+export class UpdateManagerTaskDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() title?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() assigneeEmployeeId?: string;
+  @ApiPropertyOptional({ enum: TaskPriority })
+  @IsOptional()
+  @IsEnum(TaskPriority)
+  priority?: TaskPriority;
+  @ApiPropertyOptional({ enum: TaskStatus })
+  @IsOptional()
+  @IsEnum(TaskStatus)
+  status?: TaskStatus;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() startDate?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() dueDate?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() estimateHrs?: number;
+}

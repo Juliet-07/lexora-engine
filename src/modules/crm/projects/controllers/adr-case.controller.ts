@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Res,
@@ -137,6 +138,31 @@ export class AdrCaseController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.getById(t || u, id);
+  }
+
+  @Get(':id/delete-impact')
+  @ApiOperation({
+    summary: 'What deleting this case would remove or detach (for confirm)',
+  })
+  deleteImpact(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.deleteImpact(t || u, id);
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary:
+      'Delete the case and everything tied to it (messages, drafts, documents, deadline rules, time)',
+  })
+  remove(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.deleteCase(t || u, id);
   }
 
   @Patch(':id/details')

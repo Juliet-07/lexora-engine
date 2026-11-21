@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { CaseCascadeService } from './case-cascade.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -89,6 +94,7 @@ export class LitigationCaseService {
     private readonly emailService: EmailService,
     private readonly eventEmitter: EventEmitter2,
     private readonly closurePdfService: CaseClosurePdfService,
+    private readonly cascade: CaseCascadeService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -388,12 +394,52 @@ export class LitigationCaseService {
     });
   }
 
+  async deleteImpact(tenantId: string, id: string) {
+    return this.cascade.impact('litigation', tenantId, id);
+  }
+
+  async deleteCase(tenantId: string, id: string) {
+    return this.cascade.purge('litigation', tenantId, id);
+  }
+
   async updateDetails(
     tenantId: string,
     id: string,
     dto: UpdateLitigationDetailsDto,
   ) {
     const c = await this.getRawDoc(tenantId, id);
+    if (dto.title !== undefined) {
+      const title = dto.title.trim();
+      if (!title) throw new BadRequestException('A case needs a title');
+      c.title = title;
+    }
+    if (dto.currency !== undefined && dto.currency) c.currency = dto.currency;
+    if (dto.mandateId !== undefined) {
+      const current = c.mandateId ? String(c.mandateId) : '';
+      if (dto.mandateId !== current) {
+        let mandateName = '';
+        if (dto.mandateId) {
+          const m: any = await this.mandateService.getById(
+            tenantId,
+            dto.mandateId,
+          );
+          mandateName = m.name;
+          c.mandateId = new Types.ObjectId(dto.mandateId) as any;
+        } else {
+          c.mandateId = null;
+        }
+        c.mandateName = mandateName;
+        await this.timeEntryService.reassignCaseEntries(
+          tenantId,
+          'litigationCaseId',
+          id,
+          {
+            mandateId: dto.mandateId || null,
+            mandateName: mandateName || `${c.ref} · ${c.title}`,
+          },
+        );
+      }
+    }
     if (dto.court !== undefined) c.court = dto.court;
     if (dto.courtDivision !== undefined) c.courtDivision = dto.courtDivision;
     if (dto.courtCaseNumber !== undefined) {
@@ -1120,17 +1166,11 @@ export class LitigationCaseService {
     dto: LogLitigationTenantTimeDto,
   ) {
     const c = await this.getRawDoc(tenantId, caseId);
-    if (!c.mandateId) {
-      throw new NotFoundException(
-        "This case isn't linked to a mandate yet, so time can't be logged against it.",
-      );
-    }
-    const mandate: any = await this.mandateService
-      .getById(tenantId, String(c.mandateId))
-      .catch(() => null);
-    if (!mandate) {
-      throw new NotFoundException('The linked mandate no longer exists');
-    }
+    const mandate: any = c.mandateId
+      ? await this.mandateService
+          .getById(tenantId, String(c.mandateId))
+          .catch(() => null)
+      : null;
     const tenant = await this.userModel
       .findById(tenantId)
       .select('firstName lastName')
@@ -1138,19 +1178,27 @@ export class LitigationCaseService {
     const tenantName = tenant
       ? `${(tenant as any).firstName} ${(tenant as any).lastName}`.trim()
       : 'Tenant';
+    const keeper = await this.timeEntryService.resolveTenantTimekeeper(
+      tenantId,
+      tenantName,
+    );
 
+    // The case does not need a mandate: time is tied to the case itself and
+    // shows up in Timesheets either way. With no mandate, the entry is
+    // labelled with the case.
     return this.timeEntryService.create(tenantId, {
-      memberUserId: tenantId,
-      member: tenantName,
-      mandateId: String(c.mandateId),
-      mandateName: mandate.name,
+      memberUserId: keeper.memberUserId,
+      member: keeper.member,
+      mandateId: mandate ? String(mandate._id) : undefined,
+      mandateName: mandate ? mandate.name : `${c.ref} · ${c.title}`,
       litigationCaseId: String(c._id),
       narrative: dto.narrative,
       date: dto.date,
       hours: dto.hours,
       billable: dto.billable,
+      // Priced from the rate card unless a rate is given explicitly.
       rate: dto.billable === false ? 0 : dto.rate,
-      currency: c.currency,
+      currency: dto.rate !== undefined ? c.currency : undefined,
     });
   }
 

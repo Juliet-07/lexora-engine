@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -16,6 +17,8 @@ import {
 import { MyKbService, MyProjectsService, MyTicketsService } from '../services';
 import {
   UpdateMyTaskDto,
+  CreateManagerTaskDto,
+  UpdateManagerTaskDto,
   CreateEmployeeMessageDto,
   CreateMyTimeEntryDto,
   VoteKbArticleDto,
@@ -79,6 +82,68 @@ export class MyProjectsController {
     @CurrentUser('userType') userType: string,
   ) {
     return this.service.getMandateTasks(t || u, u, id, userType);
+  }
+
+  @Get('my-mandates/:id/team-members')
+  @ApiOperation({
+    summary:
+      "Members of the mandate's team — only for its manager (the team's Head of Department)",
+  })
+  getManagerTeamMembers(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    return this.service.getManagerTeamMembers(t || u, u, id, userType);
+  }
+
+  @Post('my-mandates/:id/tasks')
+  @ApiOperation({
+    summary: "Assign a new task to a member of the mandate's team (HOD only)",
+  })
+  createTaskAsManager(
+    @Param('id') id: string,
+    @Body() dto: CreateManagerTaskDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    return this.service.createTaskAsManager(t || u, u, id, userType, dto);
+  }
+
+  @Patch('my-mandates/:id/tasks/:taskId')
+  @ApiOperation({
+    summary: 'Edit or reassign a task on the mandate (HOD only)',
+  })
+  updateTaskAsManager(
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Body() dto: UpdateManagerTaskDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    return this.service.updateTaskAsManager(
+      t || u,
+      u,
+      id,
+      taskId,
+      userType,
+      dto,
+    );
+  }
+
+  @Delete('my-mandates/:id/tasks/:taskId')
+  @ApiOperation({ summary: 'Remove a task from the mandate (HOD only)' })
+  deleteTaskAsManager(
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    return this.service.deleteTaskAsManager(t || u, u, id, taskId, userType);
   }
 
   @Get('my-mandates/:id/documents')

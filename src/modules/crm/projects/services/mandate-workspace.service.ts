@@ -18,6 +18,7 @@ import {
   MandateEmployeeThreadRead,
   MandateEmployeeThreadReadDocument,
 } from '../schemas';
+import { Task, TaskDocument_, TaskStatus } from '../schemas';
 import { MandateService } from './mandate.service';
 import {
   CreateMessageDto,
@@ -44,9 +45,156 @@ export class MandateWorkspaceService {
     private readonly threadReadModel: Model<MandateEmployeeThreadReadDocument>,
     @InjectModel(Employee.name)
     private readonly employeeModel: Model<EmployeeDocument>,
+    @InjectModel(Task.name)
+    private readonly taskModel: Model<TaskDocument_>,
     private readonly mandateService: MandateService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  // ── Overview — the tenant owner's single view of everything on the
+  // mandate: every task (by status and by assignee) and every
+  // communication thread (client + each employee), merged. ─────────
+
+  async getOverview(tenantId: string, mandateId: string) {
+    const tId = new Types.ObjectId(tenantId);
+    const mId = new Types.ObjectId(mandateId);
+    const mandate: any = await this.mandateService.getById(tenantId, mandateId);
+
+    const [tasks, clientMsgs, employeeMsgs] = await Promise.all([
+      this.taskModel
+        .find({ tenantId: tId, mandateId: mId })
+        .sort({ updatedAt: -1 })
+        .lean(),
+      this.messageModel
+        .find({ tenantId: tId, mandateId: mId })
+        .sort({ createdAt: 1 })
+        .lean(),
+      this.employeeMessageModel
+        .find({ tenantId: tId, mandateId: mId })
+        .sort({ createdAt: 1 })
+        .lean(),
+    ]);
+
+    const now = Date.now();
+    const isOverdue = (t: any) =>
+      t.status !== TaskStatus.DONE && new Date(t.dueDate).getTime() < now;
+
+    const byStatus: Record<string, number> = {};
+    Object.values(TaskStatus).forEach((st) => (byStatus[st] = 0));
+    const assignees = new Map<
+      string,
+      {
+        assignee: string;
+        assigneeUserId: string | null;
+        total: number;
+        done: number;
+        overdue: number;
+      }
+    >();
+    for (const t of tasks as any[]) {
+      byStatus[t.status] = (byStatus[t.status] ?? 0) + 1;
+      const key = t.assigneeUserId ? String(t.assigneeUserId) : t.assignee;
+      const row = assignees.get(key) ?? {
+        assignee: t.assignee,
+        assigneeUserId: t.assigneeUserId ? String(t.assigneeUserId) : null,
+        total: 0,
+        done: 0,
+        overdue: 0,
+      };
+      row.total += 1;
+      if (t.status === TaskStatus.DONE) row.done += 1;
+      if (isOverdue(t)) row.overdue += 1;
+      assignees.set(key, row);
+    }
+
+    // Names for the per-employee threads.
+    const threadEmployeeIds = [
+      ...new Set(employeeMsgs.map((m: any) => String(m.employeeUserId))),
+    ];
+    const employees = threadEmployeeIds.length
+      ? await this.employeeModel
+          .find({
+            tenantId: tId,
+            _id: { $in: threadEmployeeIds.map((i) => new Types.ObjectId(i)) },
+          })
+          .select('firstName lastName')
+          .lean()
+      : [];
+    const nameOf = new Map(
+      (employees as any[]).map((e) => [
+        String(e._id),
+        `${e.firstName ?? ''} ${e.lastName ?? ''}`.trim(),
+      ]),
+    );
+
+    const employeeThreads = threadEmployeeIds.map((id) => {
+      const msgs = employeeMsgs.filter(
+        (m: any) => String(m.employeeUserId) === id,
+      ) as any[];
+      const last = msgs[msgs.length - 1];
+      return {
+        employeeUserId: id,
+        name: nameOf.get(id) ?? 'Employee',
+        count: msgs.length,
+        lastAt: last?.createdAt ?? null,
+        lastBody: last?.body ?? '',
+      };
+    });
+
+    const feed = [
+      ...(clientMsgs as any[]).map((m) => ({
+        channel: `Client — ${mandate.clientName}`,
+        author: m.author,
+        body: m.body,
+        direction: m.direction,
+        createdAt: m.createdAt,
+      })),
+      ...(employeeMsgs as any[]).map((m) => ({
+        channel: `Team — ${nameOf.get(String(m.employeeUserId)) ?? 'Employee'}`,
+        author: m.author,
+        body: m.body,
+        direction: m.direction,
+        createdAt: m.createdAt,
+      })),
+    ]
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      )
+      .slice(0, 25);
+
+    return {
+      mandate: {
+        _id: String(mandate._id),
+        name: mandate.name,
+        manager: mandate.manager,
+        managerMissing: mandate.managerMissing,
+        teamName: mandate.teamName,
+      },
+      tasks: {
+        total: tasks.length,
+        overdue: (tasks as any[]).filter(isOverdue).length,
+        byStatus,
+        byAssignee: [...assignees.values()].sort((a, b) => b.total - a.total),
+        recent: (tasks as any[]).slice(0, 8).map((t) => ({
+          _id: String(t._id),
+          title: t.title,
+          assignee: t.assignee,
+          status: t.status,
+          dueDate: t.dueDate,
+        })),
+      },
+      communications: {
+        clientThread: {
+          count: clientMsgs.length,
+          lastAt:
+            (clientMsgs as any[])[clientMsgs.length - 1]?.createdAt ?? null,
+        },
+        employeeThreads,
+        feed,
+      },
+    };
+  }
 
   // ── Messages ─────────────────────────────────────────────────
 
