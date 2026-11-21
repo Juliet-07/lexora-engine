@@ -19,11 +19,13 @@ import {
   ApiBearerAuth,
   ApiOperation,
   ApiConsumes,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { MandateWorkspaceService } from '../services';
 import {
   CreateMessageDto,
   CreateEmployeeMessageDto,
+  CreateGroupMessageDto,
   CreateNoteDto,
   CreateFolderDto,
   FileClientDocumentDto,
@@ -96,6 +98,38 @@ export class MandateWorkspaceController {
   }
 
   // ── Messages (tenant ↔ a specific employee) ─────────────────────
+
+  @Get('group-messages')
+  @ApiQuery({
+    name: 'recipients',
+    description: 'Comma-separated employee ids that make up the group',
+  })
+  @ApiOperation({
+    summary: 'The shared thread with exactly this group of team members',
+  })
+  getGroupMessages(
+    @Param('mandateId') mandateId: string,
+    @Query('recipients') recipients: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    const ids = (recipients ?? '').split(',').filter(Boolean);
+    return this.service.getGroupMessages(t || u, mandateId, ids);
+  }
+
+  @Post('group-messages')
+  @ApiOperation({
+    summary:
+      'Message several team members (or all of them) at once — everyone sees it and can reply',
+  })
+  addGroupMessage(
+    @Param('mandateId') mandateId: string,
+    @Body() dto: CreateGroupMessageDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addGroupMessage(t || u, mandateId, dto);
+  }
 
   @Get('employee-messages/unread-summary')
   @ApiOperation({

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -23,6 +27,8 @@ import { MandateService } from './mandate.service';
 import {
   CreateMessageDto,
   CreateEmployeeMessageDto,
+  CreateGroupMessageDto,
+  ReplyGroupMessageDto,
   CreateNoteDto,
 } from '../dtos';
 import {
@@ -240,6 +246,7 @@ export class MandateWorkspaceService {
         tenantId: new Types.ObjectId(tenantId),
         mandateId: new Types.ObjectId(mandateId),
         employeeUserId: new Types.ObjectId(employeeUserId),
+        groupId: null,
       })
       .sort({ createdAt: 1 })
       .lean();
@@ -298,6 +305,194 @@ export class MandateWorkspaceService {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // GROUP MESSAGES — one message to several team members (or the
+  // whole team). Everyone addressed sees it, is notified, and can
+  // answer in the same shared thread. The same set of people always
+  // lands in the same thread.
+  // ═══════════════════════════════════════════════════════════
+
+  private groupKeyOf(ids: string[]) {
+    return Array.from(new Set(ids.map(String)))
+      .sort()
+      .join(',');
+  }
+
+  private async resolveEmployees(tenantId: string, ids: string[]) {
+    const unique = Array.from(new Set(ids.map(String)));
+    const employees = await this.employeeModel
+      .find({
+        _id: { $in: unique.map((i) => new Types.ObjectId(i)) },
+        tenantId: new Types.ObjectId(tenantId),
+      })
+      .select('firstName lastName userId')
+      .lean();
+    if (employees.length !== unique.length) {
+      throw new NotFoundException('One or more recipients were not found');
+    }
+    return employees.map((e: any) => ({
+      id: String(e._id),
+      userId: e.userId ? String(e.userId) : '',
+      name: `${e.firstName ?? ''} ${e.lastName ?? ''}`.trim() || 'Team member',
+    }));
+  }
+
+  private async notifyGroup(
+    tenantId: string,
+    mandateId: string,
+    author: string,
+    employees: { id: string; userId: string }[],
+    exceptEmployeeId: string | null,
+    notifyTenant: boolean,
+  ) {
+    const mandate = await this.mandateService
+      .getById(tenantId, mandateId)
+      .catch(() => null);
+    const mandateName = (mandate as any)?.name ?? 'a mandate';
+    for (const e of employees) {
+      if (e.id === exceptEmployeeId || !e.userId) continue;
+      this.eventEmitter.emit('employee.mandate_message.received', {
+        tenantId,
+        employeeUserId: e.userId,
+        mandateId,
+        mandateName,
+        author,
+      });
+    }
+    if (notifyTenant) {
+      this.eventEmitter.emit('tenant.mandate_message.received', {
+        tenantId,
+        mandateId,
+        mandateName,
+        author,
+      });
+    }
+  }
+
+  // Tenant: the shared thread for exactly this set of people.
+  async getGroupMessages(
+    tenantId: string,
+    mandateId: string,
+    recipientIds: string[],
+  ) {
+    return this.employeeMessageModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+        groupKey: this.groupKeyOf(recipientIds),
+        groupId: { $ne: null },
+      })
+      .sort({ createdAt: 1 })
+      .lean();
+  }
+
+  // Tenant: send to several people at once.
+  async addGroupMessage(
+    tenantId: string,
+    mandateId: string,
+    dto: CreateGroupMessageDto,
+  ) {
+    const employees = await this.resolveEmployees(tenantId, dto.recipientIds);
+    if (employees.length < 2) {
+      throw new BadRequestException('Pick at least two people for a group');
+    }
+    const groupKey = this.groupKeyOf(dto.recipientIds);
+    const existing = await this.employeeMessageModel
+      .findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+        groupKey,
+        groupId: { $ne: null },
+      })
+      .select('groupId')
+      .lean();
+    const groupId = existing?.groupId ?? new Types.ObjectId();
+
+    const created = await this.employeeMessageModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      mandateId: new Types.ObjectId(mandateId),
+      employeeUserId: new Types.ObjectId(employees[0].id),
+      direction: EmployeeMessageDirection.TENANT,
+      author: dto.author,
+      body: dto.body,
+      groupId,
+      groupKey,
+      recipientIds: employees.map((e) => new Types.ObjectId(e.id)),
+      recipientNames: employees.map((e) => e.name),
+    });
+    await this.notifyGroup(
+      tenantId,
+      mandateId,
+      dto.author,
+      employees,
+      null,
+      false,
+    );
+    return created.toObject();
+  }
+
+  // Employee: every group conversation I'm part of on this mandate.
+  async getMyGroupMessages(
+    tenantId: string,
+    mandateId: string,
+    employeeId: string,
+  ) {
+    return this.employeeMessageModel
+      .find({
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+        groupId: { $ne: null },
+        recipientIds: new Types.ObjectId(employeeId),
+      })
+      .sort({ createdAt: 1 })
+      .lean();
+  }
+
+  // Employee: answer the whole group (everyone in it, plus the tenant).
+  async replyToGroup(
+    tenantId: string,
+    mandateId: string,
+    employeeId: string,
+    dto: ReplyGroupMessageDto,
+  ) {
+    const first = await this.employeeMessageModel
+      .findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        mandateId: new Types.ObjectId(mandateId),
+        groupId: new Types.ObjectId(dto.groupId),
+        recipientIds: new Types.ObjectId(employeeId),
+      })
+      .lean();
+    if (!first) {
+      throw new NotFoundException("You aren't part of this conversation");
+    }
+    const created = await this.employeeMessageModel.create({
+      tenantId: new Types.ObjectId(tenantId),
+      mandateId: new Types.ObjectId(mandateId),
+      employeeUserId: new Types.ObjectId(employeeId),
+      direction: EmployeeMessageDirection.EMPLOYEE,
+      author: dto.author,
+      body: dto.body,
+      groupId: first.groupId,
+      groupKey: first.groupKey,
+      recipientIds: first.recipientIds,
+      recipientNames: first.recipientNames,
+    });
+    const employees = await this.resolveEmployees(
+      tenantId,
+      (first.recipientIds ?? []).map(String),
+    );
+    await this.notifyGroup(
+      tenantId,
+      mandateId,
+      dto.author,
+      employees,
+      employeeId,
+      true,
+    );
+    return created.toObject();
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // READ-TRACKING — real unread state per (mandate, employee)
   // thread, for both directions.
   // ═══════════════════════════════════════════════════════════
@@ -317,6 +512,7 @@ export class MandateWorkspaceService {
               tenantId: new Types.ObjectId(tenantId),
               mandateId: new Types.ObjectId(mandateId),
               employeeUserId: new Types.ObjectId(employeeUserId),
+              groupId: null,
               direction,
               createdAt: cutoff ? { $gt: cutoff } : { $exists: true },
             });
@@ -335,6 +531,7 @@ export class MandateWorkspaceService {
       {
         tenantId: new Types.ObjectId(tenantId),
         mandateId: new Types.ObjectId(mandateId),
+        groupId: null,
       },
     );
     if (!employeeIds.length) return {};
@@ -399,6 +596,7 @@ export class MandateWorkspaceService {
       tenantId: new Types.ObjectId(tenantId),
       mandateId: new Types.ObjectId(mandateId),
       employeeUserId: new Types.ObjectId(employeeUserId),
+      groupId: null,
       direction: EmployeeMessageDirection.TENANT,
       createdAt: read?.lastReadByEmployeeAt
         ? { $gt: read.lastReadByEmployeeAt }

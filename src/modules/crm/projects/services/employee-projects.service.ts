@@ -33,6 +33,7 @@ import {
   CreateManagerTaskDto,
   UpdateManagerTaskDto,
   CreateEmployeeMessageDto,
+  ReplyGroupMessageDto,
   CreateMyTimeEntryDto,
   UpdateTicketStatusDto,
   AddTicketNoteDto,
@@ -323,6 +324,52 @@ export class MyProjectsService {
       mandateId,
       String(employee._id),
       EmployeeMessageDirection.EMPLOYEE,
+      dto,
+    );
+  }
+
+  async getMyGroupMessages(
+    tenantId: string,
+    userId: string,
+    mandateId: string,
+    userType: string,
+  ) {
+    const { employee } = await this.getAuthorizedMandate(
+      tenantId,
+      userId,
+      mandateId,
+      userType,
+    );
+    if (!employee) return [];
+    return this.workspaceService.getMyGroupMessages(
+      tenantId,
+      mandateId,
+      String(employee._id),
+    );
+  }
+
+  async replyToMyGroup(
+    tenantId: string,
+    userId: string,
+    mandateId: string,
+    userType: string,
+    dto: ReplyGroupMessageDto,
+  ) {
+    const { employee } = await this.getAuthorizedMandate(
+      tenantId,
+      userId,
+      mandateId,
+      userType,
+    );
+    if (!employee) {
+      throw new NotFoundException(
+        'No employee record is linked to this account',
+      );
+    }
+    return this.workspaceService.replyToGroup(
+      tenantId,
+      mandateId,
+      String(employee._id),
       dto,
     );
   }
@@ -779,22 +826,18 @@ export class MyProjectsService {
       'employee',
       caseType,
     );
-    if (!(c as any).mandateId) {
-      throw new NotFoundException(
-        "This case isn't linked to a mandate yet, so time can't be logged against it.",
-      );
-    }
-    const mandate = await this.mandateModel
-      .findById((c as any).mandateId)
-      .lean();
-    if (!mandate) {
-      throw new NotFoundException('The linked mandate no longer exists');
-    }
+    // A case does not need a mandate for time to be logged on it — the
+    // entry is tied to the case and appears in Timesheets either way.
+    const mandate: any = (c as any).mandateId
+      ? await this.mandateModel.findById((c as any).mandateId).lean()
+      : null;
     return this.timeEntryService.create(tenantId, {
       memberUserId: String(employee!._id),
       member: `${employee!.firstName} ${employee!.lastName}`,
-      mandateId: String((c as any).mandateId),
-      mandateName: (mandate as any).name,
+      mandateId: mandate ? String(mandate._id) : undefined,
+      mandateName: mandate
+        ? mandate.name
+        : `${(c as any).ref} · ${(c as any).title}`,
       adrCaseId: caseType === 'adr' ? String(c._id) : undefined,
       litigationCaseId: caseType === 'litigation' ? String(c._id) : undefined,
       narrative: dto.narrative,

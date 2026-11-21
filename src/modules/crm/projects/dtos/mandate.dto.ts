@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  ArrayMinSize,
   IsString,
   IsOptional,
   IsEnum,
@@ -42,6 +43,9 @@ export class CreateMandateDto {
 
 export class UpdateMandateDto {
   @ApiPropertyOptional() @IsOptional() @IsString() name?: string;
+  // The mandate's billing currency. Figures already recorded (time, invoices)
+  // keep the currency they were recorded in.
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
   @ApiPropertyOptional({ enum: Rag }) @IsOptional() @IsEnum(Rag) rag?: Rag;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() teamId?: string;
@@ -100,6 +104,22 @@ export class CreateMessageDto {
 export class CreateEmployeeMessageDto {
   @ApiProperty() @IsString() author: string;
   @ApiProperty() @IsString() body: string;
+}
+
+export class CreateGroupMessageDto {
+  @ApiProperty() @IsString() author: string;
+  @ApiProperty() @IsString() body: string;
+  @ApiProperty({ type: [String], description: 'Employee ids, at least two' })
+  @IsArray()
+  @ArrayMinSize(2)
+  @IsMongoId({ each: true })
+  recipientIds: string[];
+}
+
+export class ReplyGroupMessageDto {
+  @ApiProperty() @IsString() author: string;
+  @ApiProperty() @IsString() body: string;
+  @ApiProperty() @IsMongoId() groupId: string;
 }
 
 export class CreateNoteDto {

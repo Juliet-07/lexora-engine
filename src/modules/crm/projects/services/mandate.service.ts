@@ -418,6 +418,13 @@ export class MandateService {
     if (dto.name !== undefined) m.name = dto.name;
     if (dto.description !== undefined) m.description = dto.description;
     if (dto.rag !== undefined) m.rag = dto.rag;
+    if (dto.currency !== undefined) {
+      const cur = dto.currency.trim().toUpperCase();
+      if (!/^[A-Z]{3,4}$/.test(cur)) {
+        throw new BadRequestException('Enter a valid currency code, e.g. USD');
+      }
+      m.currency = cur;
+    }
     // Changing the team re-derives the manager from that team's HOD.
     if (dto.teamId !== undefined) {
       const team = await this.resolveTeam(m.tenantId, dto.teamId);

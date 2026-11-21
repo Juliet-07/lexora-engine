@@ -20,6 +20,7 @@ import {
   CreateManagerTaskDto,
   UpdateManagerTaskDto,
   CreateEmployeeMessageDto,
+  ReplyGroupMessageDto,
   CreateMyTimeEntryDto,
   VoteKbArticleDto,
   UpdateTicketStatusDto,
@@ -180,6 +181,31 @@ export class MyProjectsController {
     @CurrentUser('userType') userType: string,
   ) {
     return this.service.sendMyMessage(t || u, u, id, userType, dto);
+  }
+
+  @Get('my-mandates/:id/group-messages')
+  @ApiOperation({
+    summary: 'Group conversations on this mandate that I am part of',
+  })
+  getMyGroupMessages(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    return this.service.getMyGroupMessages(t || u, u, id, userType);
+  }
+
+  @Post('my-mandates/:id/group-messages')
+  @ApiOperation({ summary: 'Reply to a group conversation (everyone sees it)' })
+  replyToMyGroup(
+    @Param('id') id: string,
+    @Body() dto: ReplyGroupMessageDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('userType') userType: string,
+  ) {
+    return this.service.replyToMyGroup(t || u, u, id, userType, dto);
   }
 
   @Get('my-mandates/:id/messages/unread-count')
