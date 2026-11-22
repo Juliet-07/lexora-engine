@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -16,6 +17,10 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
+import {
+  WorkflowDrafterGuard,
+  WorkflowModule,
+} from 'src/modules/approvals/guards/workflow-drafter.guard';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
 import {
@@ -43,7 +48,9 @@ import {
 @ApiTags('Deals & Transactions — Contracts from templates')
 @ApiBearerAuth()
 @UserTypes(UserType.TENANT, UserType.EMPLOYEE)
-@RequiresModule(PlatformModuleKey.DEALS)
+@RequiresModule(PlatformModuleKey.GRC, PlatformModuleKey.DEALS)
+@UseGuards(WorkflowDrafterGuard)
+@WorkflowModule('grc_deals')
 @Controller('deals')
 export class DealContractController {
   constructor(

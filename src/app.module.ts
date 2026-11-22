@@ -33,6 +33,7 @@ import { GrcModule } from './modules/grc/grc.module';
 import { BoardPortalModule } from './modules/board/board.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { SupportModule } from './modules/support/support.module';
+import { ApprovalsModule } from './modules/approvals/approvals.module';
 
 @Module({
   imports: [
@@ -82,6 +83,7 @@ import { SupportModule } from './modules/support/support.module';
     AuthModule,
     SuperAdminModule,
     SupportModule,
+    ApprovalsModule,
     TenantModule,
     ClientModule,
     KycModule,

@@ -11,6 +11,7 @@ import {
   Res,
   UseInterceptors,
   UploadedFile,
+  UseGuards,
   BadRequestException,
   HttpCode,
   HttpStatus,
@@ -65,9 +66,17 @@ import {
   UpdateContractGovernanceDto,
   AddConditionPrecedentDto,
   SetConditionPrecedentSatisfiedDto,
-  SetApprovalChainDto,
-  DecideApprovalStepDto,
 } from '../dtos';
+import {
+  DecideApprovalDto,
+  SubmitApprovalDto,
+} from 'src/modules/approvals/dtos/approval.dto';
+import { RequestUser } from 'src/modules/approvals/services/approval-workflow.service';
+import {
+  AllowWithoutDrafter,
+  WorkflowDrafterGuard,
+  WorkflowModule,
+} from 'src/modules/approvals/guards/workflow-drafter.guard';
 
 @ApiTags('CRM — Tools — Contracts')
 @ApiBearerAuth()
@@ -149,8 +158,12 @@ export class CommentController {
 
 @ApiTags('CRM — Tools — Contracts')
 @ApiBearerAuth()
-@UserTypes(UserType.TENANT)
+// Employees with CRM access can open contracts; they can only change one if
+// the account owner made them a drafter (see approvals/workflows/crm_contracts).
+@UserTypes(UserType.TENANT, UserType.EMPLOYEE)
 @RequiresModule(PlatformModuleKey.CRM)
+@UseGuards(WorkflowDrafterGuard)
+@WorkflowModule('crm_contracts')
 @Controller('tools/contracts')
 export class ContractController {
   constructor(private readonly service: ContractService) {}
@@ -433,33 +446,34 @@ export class ContractController {
   }
 
   // ── Approval chain ─────────────────────────────────────────
-  @Post(':id/approval-chain')
+  // Who drafts / reviews / approves is set up once by the account owner
+  // (approvals/workflows/crm_contracts). A drafter submits; each step is
+  // then decided in turn, the owner last.
+  @Post(':id/approval/submit')
   @ApiOperation({
     summary:
-      'Set (or restart) the approval chain — first step becomes In review',
+      'Submit (or resubmit after a send-back) the contract for approval — drafters and the owner only',
   })
-  setApprovalChain(
+  submitForApproval(
     @Param('id') id: string,
-    @Body() dto: SetApprovalChainDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
+    @Body() dto: SubmitApprovalDto,
+    @CurrentUser() user: RequestUser,
   ) {
-    return this.service.setApprovalChain(t || u, id, dto);
+    return this.service.submitForApproval(user, id, dto);
   }
 
-  @Post(':id/approval-chain/:stepId/decide')
+  @AllowWithoutDrafter()
+  @Post(':id/approval/decide')
   @ApiOperation({
     summary:
-      'Approve or reject the step currently in review — advances the chain on approval',
+      'Approve, or send back with a reason, the step now in review — only the people on that step (or the owner) can',
   })
-  decideApprovalStep(
+  decideApproval(
     @Param('id') id: string,
-    @Param('stepId') stepId: string,
-    @Body() dto: DecideApprovalStepDto,
-    @CurrentUser('sub') u: string,
-    @CurrentUser('tenantId') t: string,
+    @Body() dto: DecideApprovalDto,
+    @CurrentUser() user: RequestUser,
   ) {
-    return this.service.decideApprovalStep(t || u, id, stepId, dto);
+    return this.service.decideApproval(user, id, dto);
   }
 
   // ── E-signature workflow ─────────────────────────────────
@@ -511,8 +525,9 @@ export class ContractController {
     @Body() dto: EditRenderedBodyDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser() user: RequestUser,
   ) {
-    return this.service.editRenderedBody(t || u, id, dto);
+    return this.service.editRenderedBody(t || u, id, dto, user);
   }
 
   @Post(':id/resync-merge-fields')
@@ -524,10 +539,13 @@ export class ContractController {
     @Param('id') id: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser() user: RequestUser,
   ) {
-    return this.service.resyncMergeFields(t || u, id);
+    return this.service.resyncMergeFields(t || u, id, user);
   }
 
+  // The account owner is the authorised signatory.
+  @UserTypes(UserType.TENANT)
   @Post(':id/countersign')
   @ApiOperation({
     summary:

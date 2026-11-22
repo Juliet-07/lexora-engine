@@ -12,6 +12,7 @@ import {
   BadRequestException,
   Res,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiConsumes } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -53,6 +54,16 @@ import {
   AddRedlineDto,
   UpdateCommercialTermsDto,
 } from '../dtos';
+import {
+  AllowWithoutDrafter,
+  WorkflowDrafterGuard,
+  WorkflowModule,
+} from 'src/modules/approvals/guards/workflow-drafter.guard';
+import { RequestUser } from 'src/modules/approvals/services/approval-workflow.service';
+import {
+  DecideApprovalDto,
+  SubmitApprovalDto,
+} from 'src/modules/approvals/dtos/approval.dto';
 import { CurrentUser, Public, UserTypes } from 'src/common/decorators';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
 import {
@@ -74,8 +85,12 @@ const dataRoomStorage = diskStorage({
 
 @ApiTags('Deals & Transactions')
 @ApiBearerAuth()
+// Employees with GRC access are let in only if the account owner has put
+// them in the deals approval chain; only drafters can change things.
 @UserTypes(UserType.TENANT, UserType.EMPLOYEE)
-@RequiresModule(PlatformModuleKey.DEALS)
+@RequiresModule(PlatformModuleKey.GRC, PlatformModuleKey.DEALS)
+@UseGuards(WorkflowDrafterGuard)
+@WorkflowModule('grc_deals')
 @Controller('deals')
 export class DealController {
   constructor(
@@ -337,12 +352,14 @@ export class DealController {
     @Param('index') index: string,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser() user: RequestUser,
   ) {
     return this.service.removeContractSection(
       t || u,
       id,
       contractId,
       Number(index),
+      user,
     );
   }
 
@@ -354,6 +371,7 @@ export class DealController {
     @Body() dto: UpdateContractSectionBodyDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser() user: RequestUser,
   ) {
     return this.service.updateContractSectionBody(
       t || u,
@@ -361,6 +379,7 @@ export class DealController {
       contractId,
       Number(index),
       dto,
+      user,
     );
   }
 
@@ -479,8 +498,34 @@ export class DealController {
     @Body() dto: SetContractVariableDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @CurrentUser() user: RequestUser,
   ) {
-    return this.service.setContractVariable(t || u, id, contractId, dto);
+    return this.service.setContractVariable(t || u, id, contractId, dto, user);
+  }
+
+  // ── Approval chain ───────────────────────────────────────────
+  // Who drafts / reviews / approves is set up once by the account owner
+  // (approvals/workflows/grc_deals). A drafter submits; each step is then
+  // decided in turn, the owner last.
+  @Post(':id/contracts/:contractId/approval/submit')
+  submitContractForApproval(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @Body() dto: SubmitApprovalDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.service.submitContractForApproval(user, id, contractId, dto);
+  }
+
+  @AllowWithoutDrafter()
+  @Post(':id/contracts/:contractId/approval/decide')
+  decideContractApproval(
+    @Param('id') id: string,
+    @Param('contractId') contractId: string,
+    @Body() dto: DecideApprovalDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.service.decideContractApproval(user, id, contractId, dto);
   }
 
   @Get(':id/contracts/:contractId/pdf')

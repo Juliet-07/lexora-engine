@@ -1,4 +1,12 @@
 import {
+  ApprovalWorkflowService,
+  RequestUser,
+} from 'src/modules/approvals/services/approval-workflow.service';
+import {
+  DecideApprovalDto,
+  SubmitApprovalDto,
+} from 'src/modules/approvals/dtos/approval.dto';
+import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -67,6 +75,7 @@ export class DealService {
     @InjectModel(Deal.name) private readonly model: Model<DealDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly emailService: EmailService,
+    private readonly approvals: ApprovalWorkflowService,
   ) {}
 
   // ── Pure computed helpers — single source of truth, never
@@ -492,6 +501,95 @@ export class DealService {
     return contract;
   }
 
+  // ── Approval chain (contracts only; term sheets are not part of it) ──
+  private isApprovable(contract: any) {
+    return (contract.kind ?? 'contract') === 'contract';
+  }
+
+  private approvalCtx(deal: DealDocument, contract: any) {
+    return {
+      label: `Contract “${contract.name}” (${deal.name})`,
+      link: `/grc/deals/${String(deal._id)}`,
+    };
+  }
+
+  // While a contract is with the approvers its text is frozen; changing one
+  // that has already been approved voids the approval, so what was signed
+  // off is always what goes out.
+  private async guardApprovalOnEdit(
+    contract: any,
+    user: RequestUser | undefined,
+    reason: string,
+  ) {
+    if (!this.isApprovable(contract)) return;
+    this.approvals.assertEditable(contract.approval);
+    if (!user) return;
+    const voided = await this.approvals.voidIfApproved(
+      user,
+      contract.approval,
+      reason,
+    );
+    if (voided) contract.approval = voided as any;
+  }
+
+  async submitContractForApproval(
+    user: RequestUser,
+    dealId: string,
+    contractId: string,
+    dto: SubmitApprovalDto,
+  ) {
+    const deal = await this.getRawDoc(
+      ApprovalWorkflowService.tenantOf(user),
+      dealId,
+    );
+    const contract: any = this.getContractOrThrow(deal, contractId);
+    if (!this.isApprovable(contract))
+      throw new BadRequestException(
+        'Only contracts go through the approval chain, not term sheets.',
+      );
+    if (!(contract.sections ?? []).length)
+      throw new BadRequestException(
+        'This contract has no text yet — add content before submitting it for approval.',
+      );
+    contract.approval = (await this.approvals.submit(
+      user,
+      'grc_deals',
+      contract.approval,
+      this.approvalCtx(deal, contract),
+    )) as any;
+    if (dto.note) {
+      const last =
+        contract.approval.history[contract.approval.history.length - 1];
+      if (last)
+        last.detail = [last.detail, dto.note].filter(Boolean).join(' — ');
+    }
+    await deal.save();
+    return deal;
+  }
+
+  async decideContractApproval(
+    user: RequestUser,
+    dealId: string,
+    contractId: string,
+    dto: DecideApprovalDto,
+  ) {
+    const deal = await this.getRawDoc(
+      ApprovalWorkflowService.tenantOf(user),
+      dealId,
+    );
+    const contract: any = this.getContractOrThrow(deal, contractId);
+    contract.approval = (await this.approvals.decide(
+      user,
+      'grc_deals',
+      contract.approval,
+      dto.decision,
+      dto.note ?? '',
+      this.approvalCtx(deal, contract),
+    )) as any;
+    await deal.save();
+    return deal;
+  }
+
   async renameContract(
     tenantId: string,
     dealId: string,
@@ -518,9 +616,15 @@ export class DealService {
     dealId: string,
     contractId: string,
     index: number,
+    user?: RequestUser,
   ) {
     const deal = await this.getRawDoc(tenantId, dealId);
     const contract = this.getContractOrThrow(deal, contractId);
+    await this.guardApprovalOnEdit(
+      contract,
+      user,
+      'The contract text was edited',
+    );
     if (dealContractExecuted(deal, contract))
       throw new BadRequestException(
         'This contract has been executed, so its text can no longer be edited directly. Use the Amendments tab to vary it.',
@@ -542,9 +646,15 @@ export class DealService {
     contractId: string,
     index: number,
     dto: UpdateContractSectionBodyDto,
+    user?: RequestUser,
   ) {
     const deal = await this.getRawDoc(tenantId, dealId);
     const contract = this.getContractOrThrow(deal, contractId);
+    await this.guardApprovalOnEdit(
+      contract,
+      user,
+      'The contract text was edited',
+    );
     if (dealContractExecuted(deal, contract))
       throw new BadRequestException(
         'This contract has been executed, so its text can no longer be edited directly. Use the Amendments tab to vary it.',
@@ -703,9 +813,15 @@ export class DealService {
     dealId: string,
     contractId: string,
     dto: SetContractVariableDto,
+    user?: RequestUser,
   ) {
     const deal = await this.getRawDoc(tenantId, dealId);
     const contract = this.getContractOrThrow(deal, contractId);
+    await this.guardApprovalOnEdit(
+      contract,
+      user,
+      'The contract text was edited',
+    );
     const value = normalizeFieldValue(dto.key, dto.value.trim());
     // A blank value puts the field back to "not filled in yet": it shows
     // as {{token}} again rather than leaving an empty gap in the text.
@@ -970,6 +1086,13 @@ export class DealService {
   ) {
     const deal = await this.getRawDoc(tenantId, dealId);
     const contract = this.getContractOrThrow(deal, contractId);
+    if (this.isApprovable(contract))
+      await this.approvals.assertCleared(
+        tenantId,
+        'grc_deals',
+        contract.approval,
+        'it goes to the other side for review',
+      );
     // A term sheet goes to the parties allowed to review the term sheet /
     // offer; a contract to those allowed to review contracts.
     const isTermSheet = contract.kind === 'term_sheet';

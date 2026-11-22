@@ -1,3 +1,7 @@
+import {
+  ApprovalRun,
+  ApprovalRunSchema,
+} from 'src/modules/approvals/schemas/approval.schema';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 import {
@@ -472,6 +476,11 @@ export class Contract {
   penParty: DealPartySide;
   @Prop({ type: Object, default: null })
   originalSections: { title: string; level: number; body: string }[] | null;
+  // Internal approval chain for this contract: drafter → reviewers /
+  // approvers → tenant owner. Set up per tenant in Approval workflow; only
+  // contracts (not term sheets) go through it.
+  @Prop({ type: ApprovalRunSchema, default: () => ({}) })
+  approval: ApprovalRun;
 }
 export const ContractSchema = SchemaFactory.createForClass(Contract);
 export type ContractDocument = Contract & Document;

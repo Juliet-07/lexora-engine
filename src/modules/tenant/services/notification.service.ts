@@ -691,6 +691,26 @@ export class TenantNotificationService {
     );
   }
 
+  // Contract approval chain (CRM contracts and GRC deal contracts): someone's
+  // turn to review, a final approval, or a send-back — one event per person.
+  @OnEvent('approval.notify')
+  async onApprovalNotify(e: {
+    tenantId: string;
+    recipientId: string;
+    title: string;
+    description: string;
+    link: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.recipientId,
+      TenantNotificationType.GENERAL,
+      e.title,
+      e.description,
+      e.link,
+    );
+  }
+
   @OnEvent('tenant.vendor_approval.decided')
   async onVendorApprovalDecided(e: {
     tenantId: string;

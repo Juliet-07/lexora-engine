@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { HrModule } from 'src/modules/hr/hr.module';
+import { ApprovalsModule } from 'src/modules/approvals/approvals.module';
 import { ComplianceModule } from 'src/modules/grc/compliance/compliance.module';
 import { ProjectsModule } from 'src/modules/crm/projects/project.module';
 import { SuperAdminModule } from 'src/modules/super_admin/super_admin.module';
@@ -102,6 +103,7 @@ import {
 
 @Module({
   imports: [
+    ApprovalsModule,
     HrModule,
     ComplianceModule,
     ProjectsModule,

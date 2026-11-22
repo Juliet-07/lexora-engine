@@ -1,5 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import {
+  ApprovalRun,
+  ApprovalRunSchema,
+} from 'src/modules/approvals/schemas/approval.schema';
 
 export enum CommentSubjectType {
   CONTRACT = 'Contract',
@@ -221,30 +225,6 @@ export class ConditionPrecedent {
 export const ConditionPrecedentSchema =
   SchemaFactory.createForClass(ConditionPrecedent);
 
-// A real, sequential internal approval workflow — only the current
-// "In review" step can be acted on; approving it advances the next
-// Waiting step to In review. userId is set when the approver is a
-// real employee on the platform; left null for an approver who
-// isn't (rare, but the role label alone should still be recordable).
-export enum ApprovalStepStatus {
-  WAITING = 'Waiting',
-  IN_REVIEW = 'In review',
-  APPROVED = 'Approved',
-  REJECTED = 'Rejected',
-}
-@Schema({ _id: true })
-export class ApprovalStep {
-  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
-  userId: Types.ObjectId | null;
-  @Prop({ required: true }) name: string;
-  @Prop({ required: true }) role: string;
-  @Prop({ enum: ApprovalStepStatus, default: ApprovalStepStatus.WAITING })
-  status: ApprovalStepStatus;
-  @Prop({ default: null }) decidedAt: Date | null;
-  @Prop({ default: '' }) note: string;
-}
-export const ApprovalStepSchema = SchemaFactory.createForClass(ApprovalStep);
-
 // ── Real e-signature workflow — deliberately named with a Tool
 // prefix throughout (ToolContractInteraction, not ContractInteraction)
 // since HR already has its own class literally named
@@ -445,8 +425,11 @@ export class ToolContract {
 
   @Prop({ type: [ConditionPrecedentSchema], default: [] })
   conditionsPrecedent: ConditionPrecedent[];
-  @Prop({ type: [ApprovalStepSchema], default: [] })
-  approvalChain: ApprovalStep[];
+  // Internal approval chain — drafter → reviewers / approvers → tenant
+  // owner. Set up per tenant in Approval workflow; this is the copy that
+  // belongs to this contract.
+  @Prop({ type: ApprovalRunSchema, default: () => ({}) })
+  approval: ApprovalRun;
 
   // ── E-signature workflow (Stage 3) ────────────────────────────
   @Prop({ type: Types.ObjectId, ref: 'TenantContractTemplate', default: null })

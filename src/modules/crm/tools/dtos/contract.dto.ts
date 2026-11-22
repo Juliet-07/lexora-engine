@@ -184,25 +184,6 @@ export class SetConditionPrecedentSatisfiedDto {
   @ApiProperty() @IsBoolean() satisfied: boolean;
 }
 
-export class ApprovalStepInputDto {
-  @ApiPropertyOptional() @IsOptional() @IsMongoId() userId?: string;
-  @ApiProperty() @IsString() name: string;
-  @ApiProperty() @IsString() role: string;
-}
-export class SetApprovalChainDto {
-  @ApiProperty({ type: [ApprovalStepInputDto] })
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => ApprovalStepInputDto)
-  steps: ApprovalStepInputDto[];
-}
-export class DecideApprovalStepDto {
-  @ApiProperty({ enum: ['Approved', 'Rejected'] })
-  @IsEnum(['Approved', 'Rejected'])
-  decision: 'Approved' | 'Rejected';
-  @ApiPropertyOptional() @IsOptional() @IsString() note?: string;
-}
-
 export class AddObligationDto {
   @ApiProperty() @IsString() label: string;
   @ApiProperty() @IsDateString() due: string;

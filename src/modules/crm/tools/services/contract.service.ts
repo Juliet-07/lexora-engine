@@ -39,6 +39,14 @@ import { REVIEW_MONTHS as VENDOR_REVIEW_MONTHS } from '../../crm/services/vendor
 import { AddCommentDto, EditCommentDto, ToggleReactionDto } from '../dtos';
 import { EmployeeService } from 'src/modules/hr/services/employee.service';
 import {
+  ApprovalWorkflowService,
+  RequestUser,
+} from 'src/modules/approvals/services/approval-workflow.service';
+import {
+  DecideApprovalDto,
+  SubmitApprovalDto,
+} from 'src/modules/approvals/dtos/approval.dto';
+import {
   ToolContract,
   ToolContractDocument_,
   ContractStage,
@@ -52,7 +60,6 @@ import {
   ToolContractSigningTokenDocument,
   ToolContractInteractionType,
   SignatureStatus,
-  ApprovalStepStatus,
   ClauseChangeStatus,
   VariationType,
   VariationStatus,
@@ -76,8 +83,6 @@ import {
   UpdateContractGovernanceDto,
   AddConditionPrecedentDto,
   SetConditionPrecedentSatisfiedDto,
-  SetApprovalChainDto,
-  DecideApprovalStepDto,
 } from '../dtos';
 import {
   PlatformContractTemplateService,
@@ -332,6 +337,7 @@ export class ContractService {
     @InjectModel(Vendor.name)
     private readonly vendorModel: Model<VendorDocument>,
     private readonly eventEmitter: EventEmitter2,
+    private readonly approvals: ApprovalWorkflowService,
   ) {}
 
   private async nextRef(tenantId: Types.ObjectId): Promise<string> {
@@ -520,6 +526,14 @@ export class ContractService {
         'This contract is already at its final stage',
       );
     }
+    // Going out to the client is the first step past internal sign-off.
+    if (CONTRACT_STAGES[i + 1] === ContractStage.CLIENT_REVIEW)
+      await this.approvals.assertCleared(
+        tenantId,
+        'crm_contracts',
+        c.approval,
+        'it goes to the client for review',
+      );
     c.stage = CONTRACT_STAGES[i + 1];
     await c.save();
     return c.toObject();
@@ -1011,69 +1025,109 @@ export class ContractService {
     return c.toObject();
   }
 
-  // ── Approval chain — a real, sequential internal workflow. ─────
-  // Setting the chain (re)starts it: the first step becomes "In
-  // review", every other step resets to "Waiting" — a genuinely new
-  // chain, not a partial edit of one already in progress.
-  async setApprovalChain(
-    tenantId: string,
+  // ── Approval chain ──────────────────────────────────────────────
+  // The tenant owner sets up (Approval workflow) who drafts, who reviews
+  // and approves, and in what order; the owner is always the last step.
+  // A drafter submits the contract, each step is decided in turn on the
+  // server (nobody can skip ahead or approve for someone else), and the
+  // contract cannot go to the client or for signature until it is approved.
+  private approvalCtx(c: any) {
+    return {
+      label: `Contract “${c.title}”`,
+      link: `/crm/contracts/${String(c._id)}`,
+    };
+  }
+
+  private recordApproval(c: any, actor: string, message: string) {
+    c.interactions.push({
+      type: ToolContractInteractionType.UPDATED,
+      occurredAt: new Date(),
+      actor: 'tenant',
+      message: `${actor}: ${message}`,
+      tenantUserId: null,
+    } as any);
+  }
+
+  // While the contract is with the approvers it is frozen; changing one that
+  // has already been approved voids that approval, so what was signed off is
+  // always what goes out.
+  private async guardApprovalOnEdit(
+    c: any,
+    user: RequestUser | undefined,
+    reason: string,
+  ) {
+    this.approvals.assertEditable(c.approval);
+    if (!user) return;
+    const voided = await this.approvals.voidIfApproved(
+      user,
+      c.approval,
+      reason,
+    );
+    if (voided) {
+      c.approval = voided as any;
+      c.markModified('approval');
+    }
+  }
+
+  async submitForApproval(
+    user: RequestUser,
     id: string,
-    dto: SetApprovalChainDto,
+    dto: SubmitApprovalDto,
   ) {
     const c = await this.model.findOne({
       _id: id,
-      tenantId: new Types.ObjectId(tenantId),
+      tenantId: new Types.ObjectId(ApprovalWorkflowService.tenantOf(user)),
     });
     if (!c) throw new NotFoundException('Contract not found');
-    c.approvalChain = dto.steps.map((s, i) => ({
-      userId: s.userId ? (s.userId as any) : null,
-      name: s.name,
-      role: s.role,
-      status:
-        i === 0 ? ApprovalStepStatus.IN_REVIEW : ApprovalStepStatus.WAITING,
-      decidedAt: null,
-      note: '',
-    })) as any;
+    if (!c.renderedBody?.trim())
+      throw new BadRequestException(
+        'Add the contract text (or generate it from a template) before submitting it for approval.',
+      );
+    const next = await this.approvals.submit(
+      user,
+      'crm_contracts',
+      c.approval,
+      this.approvalCtx(c),
+    );
+    c.approval = next as any;
+    if (c.stage === ContractStage.DRAFT)
+      c.stage = ContractStage.INTERNAL_REVIEW;
+    this.recordApproval(
+      c,
+      next.submittedByName,
+      next.status === 'Approved'
+        ? 'submitted and approved (owner)'
+        : `submitted for approval${dto.note ? ` — ${dto.note}` : ''}`,
+    );
+    c.markModified('approval');
     await c.save();
     return c.toObject();
   }
 
-  // Only the step currently "In review" can be decided — a real
-  // sequential gate, not just a status label anyone can flip. On
-  // approval, the next Waiting step becomes In review; on rejection,
-  // the chain stops there (no further step auto-advances).
-  async decideApprovalStep(
-    tenantId: string,
-    id: string,
-    stepId: string,
-    dto: DecideApprovalStepDto,
-  ) {
+  async decideApproval(user: RequestUser, id: string, dto: DecideApprovalDto) {
     const c = await this.model.findOne({
       _id: id,
-      tenantId: new Types.ObjectId(tenantId),
+      tenantId: new Types.ObjectId(ApprovalWorkflowService.tenantOf(user)),
     });
     if (!c) throw new NotFoundException('Contract not found');
-    const steps = c.approvalChain as any;
-    const step = steps.id(stepId);
-    if (!step) throw new NotFoundException('Approval step not found');
-    if (step.status !== ApprovalStepStatus.IN_REVIEW) {
-      throw new ConflictException(
-        'Only the step currently in review can be decided.',
-      );
-    }
-    step.status = dto.decision;
-    step.decidedAt = new Date();
-    step.note = dto.note ?? '';
-    if (dto.decision === ApprovalStepStatus.APPROVED) {
-      const idx = c.approvalChain.findIndex(
-        (s: any) => String(s._id) === String(stepId),
-      );
-      const next = c.approvalChain[idx + 1] as any;
-      if (next && next.status === ApprovalStepStatus.WAITING) {
-        next.status = ApprovalStepStatus.IN_REVIEW;
-      }
-    }
-    c.markModified('approvalChain');
+    const next = await this.approvals.decide(
+      user,
+      'crm_contracts',
+      c.approval,
+      dto.decision,
+      dto.note ?? '',
+      this.approvalCtx(c),
+    );
+    c.approval = next as any;
+    const last = next.history[next.history.length - 1];
+    this.recordApproval(
+      c,
+      last?.byName ?? 'Approver',
+      `${dto.decision === 'Approved' ? 'approved' : 'sent back'}${dto.note ? ` — ${dto.note}` : ''}`,
+    );
+    // Sent back: it returns to the drafter to be reworked.
+    if (next.status === 'Sent back') c.stage = ContractStage.DRAFT;
+    c.markModified('approval');
     await c.save();
     return c.toObject();
   }
@@ -1369,6 +1423,12 @@ export class ContractService {
         'This contract has no content yet — add content or generate it from a template first.',
       );
     }
+    await this.approvals.assertCleared(
+      tenantId,
+      'crm_contracts',
+      contract.approval,
+      'it is sent for signature',
+    );
     if (!contract.counterpartyEmail) {
       throw new BadRequestException(
         'This contract has no counterparty email on file — add one before sending.',
@@ -1533,6 +1593,7 @@ export class ContractService {
     tenantId: string,
     contractId: string,
     dto: EditRenderedBodyDto,
+    user?: RequestUser,
   ): Promise<ToolContractDocument_> {
     const contract = await this.model.findOne({
       _id: contractId,
@@ -1550,6 +1611,11 @@ export class ContractService {
           : 'This contract was declined and can no longer be edited.',
       );
     }
+    await this.guardApprovalOnEdit(
+      contract,
+      user,
+      'The contract text was edited',
+    );
     // Keep the contents page in step with the headings as they now stand.
     contract.renderedBody = refreshTableOfContents(dto.renderedBody);
     // Values changed in the editor's Merge Fields panel are also written
@@ -1635,6 +1701,7 @@ export class ContractService {
   async resyncMergeFields(
     tenantId: string,
     contractId: string,
+    user?: RequestUser,
   ): Promise<ToolContractDocument_ & { unresolvedMergeFields?: string[] }> {
     const contract = await this.model.findOne({
       _id: contractId,
@@ -1652,6 +1719,12 @@ export class ContractService {
           : 'This contract was declined and can no longer be edited.',
       );
     }
+
+    await this.guardApprovalOnEdit(
+      contract,
+      user,
+      'Merge fields were refreshed',
+    );
 
     const tenantCompany = await loadTenantCompany(this.userModel, tenantId);
     const businessName = tenantCompany.name;

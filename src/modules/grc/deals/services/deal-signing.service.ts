@@ -1,3 +1,4 @@
+import { ApprovalWorkflowService } from 'src/modules/approvals/services/approval-workflow.service';
 import {
   BadRequestException,
   Injectable,
@@ -58,6 +59,7 @@ export class DealSigningService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly dealService: DealService,
     private readonly emailService: EmailService,
+    private readonly approvals: ApprovalWorkflowService,
   ) {}
 
   // ── Helpers ──────────────────────────────────────────────────
@@ -199,6 +201,13 @@ export class DealSigningService {
       );
     if ((contract.sections ?? []).length === 0)
       throw new BadRequestException(`This ${NOUN[kind]} has no text yet.`);
+    if (kind === 'contract')
+      await this.approvals.assertCleared(
+        tenantId,
+        'grc_deals',
+        contract.approval,
+        'it is sent for signing',
+      );
     if (b.signatories.some((s) => s.signed))
       throw new BadRequestException(
         'Signing has already started on this deal. Use reminders to chase the remaining signatory.',

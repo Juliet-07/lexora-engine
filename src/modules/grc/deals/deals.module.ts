@@ -19,8 +19,11 @@ import {
   PlatformContractTemplateSchema,
 } from 'src/modules/super_admin/schemas/contract-template.schema';
 
+import { ApprovalsModule } from 'src/modules/approvals/approvals.module';
+
 @Module({
   imports: [
+    ApprovalsModule,
     MongooseModule.forFeature([
       { name: Deal.name, schema: DealSchema },
       { name: User.name, schema: UserSchema },
