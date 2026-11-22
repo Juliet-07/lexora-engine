@@ -188,6 +188,19 @@ export class VendorController {
     return this.service.decideApproval(t || u, id, dto);
   }
 
+  @Post(':id/approval/comments')
+  @ApiOperation({
+    summary: "Reply to the approver's comments on a vendor approval",
+  })
+  addApprovalComment(
+    @Param('id') id: string,
+    @Body() dto: AddVendorApprovalCommentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addApprovalCommentAsTenant(t || u, id, dto);
+  }
+
   // ── Spend ──────────────────────────────────────────────────
   @Post(':id/spend')
   @ApiOperation({ summary: 'Record or update a month of spend' })

@@ -506,6 +506,24 @@ export class TenantNotificationService {
     );
   }
 
+  @OnEvent('employee.vendor_approval.replied')
+  async onVendorApprovalReplied(e: {
+    tenantId: string;
+    employeeUserId: string;
+    vendorId: string;
+    vendorName: string;
+    text: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.employeeUserId,
+      TenantNotificationType.GENERAL,
+      `Reply on vendor approval — ${e.vendorName}`,
+      e.text.length > 160 ? `${e.text.slice(0, 157)}…` : e.text,
+      `/clients`,
+    );
+  }
+
   @OnEvent('employee.mandate_task_assigned')
   async onMandateTaskAssigned(e: {
     tenantId: string;

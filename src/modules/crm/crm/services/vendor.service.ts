@@ -502,7 +502,12 @@ export class VendorService {
       v.approverName ||
       `${(employee as any).firstName ?? ''} ${(employee as any).lastName ?? ''}`.trim() ||
       'Approver';
-    v.approvalComments.push({ at: new Date(), author, text } as any);
+    v.approvalComments.push({
+      at: new Date(),
+      author,
+      by: 'approver',
+      text,
+    } as any);
     this.logActivity(v, `${author} commented on the approval request`);
     await v.save();
 
@@ -513,6 +518,50 @@ export class VendorService {
       commentedBy: author,
       text,
     });
+    return v.toObject();
+  }
+
+  // The tenant replies to the approver on the same thread. Only possible
+  // once an approver has been assigned — there is nobody to answer
+  // otherwise — and the approver is notified.
+  async addApprovalCommentAsTenant(
+    tenantId: string,
+    vendorId: string,
+    dto: AddVendorApprovalCommentDto,
+  ) {
+    const text = (dto.text ?? '').trim();
+    if (!text) throw new BadRequestException('Write a reply first.');
+    const v = await this.getRawDoc(tenantId, vendorId);
+    if (!v.approverEmployeeId) {
+      throw new BadRequestException(
+        'Assign an approver before commenting on the approval.',
+      );
+    }
+    v.approvalComments.push({
+      at: new Date(),
+      author: 'Tenant',
+      by: 'tenant',
+      text,
+    } as any);
+    this.logActivity(v, `Tenant replied on the approval thread`);
+    await v.save();
+
+    const approver = await this.employeeModel
+      .findOne({
+        _id: v.approverEmployeeId,
+        tenantId: new Types.ObjectId(tenantId),
+      })
+      .select('userId')
+      .lean();
+    if ((approver as any)?.userId) {
+      this.eventEmitter.emit('employee.vendor_approval.replied', {
+        tenantId,
+        employeeUserId: String((approver as any).userId),
+        vendorId: String(v._id),
+        vendorName: v.legalName,
+        text,
+      });
+    }
     return v.toObject();
   }
 

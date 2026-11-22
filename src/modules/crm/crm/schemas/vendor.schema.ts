@@ -93,13 +93,16 @@ export class VendorNote {
 }
 export const VendorNoteSchema = SchemaFactory.createForClass(VendorNote);
 
-// A comment the assigned approver leaves for the tenant while they
-// review a vendor — separate from the final decision note so they
-// can ask or flag something before deciding.
+// The comment thread between the assigned approver and the tenant on a
+// vendor — separate from the final decision note so either side can ask
+// or flag something before or after the decision.
 @Schema({ _id: true })
 export class VendorApprovalComment {
   @Prop({ required: true, default: () => new Date() }) at: Date;
   @Prop({ required: true }) author: string;
+  // Who wrote it — comments saved before replies existed are the approver's.
+  @Prop({ enum: ['approver', 'tenant'], default: 'approver' })
+  by: 'approver' | 'tenant';
   @Prop({ required: true }) text: string;
 }
 export const VendorApprovalCommentSchema = SchemaFactory.createForClass(
