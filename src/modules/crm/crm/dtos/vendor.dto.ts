@@ -8,6 +8,8 @@ import {
   IsDateString,
   IsMongoId,
   IsEmail,
+  IsNotEmpty,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { VendorRisk, VendorStatus } from '../schemas';
@@ -110,6 +112,10 @@ export class DecideVendorApprovalDto {
   @IsEnum(['approved', 'rejected'])
   decision: 'approved' | 'rejected';
   @ApiPropertyOptional() @IsOptional() @IsString() note?: string;
+}
+
+export class AddVendorApprovalCommentDto {
+  @ApiProperty() @IsString() @IsNotEmpty() @MaxLength(2000) text: string;
 }
 
 // ── Spend ────────────────────────────────────────────────────────

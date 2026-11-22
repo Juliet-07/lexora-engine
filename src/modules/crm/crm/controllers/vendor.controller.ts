@@ -28,6 +28,7 @@ import {
   AddVendorNoteDto,
   RequestVendorApprovalDto,
   DecideVendorApprovalDto,
+  AddVendorApprovalCommentDto,
   AddVendorSpendDto,
 } from '../dtos';
 import { CurrentUser, UserTypes } from 'src/common/decorators';
@@ -230,6 +231,20 @@ export class EmployeeVendorController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.getVendorForApprover(t || u, u, id);
+  }
+
+  @Post(':id/comments')
+  @ApiOperation({
+    summary:
+      'Leave a comment for the tenant on a vendor — only reachable when this employee is genuinely the assigned approver',
+  })
+  comment(
+    @Param('id') id: string,
+    @Body() dto: AddVendorApprovalCommentDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.addApprovalCommentAsEmployee(t || u, u, id, dto);
   }
 
   @Post(':id/decide')

@@ -691,6 +691,24 @@ export class TenantNotificationService {
     );
   }
 
+  @OnEvent('tenant.vendor_approval.commented')
+  async onVendorApprovalCommented(e: {
+    tenantId: string;
+    vendorId: string;
+    vendorName: string;
+    commentedBy: string;
+    text: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.tenantId,
+      TenantNotificationType.GENERAL,
+      `Comment on vendor approval — ${e.vendorName}`,
+      `${e.commentedBy}: ${e.text.length > 160 ? `${e.text.slice(0, 157)}…` : e.text}`,
+      `/crm/vendors`,
+    );
+  }
+
   @OnEvent('tenant.sla.threshold_crossed')
   async onSlaThresholdCrossed(e: {
     tenantId: string;

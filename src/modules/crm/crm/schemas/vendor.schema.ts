@@ -93,6 +93,19 @@ export class VendorNote {
 }
 export const VendorNoteSchema = SchemaFactory.createForClass(VendorNote);
 
+// A comment the assigned approver leaves for the tenant while they
+// review a vendor — separate from the final decision note so they
+// can ask or flag something before deciding.
+@Schema({ _id: true })
+export class VendorApprovalComment {
+  @Prop({ required: true, default: () => new Date() }) at: Date;
+  @Prop({ required: true }) author: string;
+  @Prop({ required: true }) text: string;
+}
+export const VendorApprovalCommentSchema = SchemaFactory.createForClass(
+  VendorApprovalComment,
+);
+
 @Schema({ _id: true })
 export class VendorActivity {
   @Prop({ required: true, default: () => new Date() }) at: Date;
@@ -166,6 +179,9 @@ export class Vendor {
   @Prop({ default: null }) approvalRequestedAt: Date | null;
   @Prop({ default: null }) approvalDecidedAt: Date | null;
   @Prop({ default: '' }) approvalDecisionNote: string;
+
+  @Prop({ type: [VendorApprovalCommentSchema], default: [] })
+  approvalComments: VendorApprovalComment[];
 
   @Prop({ type: [DdChecklistItemSchema], default: [] })
   ddItems: DdChecklistItem[];

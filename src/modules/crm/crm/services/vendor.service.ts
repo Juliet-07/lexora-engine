@@ -20,6 +20,7 @@ import {
   AddVendorNoteDto,
   RequestVendorApprovalDto,
   DecideVendorApprovalDto,
+  AddVendorApprovalCommentDto,
   AddVendorSpendDto,
 } from '../dtos';
 import {
@@ -467,6 +468,51 @@ export class VendorService {
       decidedBy: v.approverName,
     });
 
+    return v.toObject();
+  }
+
+  // The assigned approver leaves a comment for the tenant — before or
+  // after deciding. Verified against approverEmployeeId, never trusted
+  // from the request, and the tenant is notified.
+  async addApprovalCommentAsEmployee(
+    tenantId: string,
+    userId: string,
+    vendorId: string,
+    dto: AddVendorApprovalCommentDto,
+  ) {
+    const text = (dto.text ?? '').trim();
+    if (!text) throw new BadRequestException('Write a comment first.');
+    const employee = await this.employeeModel
+      .findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        userId: new Types.ObjectId(userId),
+      })
+      .select('_id firstName lastName')
+      .lean();
+    if (!employee) throw new NotFoundException('Vendor not found');
+
+    const v = await this.model.findOne({
+      _id: vendorId,
+      tenantId: new Types.ObjectId(tenantId),
+      approverEmployeeId: employee._id,
+    });
+    if (!v) throw new NotFoundException('Vendor not found');
+
+    const author =
+      v.approverName ||
+      `${(employee as any).firstName ?? ''} ${(employee as any).lastName ?? ''}`.trim() ||
+      'Approver';
+    v.approvalComments.push({ at: new Date(), author, text } as any);
+    this.logActivity(v, `${author} commented on the approval request`);
+    await v.save();
+
+    this.eventEmitter.emit('tenant.vendor_approval.commented', {
+      tenantId,
+      vendorId: String(v._id),
+      vendorName: v.legalName,
+      commentedBy: author,
+      text,
+    });
     return v.toObject();
   }
 
