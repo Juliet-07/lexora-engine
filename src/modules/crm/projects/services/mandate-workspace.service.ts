@@ -368,13 +368,72 @@ export class MandateWorkspaceService {
     }
   }
 
+  // Put a real name on every message in a group thread: each employee's
+  // reply shows who wrote it (older rows were stored as "You"), the owner's
+  // shows their own name, and `isMine` tells an employee which ones they
+  // wrote themselves.
+  private async labelGroupMessages(
+    tenantId: string,
+    messages: any[],
+    viewerEmployeeId: string | null,
+  ) {
+    if (!messages.length) return messages;
+    const senderIds = Array.from(
+      new Set(
+        messages
+          .filter((m) => m.direction === EmployeeMessageDirection.EMPLOYEE)
+          .map((m) => String(m.employeeUserId)),
+      ),
+    );
+    const [senders, owner] = await Promise.all([
+      senderIds.length
+        ? this.employeeModel
+            .find({
+              _id: { $in: senderIds.map((i) => new Types.ObjectId(i)) },
+              tenantId: new Types.ObjectId(tenantId),
+            })
+            .select('firstName lastName')
+            .lean()
+        : Promise.resolve([] as any[]),
+      this.employeeModel
+        .findOne({
+          tenantId: new Types.ObjectId(tenantId),
+          'metadata.isOwnerRecord': true,
+        })
+        .select('firstName lastName')
+        .lean(),
+    ]);
+    const nameById = new Map<string, string>(
+      (senders as any[]).map((e) => [
+        String(e._id),
+        `${e.firstName ?? ''} ${e.lastName ?? ''}`.trim(),
+      ]),
+    );
+    const ownerName = owner
+      ? `${(owner as any).firstName ?? ''} ${(owner as any).lastName ?? ''}`.trim()
+      : '';
+    return messages.map((m) => {
+      const fromEmployee = m.direction === EmployeeMessageDirection.EMPLOYEE;
+      return {
+        ...m,
+        author: fromEmployee
+          ? nameById.get(String(m.employeeUserId)) || m.author
+          : ownerName || m.author,
+        isMine:
+          fromEmployee &&
+          !!viewerEmployeeId &&
+          String(m.employeeUserId) === viewerEmployeeId,
+      };
+    });
+  }
+
   // Tenant: the shared thread for exactly this set of people.
   async getGroupMessages(
     tenantId: string,
     mandateId: string,
     recipientIds: string[],
   ) {
-    return this.employeeMessageModel
+    const messages = await this.employeeMessageModel
       .find({
         tenantId: new Types.ObjectId(tenantId),
         mandateId: new Types.ObjectId(mandateId),
@@ -383,6 +442,7 @@ export class MandateWorkspaceService {
       })
       .sort({ createdAt: 1 })
       .lean();
+    return this.labelGroupMessages(tenantId, messages, null);
   }
 
   // Tenant: send to several people at once.
@@ -436,7 +496,7 @@ export class MandateWorkspaceService {
     mandateId: string,
     employeeId: string,
   ) {
-    return this.employeeMessageModel
+    const messages = await this.employeeMessageModel
       .find({
         tenantId: new Types.ObjectId(tenantId),
         mandateId: new Types.ObjectId(mandateId),
@@ -445,6 +505,7 @@ export class MandateWorkspaceService {
       })
       .sort({ createdAt: 1 })
       .lean();
+    return this.labelGroupMessages(tenantId, messages, employeeId);
   }
 
   // Employee: answer the whole group (everyone in it, plus the tenant).
@@ -465,12 +526,13 @@ export class MandateWorkspaceService {
     if (!first) {
       throw new NotFoundException("You aren't part of this conversation");
     }
+    const [self] = await this.resolveEmployees(tenantId, [employeeId]);
     const created = await this.employeeMessageModel.create({
       tenantId: new Types.ObjectId(tenantId),
       mandateId: new Types.ObjectId(mandateId),
       employeeUserId: new Types.ObjectId(employeeId),
       direction: EmployeeMessageDirection.EMPLOYEE,
-      author: dto.author,
+      author: self.name,
       body: dto.body,
       groupId: first.groupId,
       groupKey: first.groupKey,
@@ -484,7 +546,7 @@ export class MandateWorkspaceService {
     await this.notifyGroup(
       tenantId,
       mandateId,
-      dto.author,
+      self.name,
       employees,
       employeeId,
       true,
