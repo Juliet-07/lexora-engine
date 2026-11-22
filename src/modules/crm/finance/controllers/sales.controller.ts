@@ -6,6 +6,7 @@ import {
   Param,
   Query,
   Patch,
+  Delete,
   Res,
 } from '@nestjs/common';
 import { Response } from 'express';
@@ -231,6 +232,22 @@ export class QuoteController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.setMandate(t || u, id, dto);
+  }
+
+  // Account owner only — an employee with Finance access can view and
+  // prepare quotes but never delete one (the method-level restriction
+  // overrides the controller's, so employees get a 403).
+  @Delete(':id')
+  @UserTypes(UserType.TENANT)
+  @ApiOperation({
+    summary: 'Delete a quote or proforma (account owner only)',
+  })
+  remove(
+    @Param('id') id: string,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.remove(t || u, id);
   }
 
   @Get(':id/pdf')

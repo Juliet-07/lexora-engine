@@ -250,11 +250,17 @@ export class QuoteService {
   ): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = kind === 'Proforma' ? 'PF' : 'QT';
-    const count = await this.model.countDocuments({
-      tenantId,
-      ref: new RegExp(`^${prefix}-${year}-`),
-    });
-    return `${prefix}-${year}-${String(count + 1).padStart(3, '0')}`;
+    // Continue after the highest number in use rather than counting rows,
+    // so deleting a quote never makes the next one reuse a reference.
+    const existing = await this.model
+      .find({ tenantId, ref: new RegExp(`^${prefix}-${year}-`) })
+      .select('ref')
+      .lean();
+    const highest = existing.reduce((max, q: any) => {
+      const n = parseInt(String(q.ref).split('-').pop() ?? '', 10);
+      return Number.isFinite(n) && n > max ? n : max;
+    }, 0);
+    return `${prefix}-${year}-${String(highest + 1).padStart(3, '0')}`;
   }
 
   async getAll(tenantId: string) {
@@ -532,6 +538,20 @@ export class QuoteService {
       branding,
       isDraft: q.status === 'Draft',
     });
+  }
+
+  // Only the account owner reaches this (the controller restricts it).
+  // A quote that already became an invoice stays — the invoice was
+  // raised from it and the two need to keep matching up.
+  async remove(tenantId: string, id: string) {
+    const q = await this.getRawDoc(tenantId, id);
+    if (q.convertedInvoiceId) {
+      throw new BadRequestException(
+        'This quote has been converted to an invoice, so it cannot be deleted.',
+      );
+    }
+    await this.model.deleteOne({ _id: q._id, tenantId: q.tenantId });
+    return { deleted: true, ref: q.ref };
   }
 
   // Real conversion — creates an actual Draft invoice against the
