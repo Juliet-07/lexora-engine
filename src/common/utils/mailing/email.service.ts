@@ -464,6 +464,29 @@ export class EmailService {
     });
   }
 
+  // Party communication that can also copy staff and carry files — used
+  // when a settlement, award or judgment is shared from a case.
+  async sendCaseOutcomeEmail(
+    data: PartyCommunicationEmailData & {
+      cc?: string[];
+      attachments?: {
+        filename: string;
+        content: Buffer;
+        contentType: string;
+      }[];
+    },
+  ): Promise<void> {
+    const { subject, html } = partyCommunicationTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      cc: data.cc?.length ? data.cc : undefined,
+      subject,
+      html,
+      attachments: data.attachments ?? [],
+    });
+  }
+
   async sendSessionNotice(data: SessionNoticeEmailData): Promise<void> {
     const { subject, html } = sessionNoticeTemplate(data);
     await this.transporter.sendMail({

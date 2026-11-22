@@ -1,4 +1,5 @@
 export * from './adr-case.schema';
+export * from './case-outcome.schema';
 export * from './litigation-case.schema';
 export * from './mandate-workspace.schema';
 export * from './mandate.schema';

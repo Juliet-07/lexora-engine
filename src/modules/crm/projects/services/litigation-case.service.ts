@@ -27,6 +27,8 @@ import {
   LitigationDeadlineRule,
   LitigationDeadlineRuleDocument,
   LitigationDeadlineTriggerSource,
+  CaseOutcome,
+  CaseOutcomeDocument,
 } from '../schemas';
 import {
   CreateLitigationCaseDto,
@@ -89,6 +91,8 @@ export class LitigationCaseService {
     private readonly deadlineRuleModel: Model<LitigationDeadlineRuleDocument>,
     @InjectModel(PlatformContractTemplate.name)
     private readonly templateModel: Model<PlatformContractTemplateDocument>,
+    @InjectModel(CaseOutcome.name)
+    private readonly outcomeModel: Model<CaseOutcomeDocument>,
     private readonly timeEntryService: TimeEntryService,
     private readonly mandateService: MandateService,
     private readonly emailService: EmailService,
@@ -981,7 +985,7 @@ export class LitigationCaseService {
         return courtDate ? courtDate.date : null;
       }
       case LitigationDeadlineTriggerSource.OUTCOME:
-        return c.outcome ? (c.updatedAt ?? null) : null;
+        return c.outcome ? await this.outcomeDate(c) : null;
       case LitigationDeadlineTriggerSource.CUSTOM:
         return rule.customTriggerDate;
       case LitigationDeadlineTriggerSource.CASCADE: {
@@ -1004,6 +1008,23 @@ export class LitigationCaseService {
       default:
         return null;
     }
+  }
+
+  // The date the judgment / consent judgment is dated, from the recorded
+  // outcome; falls back to the last save for cases whose outcome was
+  // recorded before outcome records existed.
+  private async outcomeDate(c: any): Promise<Date | null> {
+    const rec = await this.outcomeModel
+      .findOne({
+        tenantId: c.tenantId,
+        caseId: c._id,
+        status: 'Recorded',
+        kind: { $in: ['Judgment', 'Consent judgment'] },
+      })
+      .sort({ recordedAt: -1 })
+      .select('occurredOn')
+      .lean();
+    return (rec as any)?.occurredOn ?? c.updatedAt ?? null;
   }
 
   private computeRuleView(c: any, rule: any, triggerDate: Date | null) {

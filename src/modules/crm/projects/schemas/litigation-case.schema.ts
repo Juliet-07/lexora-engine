@@ -129,6 +129,8 @@ export class LitigationTimelineEntry {
     default: LitigationTimelineSource.SYSTEM,
   })
   source: LitigationTimelineSource;
+  // See AdrTimelineEntry.outcomeKind.
+  @Prop({ default: '' }) outcomeKind: string;
 }
 export const LitigationTimelineEntrySchema = SchemaFactory.createForClass(
   LitigationTimelineEntry,
@@ -227,6 +229,11 @@ export class LitigationCase {
   disbursements: AdrDisbursement[];
 
   @Prop({ default: null }) outcome: string | null;
+  // Label chosen when a consent judgment / judgment was recorded
+  // ("Judgment delivered", "Under appeal"…) and the last day to
+  // appeal — set by the outcome records.
+  @Prop({ default: '' }) outcomeStatus: string;
+  @Prop({ default: null }) challengeDeadline: Date | null;
 
   // Real, named folders for this case's document filing system.
   @Prop({ type: [String], default: ['General'] })

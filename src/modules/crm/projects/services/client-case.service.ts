@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { CaseOutcomeService } from './case-outcome.service';
 import {
   Mandate,
   MandateDocument_,
@@ -35,6 +36,7 @@ export class ClientCaseService {
     @InjectModel(LitigationCaseMessage.name)
     private readonly litigationMessageModel: Model<LitigationCaseMessageDocument>,
     private readonly eventEmitter: EventEmitter2,
+    private readonly outcomeService: CaseOutcomeService,
   ) {}
 
   private stripInternal(c: any) {
@@ -157,6 +159,11 @@ export class ClientCaseService {
       ...this.stripInternal(c),
       caseType: caseType === 'adr' ? ('ADR' as const) : ('Litigation' as const),
       unreadMessages,
+      // Only what the firm chose to publish to the portal.
+      outcomes: await this.outcomeService.portalOutcomes(
+        tenantId,
+        String(c._id),
+      ),
     };
   }
 

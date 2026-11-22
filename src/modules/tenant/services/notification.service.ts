@@ -402,6 +402,54 @@ export class TenantNotificationService {
     );
   }
 
+  // ── A settlement / award / consent judgment / judgment was recorded on
+  // a case, or one of its payments or deadlines is coming up. ──
+  @OnEvent('tenant.case.outcome_recorded')
+  async onCaseOutcomeRecorded(e: {
+    tenantId: string;
+    caseKind: 'adr' | 'litigation';
+    caseId: string;
+    caseRef: string;
+    caseTitle: string;
+    kind: string;
+    summary: string;
+    isUpdate: boolean;
+    recipientUserIds: string[];
+  }) {
+    for (const userId of e.recipientUserIds ?? []) {
+      await this.create(
+        e.tenantId,
+        userId,
+        TenantNotificationType.GENERAL,
+        `${e.kind} ${e.isUpdate ? 'updated' : 'recorded'} — ${e.caseRef}`,
+        `${e.caseTitle}: ${e.summary}`,
+        `/crm/${e.caseKind}?case=${e.caseId}`,
+      );
+    }
+  }
+
+  @OnEvent('tenant.case.outcome_reminder')
+  async onCaseOutcomeReminder(e: {
+    tenantId: string;
+    caseKind: 'adr' | 'litigation';
+    caseId: string;
+    caseRef: string;
+    caseTitle: string;
+    title: string;
+    recipientUserIds: string[];
+  }) {
+    for (const userId of e.recipientUserIds ?? []) {
+      await this.create(
+        e.tenantId,
+        userId,
+        TenantNotificationType.GENERAL,
+        `Reminder — ${e.caseRef}`,
+        `${e.title} (${e.caseTitle}).`,
+        `/crm/${e.caseKind}?case=${e.caseId}`,
+      );
+    }
+  }
+
   // ── Mandate collaboration — real notification in both
   // directions, matching the same "whoever didn't send it gets
   // notified" rule as every other thread in this service. ──

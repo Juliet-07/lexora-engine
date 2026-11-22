@@ -34,6 +34,7 @@ const CONFIG: Record<
         hasFile: true,
       },
       { label: 'deadlineRules', collection: 'adr_deadline_rules' },
+      { label: 'outcomes', collection: 'crm_case_outcomes' },
     ],
     escalationLink: {
       collection: 'crm_litigation_cases',
@@ -54,6 +55,7 @@ const CONFIG: Record<
         hasFile: true,
       },
       { label: 'deadlineRules', collection: 'litigation_deadline_rules' },
+      { label: 'outcomes', collection: 'crm_case_outcomes' },
     ],
     escalationLink: {
       collection: 'crm_adr_cases',

@@ -167,6 +167,10 @@ export class AdrTimelineEntry {
   @Prop({ default: '' }) description: string;
   @Prop({ enum: AdrTimelineSource, default: AdrTimelineSource.SYSTEM })
   source: AdrTimelineSource;
+  // Set on entries written when a settlement / award is recorded or
+  // shared, so the timeline can open that record. One of
+  // CaseOutcomeKind, '' otherwise.
+  @Prop({ default: '' }) outcomeKind: string;
 }
 export const AdrTimelineEntrySchema =
   SchemaFactory.createForClass(AdrTimelineEntry);
@@ -260,6 +264,11 @@ export class AdrCase {
   @Prop({ type: AdrSettlementSchema, default: null })
   settlement: AdrSettlement | null;
   @Prop({ default: null }) outcome: string | null;
+  // The "case status after saving" label chosen when a settlement or
+  // award was recorded (e.g. "Award issued") and the last day to
+  // challenge it — both set by the outcome records, never typed here.
+  @Prop({ default: '' }) outcomeStatus: string;
+  @Prop({ default: null }) challengeDeadline: Date | null;
 
   @Prop({ type: [AdrTimelineEntrySchema], default: [] })
   timeline: AdrTimelineEntry[];

@@ -53,11 +53,15 @@ import {
   LitigationDeadlineRuleSchema,
   PortfolioRisk,
   PortfolioRiskSchema,
+  CaseOutcome,
+  CaseOutcomeSchema,
 } from './schemas';
 import {
   MandateService,
   MandateCascadeService,
   CaseCascadeService,
+  CaseOutcomeService,
+  CaseOutcomePdfService,
   MandateWorkspaceService,
   MyProjectsService,
   ClientProjectsService,
@@ -93,6 +97,7 @@ import {
   AdrCaseController,
   ClientCaseController,
   LitigationCaseController,
+  CaseOutcomeController,
   PortfolioRiskController,
 } from './controllers';
 import {
@@ -161,6 +166,7 @@ import {
         schema: LitigationDeadlineRuleSchema,
       },
       { name: PortfolioRisk.name, schema: PortfolioRiskSchema },
+      { name: CaseOutcome.name, schema: CaseOutcomeSchema },
       { name: Employee.name, schema: EmployeeSchema },
       { name: HrTeam.name, schema: HrTeamSchema },
     ]),
@@ -183,6 +189,8 @@ import {
     MandateService,
     MandateCascadeService,
     CaseCascadeService,
+    CaseOutcomeService,
+    CaseOutcomePdfService,
     MandateWorkspaceService,
     TaskService,
     MyProjectsService,
@@ -200,6 +208,7 @@ import {
     AdrCaseController,
     ClientCaseController,
     LitigationCaseController,
+    CaseOutcomeController,
     PortfolioRiskController,
     MandateController,
     MandateWorkspaceController,

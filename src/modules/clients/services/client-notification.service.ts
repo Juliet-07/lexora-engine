@@ -280,4 +280,44 @@ export class ClientNotificationService {
       '/cases',
     );
   }
+  @OnEvent('client.case.outcome_recorded')
+  async onCaseOutcomeRecorded(e: {
+    tenantId: string;
+    clientUserId: string;
+    caseType: 'ADR' | 'Litigation';
+    caseTitle: string;
+    caseRef: string;
+    kind: string;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.clientUserId,
+      ClientNotificationType.CASE,
+      `${e.kind} recorded — ${e.caseRef}`,
+      e.caseTitle,
+      '/cases',
+    );
+  }
+
+  @OnEvent('client.case.outcome_shared')
+  async onCaseOutcomeShared(e: {
+    tenantId: string;
+    clientUserId: string;
+    caseType: 'ADR' | 'Litigation';
+    caseTitle: string;
+    caseRef: string;
+    kind: string;
+    acknowledgementRequested: boolean;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.clientUserId,
+      ClientNotificationType.CASE,
+      `${e.kind} shared — ${e.caseRef}`,
+      e.acknowledgementRequested
+        ? `${e.caseTitle} · Please acknowledge receipt.`
+        : e.caseTitle,
+      '/cases',
+    );
+  }
 }
