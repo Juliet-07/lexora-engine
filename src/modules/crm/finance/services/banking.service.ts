@@ -23,6 +23,8 @@ import {
 import {
   CreateBankAccountDto,
   CreateBankTransactionDto,
+  UpdateBankAccountDto,
+  UpdateBankTransactionDto,
   MatchTransactionDto,
   CreateBankRuleDto,
   UpdateBankRuleDto,
@@ -214,6 +216,106 @@ export class BankAccountService {
 
     return { ...created.toObject(), balance: dto.openingBalance ?? 0 };
   }
+
+  private glAccountFor(type?: string) {
+    return type === 'Trust'
+      ? GL_ACCOUNTS.BANK_TRUST
+      : type === 'Fund'
+        ? GL_ACCOUNTS.BANK_FUND
+        : GL_ACCOUNTS.BANK_OPERATING;
+  }
+
+  // Fix a mistake made when the account was added. Descriptive fields
+  // (name, bank, last 4) can always change. Type and currency decide
+  // which ledger code and currency every posted movement used, so they
+  // can only change while the account has no transactions or transfers
+  // against it. The opening balance can be corrected at any time — it
+  // is re-posted to the ledger so Banking and the books keep agreeing.
+  async update(tenantId: string, id: string, dto: UpdateBankAccountDto) {
+    const tId = new Types.ObjectId(tenantId);
+    const account = await this.model.findOne({ _id: id, tenantId: tId });
+    if (!account) throw new NotFoundException('Bank account not found');
+
+    const typeChanging = dto.type !== undefined && dto.type !== account.type;
+    const currencyChanging =
+      dto.currency !== undefined &&
+      dto.currency.toUpperCase() !== (account.currency ?? '').toUpperCase();
+    if (typeChanging || currencyChanging) {
+      const aId = new Types.ObjectId(id);
+      const [txCount, transferCount] = await Promise.all([
+        this.txModel.countDocuments({ tenantId: tId, accountId: aId }),
+        this.transferModel.countDocuments({
+          tenantId: tId,
+          $or: [{ fromAccountId: aId }, { toAccountId: aId }],
+        }),
+      ]);
+      if (txCount + transferCount > 0) {
+        throw new BadRequestException(
+          'The account type and currency can no longer be changed because transactions are already recorded against this account. Edit the entries first, or add a new account.',
+        );
+      }
+    }
+
+    const openingChanging =
+      dto.openingBalance !== undefined &&
+      dto.openingBalance !== account.openingBalance;
+
+    if (dto.name !== undefined) account.name = dto.name;
+    if (dto.bank !== undefined) account.bank = dto.bank;
+    if (dto.last4 !== undefined) account.last4 = dto.last4;
+    if (dto.type !== undefined) account.type = dto.type;
+    if (dto.currency !== undefined) account.currency = dto.currency;
+    if (dto.openingBalance !== undefined) {
+      account.openingBalance = dto.openingBalance;
+    }
+    await account.save();
+
+    // The opening-balance journal is the only ledger entry whose source
+    // is the account itself, so it is the one to rebuild — also when
+    // the name or type changed, since both are written into it.
+    if (openingChanging || typeChanging || dto.name !== undefined) {
+      await this.glPostingService.removeForSource(tenantId, account._id);
+      if (account.openingBalance) {
+        const bankGl = this.glAccountFor(account.type);
+        const isPositive = account.openingBalance > 0;
+        const magnitude = Math.abs(account.openingBalance);
+        const label = `${account.name} — opening balance`;
+        await this.glPostingService.post(
+          tenantId,
+          [
+            {
+              date: new Date(),
+              ref: label,
+              description: label,
+              accountCode: bankGl.code,
+              accountName: bankGl.name,
+              source: GlSource.BANKING,
+              debit: isPositive ? magnitude : 0,
+              credit: isPositive ? 0 : magnitude,
+              sourceId: account._id,
+            },
+            {
+              date: new Date(),
+              ref: label,
+              description: label,
+              accountCode: '3000',
+              accountName: "Partners' capital",
+              source: GlSource.BANKING,
+              debit: isPositive ? 0 : magnitude,
+              credit: isPositive ? magnitude : 0,
+              sourceId: account._id,
+            },
+          ],
+          account.currency ?? 'USD',
+        );
+      }
+    }
+
+    return {
+      ...account.toObject(),
+      balance: await this.computeBalance(tenantId, id),
+    };
+  }
 }
 
 // ── Bank feed / transactions ──────────────────────────────────
@@ -225,6 +327,8 @@ export class BankTransactionService {
     private readonly model: Model<BankTransactionDocument>,
     @InjectModel(BankAccount.name)
     private readonly accountModel: Model<BankAccountDocument>,
+    @InjectModel(Reconciliation.name)
+    private readonly reconModel: Model<ReconciliationDocument>,
     private readonly ruleService: BankRuleService,
     private readonly glPostingService: GlPostingService,
     private readonly billService: BillService,
@@ -269,58 +373,156 @@ export class BankTransactionService {
       suggestedAccount: rule?.account ?? '',
     });
 
-    // Which real bank GL account this transaction actually hit —
-    // Trust and Fund both need their own ring-fenced code, same
-    // reasoning both are excluded from Cash Forecast's operating-
-    // only view. Anything else (including Special purpose, which
-    // has no dedicated code yet) falls back to Operating rather
-    // than silently picking a code that doesn't represent it.
+    await this.postToGl(tenantId, created, account, rule?.account ?? '');
+
+    return created.toObject();
+  }
+
+  // Which real bank GL account the transaction hits — Trust and Fund
+  // both need their own ring-fenced code, same reasoning both are
+  // excluded from Cash Forecast's operating-only view. Anything else
+  // (including Special purpose, which has no dedicated code yet) falls
+  // back to Operating rather than silently picking a code that doesn't
+  // represent it. The contra side is the rule's account, or General
+  // expenses when nothing matched.
+  private async postToGl(
+    tenantId: string,
+    tx: { _id: any; date: Date; description: string; amount: number },
+    account: { type?: string; currency?: string } | null | undefined,
+    contraAccount: string,
+  ) {
     const bankGlAccount =
       account?.type === 'Trust'
         ? GL_ACCOUNTS.BANK_TRUST
         : account?.type === 'Fund'
           ? GL_ACCOUNTS.BANK_FUND
           : GL_ACCOUNTS.BANK_OPERATING;
-    const contraCode = rule?.account?.split(' · ')[0]?.trim();
+    const contraCode = contraAccount?.split(' · ')[0]?.trim();
     const contra = contraCode
       ? {
           code: contraCode,
-          name: rule!.account.split(' · ')[1]?.trim() ?? rule!.account,
+          name: contraAccount.split(' · ')[1]?.trim() ?? contraAccount,
         }
       : GL_ACCOUNTS.GENERAL_EXPENSE;
-    const magnitude = Math.abs(dto.amount);
-    const isInflow = dto.amount >= 0;
+    const magnitude = Math.abs(tx.amount);
+    const isInflow = tx.amount >= 0;
 
     await this.glPostingService.post(
       tenantId,
       [
         {
-          date: new Date(dto.date),
-          ref: String(created._id),
-          description: dto.description,
+          date: tx.date,
+          ref: String(tx._id),
+          description: tx.description,
           accountCode: bankGlAccount.code,
           accountName: bankGlAccount.name,
           source: GlSource.BANKING,
           debit: isInflow ? magnitude : 0,
           credit: isInflow ? 0 : magnitude,
-          sourceId: String(created._id),
+          sourceId: String(tx._id),
         },
         {
-          date: new Date(dto.date),
-          ref: String(created._id),
-          description: dto.description,
+          date: tx.date,
+          ref: String(tx._id),
+          description: tx.description,
           accountCode: contra.code,
           accountName: contra.name,
           source: GlSource.BANKING,
           debit: isInflow ? 0 : magnitude,
           credit: isInflow ? magnitude : 0,
-          sourceId: String(created._id),
+          sourceId: String(tx._id),
         },
       ],
       account?.currency ?? 'USD',
     );
+  }
 
-    return created.toObject();
+  // A reconciled month is closed: once an account's statement for a
+  // period has been signed off, nothing dated inside it may move.
+  private async assertPeriodOpen(
+    tenantId: string,
+    accountId: Types.ObjectId | string,
+    date: Date,
+  ) {
+    const period = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+    const signed = await this.reconModel
+      .findOne({
+        tenantId: new Types.ObjectId(tenantId),
+        accountId: new Types.ObjectId(String(accountId)),
+        period,
+        signedOffBy: { $ne: null },
+      })
+      .lean();
+    if (signed) {
+      throw new BadRequestException(
+        `${period} has been reconciled and signed off for this account, so entries in it can no longer be changed.`,
+      );
+    }
+  }
+
+  // Correct a mistaken entry. Until an entry is matched to a real
+  // invoice, bill or payroll run, every field can change — the ledger
+  // lines it posted are rebuilt from the corrected values, so the books
+  // never carry both the mistake and the fix. Once matched, the amount,
+  // date and account are part of what settled that document, so only
+  // the description can be edited.
+  async update(tenantId: string, id: string, dto: UpdateBankTransactionDto) {
+    const tId = new Types.ObjectId(tenantId);
+    const tx = await this.model.findOne({ _id: id, tenantId: tId });
+    if (!tx) throw new NotFoundException('Transaction not found');
+
+    const financial =
+      dto.accountId !== undefined ||
+      dto.date !== undefined ||
+      dto.amount !== undefined;
+
+    if (tx.status === TxStatus.MATCHED && financial) {
+      throw new BadRequestException(
+        `This entry is matched to ${tx.linkLabel || 'a record'}, so its amount, date and account are locked. You can still edit the description.`,
+      );
+    }
+
+    if (financial) {
+      await this.assertPeriodOpen(tenantId, tx.accountId, tx.date);
+    }
+
+    let account = await this.accountModel
+      .findOne({ _id: tx.accountId, tenantId: tId })
+      .lean();
+    if (dto.accountId !== undefined) {
+      account = await this.accountModel
+        .findOne({ _id: dto.accountId, tenantId: tId })
+        .lean();
+      if (!account) throw new BadRequestException('Bank account not found');
+      tx.accountId = new Types.ObjectId(dto.accountId);
+      tx.currency = account.currency ?? 'USD';
+    }
+    if (dto.date !== undefined) tx.date = new Date(dto.date);
+    if (dto.amount !== undefined) tx.amount = dto.amount;
+    if (financial) {
+      await this.assertPeriodOpen(tenantId, tx.accountId, tx.date);
+    }
+
+    const descriptionChanged =
+      dto.description !== undefined && dto.description !== tx.description;
+    if (dto.description !== undefined) tx.description = dto.description;
+
+    // A new description may now match a different bank rule.
+    if (descriptionChanged && tx.status !== TxStatus.MATCHED) {
+      const rule = await this.ruleService.findMatch(tenantId, tx.description);
+      tx.suggestedAccount = rule?.account ?? '';
+    }
+    await tx.save();
+
+    // Rebuild the ledger lines of an unmatched entry — its contra side
+    // is only ever the rule's suggestion. A matched entry (description-
+    // only edit) keeps its ledger lines untouched.
+    if (tx.status !== TxStatus.MATCHED) {
+      await this.glPostingService.removeForSource(tenantId, tx._id);
+      await this.postToGl(tenantId, tx, account, tx.suggestedAccount);
+    }
+
+    return tx.toObject();
   }
 
   async match(tenantId: string, id: string, dto: MatchTransactionDto) {

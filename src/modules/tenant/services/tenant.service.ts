@@ -1,3 +1,4 @@
+import { ExchangeRateService } from '../../hr/services/exchange-rate.service';
 import { subscriptionExpiry } from '../../../common/utils/subscription-expiry.util';
 import {
   Injectable,
@@ -130,6 +131,7 @@ export class TenantService {
     private readonly timeEntryModel: Model<TimeEntryDocument>,
     private readonly mailService: EmailService,
     private readonly healthScoreService: HealthScoreService,
+    private readonly exchangeRates: ExchangeRateService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -287,7 +289,7 @@ export class TenantService {
       // ── GRC: deals ──────────────────────────────────────────
       this.dealModel
         .find({ tenantId: tId, status: DealStatus.ACTIVE })
-        .select('value status')
+        .select('value currency status')
         .lean(),
       this.dealModel.countDocuments({
         tenantId: tId,
@@ -318,11 +320,11 @@ export class TenantService {
           tenantId: tId,
           stage: { $nin: [InvoiceStage.PAID, InvoiceStage.DRAFT] },
         })
-        .select('lines discount vatRate whtRate paidAmount')
+        .select('currency lines discount vatRate whtRate paidAmount')
         .lean(),
       this.invoiceModel
         .find({ tenantId: tId, stage: InvoiceStage.PAID })
-        .select('paidAmount')
+        .select('currency paidAmount')
         .lean(),
       // ── CRM: tickets ─────────────────────────────────────────
       this.ticketModel.countDocuments({
@@ -345,7 +347,7 @@ export class TenantService {
           status: TimesheetStatus.APPROVED,
           date: { $gte: startOfWeek },
         })
-        .select('hours billable rate')
+        .select('hours billable rate currency')
         .lean(),
       // ── Recent activity: most recently logged entries ────────
       this.timeEntryModel
@@ -413,13 +415,53 @@ export class TenantService {
     const grcScore = hs.modules.grc?.score ?? null;
     const financeScore = hs.modules.finance?.score ?? null;
     const overallScore = hs.composite;
+    // Money is shown in the account's own currency (Finance Settings), never
+    // an assumed dollar. Records keep the currency they were made in, so each
+    // amount is converted into the account currency before it is added up; if
+    // a rate is unavailable the amount is used as it is rather than failing
+    // the whole dashboard.
+    const { baseCurrency } = await this.getBaseCurrency(tenantId);
+    const rateCache = new Map<string, number>();
+    const toBase = async (amount: number, from?: string | null) => {
+      const f = String(from || baseCurrency).toUpperCase();
+      if (!amount || f === baseCurrency) return amount || 0;
+      if (!rateCache.has(f)) {
+        try {
+          rateCache.set(
+            f,
+            (await this.exchangeRates.getRate(f, baseCurrency)).rate,
+          );
+        } catch {
+          rateCache.set(f, 1);
+        }
+      }
+      return amount * rateCache.get(f)!;
+    };
+    const sumBase = async <T>(
+      rows: T[],
+      amount: (r: T) => number,
+      currency: (r: T) => string | undefined,
+    ) => {
+      let total = 0;
+      for (const r of rows) total += await toBase(amount(r), currency(r));
+      return total;
+    };
     const atRiskMandates = activeMandates.filter((m) => m.rag !== 'Green');
-    const receivables = openInvoices.reduce(
-      (s, i) => s + (invoicePayable(i) - (i.paidAmount ?? 0)),
-      0,
+    const receivables = await sumBase(
+      openInvoices as any[],
+      (i) => invoicePayable(i) - (i.paidAmount ?? 0),
+      (i) => i.currency,
     );
-    const collected = paidInvoices.reduce((s, i) => s + (i.paidAmount ?? 0), 0);
-    const dealValue = liveDeals.reduce((s, d) => s + (d.value ?? 0), 0);
+    const collected = await sumBase(
+      paidInvoices as any[],
+      (i) => i.paidAmount ?? 0,
+      (i) => i.currency,
+    );
+    const dealValue = await sumBase(
+      liveDeals as any[],
+      (d) => d.value ?? 0,
+      (d) => d.currency,
+    );
 
     // ── Delivery pulse — real, from this week's approved entries
     // only, same rule the finance module itself uses: unapproved
@@ -428,9 +470,11 @@ export class TenantService {
     const billableHours = weeklyTimeEntries
       .filter((e: any) => e.billable)
       .reduce((s, e: any) => s + e.hours, 0);
-    const weeklyRevenue = weeklyTimeEntries
-      .filter((e: any) => e.billable)
-      .reduce((s, e: any) => s + e.hours * (e.rate ?? 0), 0);
+    const weeklyRevenue = await sumBase(
+      weeklyTimeEntries.filter((e: any) => e.billable) as any[],
+      (e) => e.hours * (e.rate ?? 0),
+      (e) => e.currency,
+    );
     const utilisation = totalHours
       ? Math.round((billableHours / totalHours) * 100)
       : 0;
@@ -529,6 +573,8 @@ export class TenantService {
     if (maxUsers == null) maxUsers = 5;
 
     return {
+      // The account currency every money figure here is in.
+      currency: baseCurrency,
       team: {
         total: totalTeam,
         active: activeTeam,
@@ -588,7 +634,7 @@ export class TenantService {
       wins: [
         {
           label: 'Collected',
-          value: `$${Math.round(collected).toLocaleString()}`,
+          value: `${baseCurrency} ${Math.round(collected).toLocaleString()}`,
           hint: 'Cash received on settled invoices',
         },
         {
@@ -603,7 +649,7 @@ export class TenantService {
         },
         {
           label: 'Pipeline value',
-          value: `$${Math.round(dealValue / 1000)}k`,
+          value: `${baseCurrency} ${new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(dealValue)}`,
           hint: 'Value of live deals in flight',
         },
       ],

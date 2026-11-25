@@ -24,6 +24,8 @@ import {
 import {
   CreateBankAccountDto,
   CreateBankTransactionDto,
+  UpdateBankAccountDto,
+  UpdateBankTransactionDto,
   MatchTransactionDto,
   CreateBankRuleDto,
   UpdateBankRuleDto,
@@ -64,6 +66,20 @@ export class BankAccountController {
   getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
     return this.service.getAll(t || u);
   }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary:
+      'Correct a bank account — name, bank, last 4 always; type, currency and opening balance rules apply once it has activity',
+  })
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateBankAccountDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.update(t || u, id, dto);
+  }
 }
 
 @ApiTags('CRM — Finance — Banking')
@@ -95,6 +111,20 @@ export class BankTransactionController {
     @CurrentUser('tenantId') t: string,
   ) {
     return this.service.getAll(t || u, accountId);
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary:
+      'Correct a mistaken entry — the ledger entry is re-posted to match',
+  })
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateBankTransactionDto,
+    @CurrentUser('sub') u: string,
+    @CurrentUser('tenantId') t: string,
+  ) {
+    return this.service.update(t || u, id, dto);
   }
 
   @Post(':id/match')

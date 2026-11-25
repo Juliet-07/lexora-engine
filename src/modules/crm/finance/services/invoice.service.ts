@@ -173,6 +173,19 @@ export class InvoiceService {
     return matching[0];
   }
 
+  // Public so PaymentService can confirm the money has somewhere to land
+  // BEFORE it writes anything — otherwise a missing bank account would
+  // fail the request after the payment record and the paid status were
+  // already saved, leaving the invoice settled with no cash movement and
+  // no "Record payment" action left to retry from.
+  async assertPaymentAccount(
+    tenantId: string,
+    currency: string,
+    bankAccountId?: string,
+  ) {
+    await this.pickBankAccount(tenantId, currency, bankAccountId);
+  }
+
   // Trust and Fund accounts each need their own ring-fenced GL code;
   // everything else (Office, Special purpose) posts to the ordinary
   // operating account — same mapping BankTransactionService.create
@@ -757,6 +770,13 @@ export class InvoiceService {
     bankAccountId?: string,
   ) {
     const i = await this.getRawDoc(tenantId, id);
+    // Resolve the destination account first: if there isn't one, the
+    // request fails here with the invoice untouched.
+    const account = await this.pickBankAccount(
+      tenantId,
+      i.currency,
+      bankAccountId,
+    );
     const totals = this.computeTotals(i.toObject());
     i.paidAmount = i.paidAmount + amount;
     i.stage =
@@ -776,11 +796,6 @@ export class InvoiceService {
     }
     await i.save();
 
-    const account = await this.pickBankAccount(
-      tenantId,
-      i.currency,
-      bankAccountId,
-    );
     const bankGlAccount = this.bankGlAccountFor(account);
 
     const bankTx = await this.bankTransactionModel.create({
@@ -1173,6 +1188,13 @@ export class PaymentService {
     const invoice: any = await this.invoiceService.getById(tenantId, invoiceId);
     const remaining = invoice.payable - invoice.paidAmount;
     const amount = dto.amount ?? remaining;
+
+    // Nothing is written until the payment has a real account to land in.
+    await this.invoiceService.assertPaymentAccount(
+      tenantId,
+      invoice.currency,
+      dto.bankAccountId,
+    );
 
     const tId = new Types.ObjectId(tenantId);
     const ref = await this.nextRef(tId);

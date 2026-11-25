@@ -85,6 +85,21 @@ export class GlPostingService {
     );
   }
 
+  // Removes every ledger line a source record posted. Used only when
+  // the source is corrected before it has been settled against a real
+  // document (an unmatched bank entry edited in place) — the lines are
+  // then re-posted from the corrected record, so the ledger never
+  // keeps both the mistake and the fix.
+  async removeForSource(
+    tenantId: string,
+    sourceId: string | Types.ObjectId,
+  ): Promise<void> {
+    await this.model.deleteMany({
+      tenantId: new Types.ObjectId(tenantId),
+      sourceId: new Types.ObjectId(String(sourceId)),
+    });
+  }
+
   // A bank transaction posts its cash-side GL entry the moment it's
   // recorded (BankTransactionService.create), against whatever contra
   // account a Bank Rule suggests — or General expenses if none

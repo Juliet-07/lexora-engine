@@ -335,6 +335,26 @@ export class CreateBankTransactionDto {
   @ApiProperty() @IsNumber() amount: number;
 }
 
+// Everything optional — only what is sent changes.
+export class UpdateBankAccountDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() name?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() bank?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() last4?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() openingBalance?: number;
+  @ApiPropertyOptional({ enum: BankAccountType })
+  @IsOptional()
+  @IsEnum(BankAccountType)
+  type?: BankAccountType;
+}
+
+export class UpdateBankTransactionDto {
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() accountId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() date?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() description?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() amount?: number;
+}
+
 export class MatchTransactionDto {
   @ApiProperty({ enum: TxLinkType }) @IsEnum(TxLinkType) linkType: TxLinkType;
   // Required for every link type except Manual, where there's no

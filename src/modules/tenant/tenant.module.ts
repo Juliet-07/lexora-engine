@@ -64,6 +64,11 @@ import {
   TenantNotificationSchema,
 } from './schemas';
 import { TenantNotificationController } from './controllers';
+import { ExchangeRateService } from '../hr/services/exchange-rate.service';
+import {
+  ExchangeRateSnapshot,
+  ExchangeRateSnapshotSchema,
+} from '../hr/schemas';
 
 @Module({
   imports: [
@@ -72,6 +77,11 @@ import { TenantNotificationController } from './controllers';
     HealthScoreModule,
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
+      // Dashboard money is converted into the account's currency.
+      {
+        name: ExchangeRateSnapshot.name,
+        schema: ExchangeRateSnapshotSchema,
+      },
       {
         name: SubscriptionPlanConfig.name,
         schema: SubscriptionPlanConfigSchema,
@@ -106,6 +116,7 @@ import { TenantNotificationController } from './controllers';
     TenantClientsService,
     VerificationService,
     TenantNotificationService,
+    ExchangeRateService,
   ],
   exports: [TenantService, TenantClientsService],
 })
