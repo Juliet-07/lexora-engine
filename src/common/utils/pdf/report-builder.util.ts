@@ -6,6 +6,8 @@ export interface ReportSection {
   columns: string[];
   rows: (string | number)[][];
   note?: string;
+  /** Relative column widths (default: all equal). */
+  weights?: number[];
 }
 
 export interface ReportDefinition {
@@ -94,8 +96,21 @@ export function buildReportPdf(def: ReportDefinition): Promise<Buffer> {
       columns: string[],
       rows: (string | number)[][],
       headerColor: string,
+      weights?: number[],
     ) => {
-      const colWidth = contentWidth / columns.length;
+      const w =
+        weights && weights.length === columns.length
+          ? weights
+          : columns.map(() => 1);
+      const totalW = w.reduce((a, b) => a + b, 0);
+      const colX: number[] = [];
+      const colW: number[] = [];
+      let acc = 0;
+      w.forEach((x) => {
+        colX.push(PAGE_MARGIN + (acc / totalW) * contentWidth);
+        colW.push((x / totalW) * contentWidth);
+        acc += x;
+      });
       const rowHeight = 20;
 
       ensureSpace(rowHeight + 10);
@@ -103,8 +118,10 @@ export function buildReportPdf(def: ReportDefinition): Promise<Buffer> {
       doc.rect(PAGE_MARGIN, headerY, contentWidth, rowHeight).fill(headerColor);
       doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
       columns.forEach((col, i) => {
-        doc.text(col, PAGE_MARGIN + i * colWidth + 5, headerY + 6, {
-          width: colWidth - 10,
+        doc.text(col, colX[i] + 5, headerY + 6, {
+          width: colW[i] - 10,
+          height: rowHeight - 8,
+          ellipsis: true,
         });
       });
       doc.y = headerY + rowHeight;
@@ -120,8 +137,10 @@ export function buildReportPdf(def: ReportDefinition): Promise<Buffer> {
           doc.rect(PAGE_MARGIN, y, contentWidth, rowHeight).fill(STRIPE);
         doc.fillColor(BODY_TEXT);
         row.forEach((cell, i) => {
-          doc.text(String(cell ?? ''), PAGE_MARGIN + i * colWidth + 5, y + 6, {
-            width: colWidth - 10,
+          doc.text(String(cell ?? ''), colX[i] + 5, y + 6, {
+            width: colW[i] - 10,
+            height: rowHeight - 8,
+            ellipsis: true,
           });
         });
         doc.y = y + rowHeight;
@@ -156,7 +175,14 @@ export function buildReportPdf(def: ReportDefinition): Promise<Buffer> {
         doc.fillColor(BODY_TEXT);
         doc.moveDown(0.2);
       }
-      drawTable(section.columns, section.rows, SECTION_HEADER);
+      // A section with no columns is a block of text (a cover note).
+      if (section.columns.length)
+        drawTable(
+          section.columns,
+          section.rows,
+          SECTION_HEADER,
+          section.weights,
+        );
     });
 
     // Page numbers — needs a second pass since pdfkit doesn't expose

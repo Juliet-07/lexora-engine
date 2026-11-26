@@ -8,6 +8,7 @@ import {
   IsBoolean,
   IsDateString,
   IsMongoId,
+  IsObject,
   IsArray,
   ValidateNested,
   IsEmail,
@@ -15,7 +16,7 @@ import {
   Max,
   Length,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { BillingModel } from '../schemas';
 import { PaymentMethod } from '../schemas';
 import { QuoteKind } from '../schemas';
@@ -32,8 +33,20 @@ import { FundStatus } from '../schemas';
 import { WaterfallType, CommitmentType, DistributionSource } from '../schemas';
 import { ComplianceFrequency } from '../schemas';
 import { ValuationMethod, IfrsLevel } from '../schemas';
-import { InterestTreatment } from '../schemas';
+import {
+  InterestTreatment,
+  TrustLedgerStatus,
+  TrustRiskLevel,
+  TrustPortalAccess,
+  TrustDrawdownType,
+} from '../schemas';
 import { ClientInvoiceAction } from '../schemas';
+import {
+  SideLetterStatus,
+  SideLetterMfn,
+  ProvisionCompliance,
+  MfnElectionStatus,
+} from '../schemas';
 import { ExpenseCategory, BillPayeeType } from '../schemas';
 import {
   CeoMessageStatus,
@@ -669,6 +682,38 @@ export class CreateFundDto {
   @IsNumber()
   @Min(0)
   recyclingCapPct?: number;
+
+  // LPA particulars
+  @ApiPropertyOptional() @IsOptional() @IsString() gpEntityName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() lpaDate?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() firstCloseDate?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  finalCloseDeadline?: string;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) termYears?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() lpaCallClause?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  lpaDefaultInterestClause?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() lpaDefaultClause?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  gpCommitmentPct?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() wireBeneficiary?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() wireBankName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() wireAccountNumber?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() wireSwift?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() wireBranch?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() noticeSignatory?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  noticeSignatoryTitle?: string;
+  @ApiPropertyOptional() @IsOptional() @IsEmail() administratorEmail?: string;
 }
 
 export class UpdateFundTermsDto extends CreateFundDto {}
@@ -695,6 +740,29 @@ export class CreateCapitalCommitmentDto {
   @Min(0)
   mgmtFeePctOverride?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() sideLetterNotes?: string;
+  @ApiPropertyOptional() @IsOptional() @IsEmail() lpEmail?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() amlKycStatus?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() subscriptionStatus?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
+}
+
+export class UpdateCapitalCommitmentDto {
+  @ApiPropertyOptional() @IsOptional() @IsEmail() lpEmail?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() amlKycStatus?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() subscriptionStatus?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEnum(CommitmentType)
+  type?: CommitmentType;
+}
+
+export class CallUseOfProceedsDto {
+  @ApiProperty() @IsString() label: string;
+  @ApiProperty() @IsNumber() @Min(0) amount: number;
+  @ApiPropertyOptional({ description: "'fee' follows each LP's own fee rate" })
+  @IsOptional()
+  @IsString()
+  kind?: string;
 }
 
 export class CreateCapitalCallDto {
@@ -702,6 +770,45 @@ export class CreateCapitalCallDto {
   @ApiProperty() @IsNumber() @Min(0.01) totalAmount: number;
   @ApiProperty() @IsDateString() issuedOn: string;
   @ApiProperty() @IsDateString() dueOn: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() purposeCategory?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() dealName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() narrative?: string;
+  @ApiPropertyOptional({ type: [CallUseOfProceedsDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CallUseOfProceedsDto)
+  useOfProceeds?: CallUseOfProceedsDto[];
+  @ApiPropertyOptional({ description: 'Save as a draft instead of issuing' })
+  @IsOptional()
+  @IsBoolean()
+  saveAsDraft?: boolean;
+}
+
+export class SendCallNoticesDto {
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Commitments to notify (default: every LP on the call)',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  commitmentIds?: string[];
+  @ApiPropertyOptional({
+    description:
+      'Email with PDF attachment | Email with link to portal | Email + portal notification',
+  })
+  @IsOptional()
+  @IsString()
+  method?: string;
+  @ApiPropertyOptional({ description: 'Defaults to sending now' })
+  @IsOptional()
+  @IsDateString()
+  sendAt?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() subject?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() message?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() attachStatement?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() ccAdministrator?: boolean;
 }
 
 export class RecordCallFundingDto {
@@ -835,40 +942,242 @@ export class RunScenarioDto {
 
 // ── Trust accounting ──────────────────────────────────────────
 
+// Multipart forms arrive as strings, and with implicit conversion on
+// "false" would become true — read booleans explicitly.
+const toBool = ({ value }: { value: any }) =>
+  value === true || value === 'true' || value === '1' || value === 1;
+
+export class TrustNotifyPrefsDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  depositConfirmations?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() drawdownNotices?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() monthlyStatements?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() lowBalanceAlerts?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() interestCredits?: boolean;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  reconciliationReports?: boolean;
+}
+
 export class CreateTrustLedgerDto {
   @ApiProperty() @IsMongoId() bankAccountId: string;
   @ApiProperty() @IsMongoId() clientUserId: string;
   @ApiProperty() @IsString() clientName: string;
   @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() mandateName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() mandateReference?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() currency?: string;
   @ApiPropertyOptional()
   @IsOptional()
   @IsEnum(InterestTreatment)
   interestTreatment?: InterestTreatment;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  interestRate?: number;
+
+  // Source of funds (AML/CFT)
+  @ApiPropertyOptional() @IsOptional() @IsString() sourceOfFunds?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() expectedPurpose?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() sourceOfFundsNotes?: string;
+
+  // Controls & restrictions
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEnum(TrustRiskLevel)
+  riskLevel?: TrustRiskLevel;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  maxDrawdownPerRequest?: number;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() invoiceLinkedOnly?: boolean;
+  @ApiPropertyOptional({ description: 'Create the ledger frozen' })
+  @IsOptional()
+  @IsBoolean()
+  frozen?: boolean;
+
+  // Retainer replenishment
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) minBalance?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  replenishmentTarget?: number;
+
+  // Client portal & notifications
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEnum(TrustPortalAccess)
+  portalAccess?: TrustPortalAccess;
+  @ApiPropertyOptional() @IsOptional() @IsEmail() portalContactEmail?: string;
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsEmail({}, { each: true })
+  additionalPortalUsers?: string[];
+  @ApiPropertyOptional() @IsOptional() @IsString() emailDigest?: string;
+  @ApiPropertyOptional({ type: TrustNotifyPrefsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TrustNotifyPrefsDto)
+  notifyPrefs?: TrustNotifyPrefsDto;
 }
 
+// Everything on a ledger the firm can change after creation. The
+// bank account, client and currency are fixed — changing them would
+// rewrite what the existing movements mean.
+export class UpdateTrustLedgerDto {
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() mandateName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() mandateReference?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEnum(InterestTreatment)
+  interestTreatment?: InterestTreatment;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  interestRate?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() sourceOfFunds?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() expectedPurpose?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() sourceOfFundsNotes?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEnum(TrustRiskLevel)
+  riskLevel?: TrustRiskLevel;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  maxDrawdownPerRequest?: number;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() invoiceLinkedOnly?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) minBalance?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  replenishmentTarget?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEnum(TrustPortalAccess)
+  portalAccess?: TrustPortalAccess;
+  @ApiPropertyOptional() @IsOptional() @IsEmail() portalContactEmail?: string;
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsEmail({}, { each: true })
+  additionalPortalUsers?: string[];
+  @ApiPropertyOptional() @IsOptional() @IsString() emailDigest?: string;
+  @ApiPropertyOptional({ type: TrustNotifyPrefsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TrustNotifyPrefsDto)
+  notifyPrefs?: TrustNotifyPrefsDto;
+}
+
+export class TrustLedgerStatusDto {
+  @ApiProperty({ enum: TrustLedgerStatus })
+  @IsEnum(TrustLedgerStatus)
+  status: TrustLedgerStatus;
+  @ApiPropertyOptional() @IsOptional() @IsString() reason?: string;
+}
+
+// A deposit is declared with where the money came from — the
+// source-of-funds record AML/CFT inspection asks for first. Sent as
+// multipart so the evidence (wire confirmation, bank statement
+// extract) travels with the movement it supports.
 export class RecordTrustDepositDto {
   @ApiProperty() @IsMongoId() ledgerId: string;
-  @ApiProperty() @IsNumber() @Min(0.01) amount: number;
-  @ApiPropertyOptional() @IsOptional() @IsString() reference?: string;
+  @ApiProperty() @Type(() => Number) @IsNumber() @Min(0.01) amount: number;
+  @ApiProperty({ description: 'Bank reference / receipt number' })
+  @IsString()
+  reference: string;
   @ApiProperty() @IsDateString() date: string;
-  @ApiProperty() @IsString() preparedBy: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() remitterName?: string;
+  @ApiProperty() @IsString() sourceOfFunds: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() purpose?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() internalNotes?: string;
+  // Kept for older callers — the real preparer is always the signed-in user.
+  @ApiPropertyOptional() @IsOptional() @IsString() preparedBy?: string;
 }
 
 export class RequestTrustDrawdownDto {
   @ApiProperty() @IsMongoId() ledgerId: string;
-  @ApiProperty() @IsNumber() @Min(0.01) amount: number;
+  @ApiProperty({ enum: TrustDrawdownType })
+  @IsEnum(TrustDrawdownType)
+  drawdownType: TrustDrawdownType;
+  @ApiProperty() @Type(() => Number) @IsNumber() @Min(0.01) amount: number;
+
+  // The source document — which of these applies depends on the type.
   @ApiPropertyOptional() @IsOptional() @IsMongoId() linkedInvoiceId?: string;
-  @ApiProperty() @IsString() preparedBy: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() linkedBillId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() mandateId?: string;
+  @ApiPropertyOptional({ description: 'Original deposit being refunded' })
+  @IsOptional()
+  @IsMongoId()
+  linkedDepositId?: string;
+
+  @ApiPropertyOptional() @IsOptional() @IsString() payeeName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() expenseCategory?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() requestedDate?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() paymentMethod?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() beneficiaryAccount?: string;
+  @ApiPropertyOptional({
+    description:
+      'Invoice / trust-to-office drawdowns: the office bank account the fees land in (default: the first non-trust account in the ledger currency)',
+  })
+  @IsOptional()
+  @IsMongoId()
+  officeBankAccountId?: string;
+  @ApiProperty({ description: 'Purpose / narrative' })
+  @IsString()
+  narrative: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() internalNotes?: string;
+
+  @ApiPropertyOptional({ description: 'Save without submitting for approval' })
+  @IsOptional()
+  @Transform(toBool)
+  @IsBoolean()
+  saveAsDraft?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() preparedBy?: string;
 }
 
 export class AuthoriseTrustDrawdownDto {
-  @ApiProperty() @IsString() authorisedBy: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() authorisedBy?: string;
 }
 
 export class RejectTrustDrawdownDto {
   @ApiPropertyOptional() @IsOptional() @IsString() reason?: string;
+}
+
+export class CreditTrustInterestDto {
+  @ApiPropertyOptional({
+    description: 'Credit up to and including this date (default: yesterday)',
+  })
+  @IsOptional()
+  @IsDateString()
+  through?: string;
+}
+
+export class EmailTrustStatementsDto {
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Only these ledgers (default: every ledger with a contact)',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  ledgerIds?: string[];
+  @ApiPropertyOptional() @IsOptional() @IsDateString() from?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() to?: string;
 }
 
 // ── Budget ──────────────────────────────────────────────────────
@@ -969,4 +1278,205 @@ export class SetBaseCurrencyDto {
   @IsString()
   @Length(3, 3)
   baseCurrency: string;
+}
+
+// ── Fund: statements, LP reports, side letters, documents ───────
+
+export class GenerateStatementsDto {
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Only these LPs (default: every LP in the fund)',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  commitmentIds?: string[];
+  @ApiPropertyOptional({
+    description: "'2026-Q4', 'FY 2026', 'YTD', 'ITD' or 'custom'",
+  })
+  @IsOptional()
+  @IsString()
+  period?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() from?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() to?: string;
+  @ApiPropertyOptional({ enum: ['pdf', 'xlsx', 'both'] })
+  @IsOptional()
+  @IsString()
+  format?: string;
+  @ApiPropertyOptional({
+    description: "'download' | 'email' | 'portal' | 'email+portal'",
+  })
+  @IsOptional()
+  @IsString()
+  delivery?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() metrics?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() contributions?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() fees?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() gains?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() comparative?: boolean;
+}
+
+export class GenerateLpReportDto {
+  @ApiProperty() @IsString() reportType: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() period?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() from?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() to?: string;
+  @ApiPropertyOptional({
+    description: "'all' | 'lpac' | a commitment id",
+  })
+  @IsOptional()
+  @IsString()
+  recipients?: string;
+  @ApiPropertyOptional({ enum: ['pdf', 'xlsx', 'both'] })
+  @IsOptional()
+  @IsString()
+  format?: string;
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  sections?: string[];
+  @ApiPropertyOptional({
+    description:
+      "'Generate only (download)' | 'Generate & email to LPs' | 'Generate & upload to LP portal'",
+  })
+  @IsOptional()
+  @IsString()
+  delivery?: string;
+  @ApiPropertyOptional({ description: "'fund' | 'gp' | 'none'" })
+  @IsOptional()
+  @IsString()
+  branding?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() commentary?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() callId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() distributionId?: string;
+}
+
+export class SendFundReportDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() recipients?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() delivery?: string;
+}
+
+export class UploadFundReportDto {
+  @ApiProperty() @IsString() reportType: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() title?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() period?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() recipients?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() delivery?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() commentary?: string;
+}
+
+export class SideLetterProvisionDto {
+  @ApiProperty() @IsString() type: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() lpaDefault?: string;
+  @ApiProperty() @IsString() term: string;
+  @ApiPropertyOptional({ enum: SideLetterMfn })
+  @IsOptional()
+  @IsEnum(SideLetterMfn)
+  mfn?: SideLetterMfn;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+  @ApiPropertyOptional({
+    description: 'For a management fee reduction: the rate it sets, in percent',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  feePct?: number;
+}
+
+export class CreateSideLetterDto {
+  @ApiProperty() @IsMongoId() commitmentId: string;
+  @ApiProperty() @IsDateString() effectiveDate: string;
+  @ApiPropertyOptional({ enum: SideLetterStatus })
+  @IsOptional()
+  @IsEnum(SideLetterStatus)
+  status?: SideLetterStatus;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  mfnElectionDeadline?: string;
+  @ApiProperty({ type: [SideLetterProvisionDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SideLetterProvisionDto)
+  provisions: SideLetterProvisionDto[];
+}
+
+export class UpdateSideLetterDto {
+  @ApiPropertyOptional() @IsOptional() @IsDateString() effectiveDate?: string;
+  @ApiPropertyOptional({ enum: SideLetterStatus })
+  @IsOptional()
+  @IsEnum(SideLetterStatus)
+  status?: SideLetterStatus;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  mfnElectionDeadline?: string;
+  @ApiPropertyOptional({ type: [SideLetterProvisionDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SideLetterProvisionDto)
+  provisions?: SideLetterProvisionDto[];
+}
+
+export class SetProvisionComplianceDto {
+  @ApiProperty({ enum: ProvisionCompliance })
+  @IsEnum(ProvisionCompliance)
+  compliance: ProvisionCompliance;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+}
+
+export class RecordMfnElectionDto {
+  @ApiProperty({ enum: MfnElectionStatus })
+  @IsEnum(MfnElectionStatus)
+  status: MfnElectionStatus;
+}
+
+export class UploadFundDocumentDto {
+  @ApiProperty() @IsString() category: string;
+  @ApiProperty() @IsString() title: string;
+  @ApiProperty() @IsDateString() docDate: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() version?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() commitmentId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() holdingId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() status?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() confidentiality?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() authority?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() filedOn?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+}
+
+export class DraftFundDocumentDto {
+  @ApiPropertyOptional({
+    description: 'A built-in template key, or a platform template id',
+  })
+  @IsOptional()
+  @IsString()
+  templateKey?: string;
+  @ApiProperty() @IsString() title: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() category?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() commitmentId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() callId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsMongoId() distributionId?: string;
+  @ApiPropertyOptional({ description: 'Starting text for a blank document' })
+  @IsOptional()
+  @IsString()
+  initialContent?: string;
+}
+
+export class UpdateFundDocumentDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() title?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() category?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() version?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() status?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() confidentiality?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() content?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() docDate?: string;
+  @ApiPropertyOptional({ description: 'Merge-field values behind the content' })
+  @IsOptional()
+  @IsObject()
+  mergeValues?: Record<string, string>;
 }

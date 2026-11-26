@@ -250,6 +250,12 @@ export class LedgerAccountService {
         subGroup: 'Revenue',
       },
       {
+        code: '4300',
+        name: 'Interest income',
+        type: AccountType.REVENUE,
+        subGroup: 'Revenue',
+      },
+      {
         code: '5000',
         name: 'General expenses',
         type: AccountType.EXPENSE,

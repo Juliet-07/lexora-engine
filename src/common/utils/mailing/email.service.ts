@@ -170,6 +170,10 @@ import {
   issuedDocumentTemplate,
 } from './templates/issued-document.template';
 import {
+  FundNoticeEmailData,
+  fundNoticeTemplate,
+} from './templates/fund-notice.template';
+import {
   NewJobOpeningEmailData,
   newJobOpeningTemplate,
 } from './templates/new-job-opening.template';
@@ -899,6 +903,24 @@ export class EmailService {
           content: fileBuffer,
         },
       ],
+    });
+  }
+
+  // A fund's message to an LP — a capital call notice, a report, a
+  // statement. Optionally carries attachments and copies the fund
+  // administrator.
+  async sendFundNotice(
+    data: FundNoticeEmailData,
+    attachments: { filename: string; content: Buffer }[] = [],
+  ): Promise<void> {
+    const { subject, html } = fundNoticeTemplate(data);
+    await this.transporter.sendMail({
+      from: `"${process.env.FIRM_NAME || 'Lexora'}" <${process.env.SMTP_FROM}>`,
+      to: data.to,
+      ...(data.cc ? { cc: data.cc } : {}),
+      subject,
+      html,
+      attachments,
     });
   }
 

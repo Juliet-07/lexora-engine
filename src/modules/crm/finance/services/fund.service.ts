@@ -14,6 +14,7 @@ import {
   CapitalCall,
   CapitalCallDocument,
   CapitalCallAllocationStatus,
+  CapitalCallStatus,
   CapitalAccountEntry,
   CapitalAccountEntryDocument,
   CapitalAccountEntryType,
@@ -64,6 +65,7 @@ import {
   MarkComplianceCompleteDto,
   RecordFxRateDto,
   RunScenarioDto,
+  UpdateCapitalCommitmentDto,
 } from '../dtos';
 import { GlPostingService, GL_ACCOUNTS } from './gl-posting.service';
 import { GlSource } from '../schemas';
@@ -162,8 +164,43 @@ export class FundService {
       orgCostsCapAmount: dto.orgCostsCapAmount ?? 0,
       recyclingPermitted: dto.recyclingPermitted ?? false,
       recyclingCapPct: dto.recyclingCapPct ?? 0,
+      ...FundService.lpaFields(dto),
     });
     return this.withRealTotals(tenantId, created.toObject());
+  }
+
+  // The LPA particulars shared by create and update — only what was
+  // sent, dates turned into dates.
+  static lpaFields(dto: Partial<CreateFundDto>) {
+    const out: Record<string, any> = {};
+    for (const k of [
+      'gpEntityName',
+      'termYears',
+      'lpaCallClause',
+      'lpaDefaultInterestClause',
+      'lpaDefaultClause',
+      'gpCommitmentPct',
+      'wireBeneficiary',
+      'wireBankName',
+      'wireAccountNumber',
+      'wireSwift',
+      'wireBranch',
+      'noticeSignatory',
+      'noticeSignatoryTitle',
+      'administratorEmail',
+    ] as const) {
+      if ((dto as any)[k] !== undefined) out[k] = (dto as any)[k];
+    }
+    for (const k of [
+      'lpaDate',
+      'firstCloseDate',
+      'finalCloseDeadline',
+    ] as const) {
+      if ((dto as any)[k] !== undefined) {
+        out[k] = (dto as any)[k] ? new Date((dto as any)[k]) : null;
+      }
+    }
+    return out;
   }
 
   async setStatus(tenantId: string, id: string, status: FundStatus) {
@@ -224,6 +261,7 @@ export class FundService {
       ...(dto.recyclingCapPct !== undefined && {
         recyclingCapPct: dto.recyclingCapPct,
       }),
+      ...FundService.lpaFields(dto),
     });
     await f.save();
     return this.withRealTotals(tenantId, f.toObject());
@@ -391,8 +429,35 @@ export class CapitalCommitmentService {
       hasSideLetter: dto.hasSideLetter ?? false,
       mgmtFeePctOverride: dto.mgmtFeePctOverride ?? null,
       sideLetterNotes: dto.sideLetterNotes ?? '',
+      lpEmail: dto.lpEmail ?? '',
+      amlKycStatus: dto.amlKycStatus ?? 'Pending',
+      subscriptionStatus: dto.subscriptionStatus ?? 'Not yet sent',
+      currency: dto.currency ?? fund.currency,
     });
     return created.toObject();
+  }
+
+  // AML/KYC and subscription status move as the LP's onboarding does,
+  // and the notice email can be corrected without re-creating the LP.
+  async update(
+    tenantId: string,
+    fundId: string,
+    commitmentId: string,
+    dto: UpdateCapitalCommitmentDto,
+  ) {
+    const c = await this.model.findOne({
+      _id: commitmentId,
+      fundId: new Types.ObjectId(fundId),
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!c) throw new NotFoundException('Commitment not found');
+    if (dto.lpEmail !== undefined) c.lpEmail = dto.lpEmail;
+    if (dto.amlKycStatus !== undefined) c.amlKycStatus = dto.amlKycStatus;
+    if (dto.subscriptionStatus !== undefined)
+      c.subscriptionStatus = dto.subscriptionStatus;
+    if (dto.type !== undefined) c.type = dto.type;
+    await c.save();
+    return c.toObject();
   }
 
   async computeEqualisation(
@@ -586,13 +651,43 @@ export class CapitalCallService {
       .lean();
   }
 
-  async create(tenantId: string, fundId: string, dto: CreateCapitalCallDto) {
-    const fund = await this.fundModel.findOne({
-      _id: fundId,
-      tenantId: new Types.ObjectId(tenantId),
-    });
-    if (!fund) throw new NotFoundException('Fund not found');
+  private checkCall(dto: CreateCapitalCallDto) {
+    if (new Date(dto.dueOn) < new Date(dto.issuedOn)) {
+      throw new BadRequestException(
+        'The due date cannot be before the date the call is issued',
+      );
+    }
+    const used = (dto.useOfProceeds ?? []).reduce((s, l) => s + l.amount, 0);
+    if (used > dto.totalAmount + 0.005) {
+      throw new BadRequestException(
+        `The uses of proceeds add up to ${used}, more than the ${dto.totalAmount} being called`,
+      );
+    }
+  }
 
+  // Pro-rata by commitment, to the cent — any rounding left over goes
+  // on the largest share so the allocations add up to the call exactly.
+  private buildAllocations(commitments: any[], totalAmount: number) {
+    const total = commitments.reduce((s, c) => s + c.commitment, 0);
+    const rows = commitments.map((c) => ({
+      commitmentId: c._id,
+      lpName: c.lpName,
+      pct: Math.round((c.commitment / total) * 10000) / 100,
+      amount: Math.round(totalAmount * (c.commitment / total) * 100) / 100,
+      fundedAmount: 0,
+      status: CapitalCallAllocationStatus.UNFUNDED,
+    }));
+    const diff =
+      Math.round((totalAmount - rows.reduce((s, r) => s + r.amount, 0)) * 100) /
+      100;
+    if (diff !== 0 && rows.length) {
+      const big = rows.reduce((m, r) => (r.amount > m.amount ? r : m), rows[0]);
+      big.amount = Math.round((big.amount + diff) * 100) / 100;
+    }
+    return rows;
+  }
+
+  private async loadCommitments(tenantId: string, fundId: string) {
     const commitments = await this.commitmentModel
       .find({
         tenantId: new Types.ObjectId(tenantId),
@@ -604,30 +699,117 @@ export class CapitalCallService {
         'Add at least one LP capital commitment before issuing a call',
       );
     }
-    const totalCommitments = commitments.reduce((s, c) => s + c.commitment, 0);
+    return commitments;
+  }
+
+  // A call can be saved as a draft (nothing frozen, nobody told) or
+  // issued straight away, which freezes the pro-rata split across the
+  // LPs as they stand today.
+  async create(
+    tenantId: string,
+    fundId: string,
+    dto: CreateCapitalCallDto,
+    actorName = '',
+  ) {
+    const fund = await this.fundModel.findOne({
+      _id: fundId,
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!fund) throw new NotFoundException('Fund not found');
+    this.checkCall(dto);
 
     const tId = new Types.ObjectId(tenantId);
+    const draft = !!dto.saveAsDraft;
+    const commitments = draft
+      ? []
+      : await this.loadCommitments(tenantId, fundId);
     const ref = await this.nextRef(tId);
     const created = await this.model.create({
       tenantId: tId,
       fundId: new Types.ObjectId(fundId),
       ref,
       purpose: dto.purpose,
+      purposeCategory: dto.purposeCategory ?? '',
+      dealName: dto.dealName ?? '',
+      narrative: dto.narrative ?? '',
+      useOfProceeds: (dto.useOfProceeds ?? []).map((l) => ({
+        label: l.label,
+        amount: l.amount,
+        kind: l.kind ?? 'other',
+      })),
       totalAmount: dto.totalAmount,
       issuedOn: new Date(dto.issuedOn),
       dueOn: new Date(dto.dueOn),
-      allocations: commitments.map((c) => ({
-        commitmentId: c._id,
-        lpName: c.lpName,
-        amount:
-          Math.round(
-            dto.totalAmount * (c.commitment / totalCommitments) * 100,
-          ) / 100,
-        fundedAmount: 0,
-        status: CapitalCallAllocationStatus.UNFUNDED,
-      })),
+      status: draft ? CapitalCallStatus.DRAFT : CapitalCallStatus.ISSUED,
+      noticeDate: draft ? null : new Date(),
+      issuedBy: draft ? '' : actorName,
+      allocations: this.buildAllocations(commitments, dto.totalAmount),
     });
     return created.toObject();
+  }
+
+  private async getDraft(tenantId: string, fundId: string, callId: string) {
+    const call = await this.model.findOne({
+      _id: callId,
+      fundId: new Types.ObjectId(fundId),
+      tenantId: new Types.ObjectId(tenantId),
+    });
+    if (!call) throw new NotFoundException('Capital call not found');
+    if (call.status !== CapitalCallStatus.DRAFT) {
+      throw new BadRequestException(
+        'This call has already been issued — its split is frozen',
+      );
+    }
+    return call;
+  }
+
+  async updateDraft(
+    tenantId: string,
+    fundId: string,
+    callId: string,
+    dto: CreateCapitalCallDto,
+  ) {
+    const call = await this.getDraft(tenantId, fundId, callId);
+    this.checkCall(dto);
+    call.purpose = dto.purpose;
+    call.purposeCategory = dto.purposeCategory ?? '';
+    call.dealName = dto.dealName ?? '';
+    call.narrative = dto.narrative ?? '';
+    call.useOfProceeds = (dto.useOfProceeds ?? []).map((l) => ({
+      label: l.label,
+      amount: l.amount,
+      kind: l.kind ?? 'other',
+    })) as any;
+    call.totalAmount = dto.totalAmount;
+    call.issuedOn = new Date(dto.issuedOn);
+    call.dueOn = new Date(dto.dueOn);
+    await call.save();
+    return call.toObject();
+  }
+
+  async issueDraft(
+    tenantId: string,
+    fundId: string,
+    callId: string,
+    actorName: string,
+  ) {
+    const call = await this.getDraft(tenantId, fundId, callId);
+    const commitments = await this.loadCommitments(tenantId, fundId);
+    call.allocations = this.buildAllocations(
+      commitments,
+      call.totalAmount,
+    ) as any;
+    call.status = CapitalCallStatus.ISSUED;
+    call.noticeDate = new Date();
+    call.issuedBy = actorName;
+    await call.save();
+    return call.toObject();
+  }
+
+  async deleteDraft(tenantId: string, fundId: string, callId: string) {
+    const call = await this.getDraft(tenantId, fundId, callId);
+    await call.deleteOne();
+    return { deleted: true };
   }
 
   async recordFunding(

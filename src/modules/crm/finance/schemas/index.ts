@@ -2,6 +2,7 @@ export * from './accounting.schema';
 export * from './banking.schema';
 export * from './budget.schema';
 export * from './finance-settings.schema';
+export * from './fund-extra.schema';
 export * from './fund.schema';
 export * from './invoice.schema';
 export * from './management-report.schema';

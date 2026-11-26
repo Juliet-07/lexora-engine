@@ -33,6 +33,7 @@ import {
   TERM_SHEET_AREA,
   TERM_SHEET_FIELDS,
 } from './contract-merge-term-sheet-fields';
+import { FUND_DOC_AREA, FUND_DOC_FIELDS } from './contract-merge-fund-fields';
 import {
   COMMON_FIELDS,
   LEGACY_ALIAS_FIELDS,
@@ -745,6 +746,28 @@ for (const f of MERGE_FIELD_REGISTRY) {
       ...def,
       modules: ['grc'],
       areas: [TERM_SHEET_AREA],
+    });
+  }
+}
+
+// Fund documents (Finance → Fund accounting → Documents). All values come
+// from the fund, LP, capital call or distribution being documented.
+{
+  const byToken = new Map(MERGE_FIELD_REGISTRY.map((f) => [f.token, f]));
+  for (const def of FUND_DOC_FIELDS) {
+    const existing = byToken.get(def.token);
+    if (existing && existing.common) continue;
+    if (existing) {
+      if (!existing.modules.includes('finance'))
+        existing.modules = [...existing.modules, 'finance'];
+      if (existing.areas)
+        existing.areas = [...new Set([...existing.areas, FUND_DOC_AREA])];
+      continue;
+    }
+    MERGE_FIELD_REGISTRY.push({
+      ...def,
+      modules: ['finance'],
+      areas: [FUND_DOC_AREA],
     });
   }
 }

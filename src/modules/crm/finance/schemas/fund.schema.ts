@@ -77,6 +77,35 @@ export class Fund {
   // a timely replacement — set by KeyPersonService, never edited
   // directly.
   @Prop({ default: false }) investmentPeriodSuspended: boolean;
+
+  // ── LPA particulars — what a capital call notice, a side letter or
+  // an LP statement has to quote about the fund ──────────────────
+  @Prop({ default: '' }) gpEntityName: string;
+  @Prop({ type: Date, default: null }) lpaDate: Date | null;
+  @Prop({ type: Date, default: null }) firstCloseDate: Date | null;
+  @Prop({ type: Date, default: null }) finalCloseDeadline: Date | null;
+  @Prop({ default: 10 }) termYears: number;
+  // Where the LPA says calls are made / interest charged / default
+  // consequences apply — quoted in every call notice.
+  @Prop({ default: '4.1' }) lpaCallClause: string;
+  @Prop({ default: '4.3' }) lpaDefaultInterestClause: string;
+  @Prop({ default: '4.4' }) lpaDefaultClause: string;
+  @Prop({ default: 0 }) gpCommitmentPct: number;
+
+  // The fund's collection account, as printed on a call notice. The
+  // bank account on file only keeps the last four digits, so the
+  // full instructions are held here.
+  @Prop({ default: '' }) wireBeneficiary: string;
+  @Prop({ default: '' }) wireBankName: string;
+  @Prop({ default: '' }) wireAccountNumber: string;
+  @Prop({ default: '' }) wireSwift: string;
+  @Prop({ default: '' }) wireBranch: string;
+
+  // Who signs notices on the GP's behalf.
+  @Prop({ default: '' }) noticeSignatory: string;
+  @Prop({ default: '' }) noticeSignatoryTitle: string;
+  // A copy of every notice goes here when "CC fund administrator" is on.
+  @Prop({ default: '' }) administratorEmail: string;
 }
 export const FundSchema = SchemaFactory.createForClass(Fund);
 
@@ -120,6 +149,12 @@ export class CapitalCommitment {
   @Prop({ default: '' }) sideLetterNotes: string;
 
   @Prop({ default: false }) equalisationApplied: boolean;
+
+  // Where capital call notices, statements and reports are emailed.
+  @Prop({ default: '', lowercase: true, trim: true }) lpEmail: string;
+  @Prop({ default: 'Pending' }) amlKycStatus: string;
+  @Prop({ default: 'Not yet sent' }) subscriptionStatus: string;
+  @Prop({ default: '' }) currency: string;
 }
 export const CapitalCommitmentSchema =
   SchemaFactory.createForClass(CapitalCommitment);
@@ -149,10 +184,49 @@ export class CapitalCallAllocation {
   @Prop({ default: null }) cureDeadline: Date | null;
   @Prop({ default: 0 }) forfeitedAmount: number;
   @Prop({ default: false }) cured: boolean;
+  // Share of the call at issuance — frozen, like the amount.
+  @Prop({ default: 0 }) pct: number;
 }
 export const CapitalCallAllocationSchema = SchemaFactory.createForClass(
   CapitalCallAllocation,
 );
+
+export enum CapitalCallStatus {
+  DRAFT = 'Draft',
+  ISSUED = 'Issued',
+}
+
+export enum NoticeSendStatus {
+  SENT = 'Sent',
+  SCHEDULED = 'Scheduled',
+  FAILED = 'Failed',
+}
+
+@Schema({ _id: false })
+export class CallUseOfProceeds {
+  @Prop({ required: true }) label: string;
+  @Prop({ required: true }) amount: number;
+  // 'fee' lines follow each LP's own management-fee rate (a side
+  // letter can lower it); everything else is pro-rata.
+  @Prop({ default: 'other' }) kind: string;
+}
+export const CallUseOfProceedsSchema =
+  SchemaFactory.createForClass(CallUseOfProceeds);
+
+@Schema({ _id: false })
+export class CallNoticeLogEntry {
+  @Prop({ type: Types.ObjectId }) commitmentId: Types.ObjectId;
+  @Prop({ default: '' }) lpName: string;
+  @Prop({ default: '' }) email: string;
+  @Prop({ default: '' }) method: string;
+  @Prop({ enum: NoticeSendStatus, default: NoticeSendStatus.SENT })
+  status: NoticeSendStatus;
+  @Prop({ default: null }) sentAt: Date | null;
+  @Prop({ default: '' }) error: string;
+  @Prop({ default: '' }) sentBy: string;
+}
+export const CallNoticeLogEntrySchema =
+  SchemaFactory.createForClass(CallNoticeLogEntry);
 
 export type CapitalCallDocument = CapitalCall & Document;
 
@@ -172,6 +246,28 @@ export class CapitalCall {
 
   @Prop({ type: [CapitalCallAllocationSchema], default: [] })
   allocations: CapitalCallAllocation[];
+
+  // A call is drafted first (purpose, amount, uses), then issued — at
+  // which point the pro-rata split is frozen. Calls made before drafts
+  // existed have no status and are Issued.
+  @Prop({ enum: CapitalCallStatus, default: CapitalCallStatus.ISSUED })
+  status: CapitalCallStatus;
+  @Prop({ default: '' }) purposeCategory: string;
+  @Prop({ default: '' }) dealName: string;
+  @Prop({ default: '' }) narrative: string;
+  @Prop({ type: [CallUseOfProceedsSchema], default: [] })
+  useOfProceeds: CallUseOfProceeds[];
+  @Prop({ type: Date, default: null }) noticeDate: Date | null;
+  @Prop({ default: '' }) issuedBy: string;
+
+  // What was sent to whom, and when.
+  @Prop({ type: [CallNoticeLogEntrySchema], default: [] })
+  noticeLog: CallNoticeLogEntry[];
+  @Prop({ type: Date, default: null }) noticesSentAt: Date | null;
+  @Prop({ type: Date, default: null, index: true })
+  scheduledSendAt: Date | null;
+  @Prop({ type: Object, default: null })
+  scheduledSend: Record<string, any> | null;
 }
 export const CapitalCallSchema = SchemaFactory.createForClass(CapitalCall);
 

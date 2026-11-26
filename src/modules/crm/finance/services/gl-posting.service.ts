@@ -195,6 +195,7 @@ export const GL_ACCOUNTS = {
     name: 'Staff reimbursements payable',
   },
   REVENUE: { code: '4200', name: 'Fee income' },
+  INTEREST_INCOME: { code: '4300', name: 'Interest income' },
   GENERAL_EXPENSE: { code: '5000', name: 'General expenses' },
   STAFF_COSTS: { code: '5800', name: 'Staff costs' },
   DEPRECIATION_EXPENSE: { code: '5900', name: 'Depreciation expense' },

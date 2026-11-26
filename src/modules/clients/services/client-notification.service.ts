@@ -151,6 +151,29 @@ export class ClientNotificationService {
     );
   }
 
+  // A notice raised by a tenant-side module that has no dedicated event
+  // of its own — trust deposit confirmations, drawdown notices, balance
+  // alerts, interest credits, and fund capital-call notices. The module
+  // decides the wording; this only files it in the client's portal.
+  @OnEvent('client.general.notice')
+  async onGeneralNotice(e: {
+    tenantId: string;
+    clientUserId: string;
+    title: string;
+    description?: string;
+    link?: string | null;
+    type?: ClientNotificationType;
+  }) {
+    await this.create(
+      e.tenantId,
+      e.clientUserId,
+      e.type ?? ClientNotificationType.GENERAL,
+      e.title,
+      e.description ?? '',
+      e.link ?? null,
+    );
+  }
+
   @OnEvent('client.invoice.sent')
   async onInvoiceSent(e: InvoiceEvent) {
     await this.create(

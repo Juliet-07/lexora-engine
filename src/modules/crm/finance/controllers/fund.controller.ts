@@ -6,6 +6,7 @@ import {
   Body,
   Param,
   Query,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -28,6 +29,7 @@ import {
   FxRateService,
   ScenarioService,
   LpReportingService,
+  TrustAuditService,
 } from '../services';
 import {
   CreateFundDto,
@@ -57,6 +59,8 @@ import {
   UserType,
 } from 'src/common/interfaces/user-role.enum';
 import { RequiresModule } from 'src/common/decorators/requires-module.decorator';
+import { getMergeFieldRegistry } from 'src/common/utils/contract-merge-registry';
+import { FUND_DOC_AREA } from 'src/common/utils/contract-merge-fund-fields';
 
 @ApiTags('CRM — Finance — Fund Accounting')
 @ApiBearerAuth()
@@ -72,6 +76,14 @@ export class FundController {
   })
   getAll(@CurrentUser('sub') u: string, @CurrentUser('tenantId') t: string) {
     return this.service.getAll(t || u);
+  }
+
+  // Labels for the fields in fund documents — declared before ':id' so it
+  // is not read as a fund id.
+  @Get('merge-fields')
+  @ApiOperation({ summary: 'Merge fields available in fund documents' })
+  mergeFields() {
+    return getMergeFieldRegistry('finance', FUND_DOC_AREA);
   }
 
   @Get(':id')
@@ -187,7 +199,10 @@ export class CapitalCommitmentController {
 @RequiresModule(PlatformModuleKey.FINANCE)
 @Controller('finance/funds/:fundId/capital-calls')
 export class CapitalCallController {
-  constructor(private readonly service: CapitalCallService) {}
+  constructor(
+    private readonly service: CapitalCallService,
+    private readonly audit: TrustAuditService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'All capital calls for this fund' })
@@ -202,15 +217,21 @@ export class CapitalCallController {
   @Post()
   @ApiOperation({
     summary:
-      'Issue a capital call — pro-rata allocated across every current LP commitment, frozen at issuance',
+      'Issue a capital call (or save it as a draft) — pro-rata allocated across every current LP commitment, frozen at issuance',
   })
-  create(
+  async create(
     @Param('fundId') fundId: string,
     @Body() dto: CreateCapitalCallDto,
     @CurrentUser('sub') u: string,
     @CurrentUser('tenantId') t: string,
+    @Req() req: any,
   ) {
-    return this.service.create(t || u, fundId, dto);
+    return this.service.create(
+      t || u,
+      fundId,
+      dto,
+      (await this.audit.actor(u, req.ip)).name,
+    );
   }
 
   @Post(':callId/allocations/:allocationId/fund')
